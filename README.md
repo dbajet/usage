@@ -46,6 +46,24 @@ uv run --extra dev mypy .
 uv run --extra dev ruff check .
 ```
 
+## Historical data
+
+The spreadsheet exports (`fremur_edf_gdf_eau.csv`, `dougmar_edf_gdf_eau.csv`)
+are untracked — personal data stays out of git — but the deploy rsync carries
+them to `/opt/usage`. Import them once into the running stack (locally or on
+the server) with:
+
+```bash
+bash deploy/import-history.sh
+```
+
+The import creates the house, its EDF/GDF/Water meters and registers from
+the "Arrivee" baselines, and one reading per month from the cumulative
+counters. A counter that drops starts a replacement register (Dougmar's water
+meter, Oct-2015); the HC/HP columns switch the electricity meter to two
+registers (Fremur, Jan-2026). It refuses to run for a house that already
+exists.
+
 ## Deployment
 
 Production: `ubuntu@45.85.249.159`, `/opt/usage`, blue on 127.0.0.1:8063, green on

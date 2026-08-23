@@ -23,6 +23,7 @@ def test_class() -> None:
         "kinds",
         "source_manual",
         "source_photo",
+        "source_import",
         "photo_max_bytes",
         "photo_media_types",
         "page_size",
@@ -148,6 +149,13 @@ def test_source_photo() -> None:
     tested = Constants
     result = tested.source_photo
     expected = "photo"
+    assert result == expected
+
+
+def test_source_import() -> None:
+    tested = Constants
+    result = tested.source_import
+    expected = "import"
     assert result == expected
 
 

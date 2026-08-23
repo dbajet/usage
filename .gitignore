@@ -8,3 +8,6 @@ __pycache__/
 data/
 .env
 uv.lock
+# Historical exports: personal data stays out of git; rsync still carries
+# them to the server for deploy/import-history.sh.
+*.csv

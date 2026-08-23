@@ -21,6 +21,7 @@ class _Constants:
     kinds: tuple[str, ...] = ("water", "electricity", "gas", "mileage")
     source_manual: str = "manual"
     source_photo: str = "photo"
+    source_import: str = "import"
     photo_max_bytes: int = 10_000_000
     photo_media_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp", "image/gif")
     page_size: int = 25
