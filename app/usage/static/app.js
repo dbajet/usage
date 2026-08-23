@@ -78,14 +78,16 @@ function showAppError(error) {
   setTimeout(() => { target.hidden = true; }, 6000);
 }
 
-function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false }) {
+function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false, top = false }) {
   return new Promise((resolve) => {
-    const backdrop = $("#modal-backdrop");
-    $("#modal-title").textContent = title;
-    const messageTarget = $("#modal-message");
+    // Two layers: the base modal, and one that can stack on top of it.
+    const part = (name) => $(top ? `#modal2-${name}` : `#modal-${name}`);
+    const backdrop = part("backdrop");
+    part("title").textContent = title;
+    const messageTarget = part("message");
     messageTarget.textContent = message;
     messageTarget.hidden = !message;
-    $("#modal-fields").innerHTML = options.length
+    part("fields").innerHTML = options.length
       ? options.map((option) => `
           <button class="ghost option${option.active ? " active" : ""}" type="button" data-modal-option="${esc(String(option.value))}">
             ${esc(option.label)}
@@ -94,49 +96,53 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
           if (field.type === "heading") {
             return `<p class="modal-heading">${esc(field.label)}</p>`;
           }
+          if (field.type === "html") {
+            return field.html;
+          }
           if (field.type === "checkbox") {
             return `<label class="check"><input type="checkbox" data-modal-field="${esc(field.name)}"${field.value ? " checked" : ""}> ${esc(field.label)}</label>`;
           }
           const step = field.type === "number" ? ' step="0.01"' : "";
           return `<label>${esc(field.label)}<input type="${esc(field.type || "text")}"${step} data-modal-field="${esc(field.name)}" value="${esc(field.value ?? "")}"></label>`;
         }).join("");
-    $("#modal-submit").hidden = Boolean(options.length);
-    $("#modal-submit").textContent = submitLabel;
-    $("#modal-submit").classList.toggle("danger", danger);
-    $("#modal-submit").classList.toggle("primary", !danger);
-    $("#modal-remove").hidden = !remove;
+    part("submit").hidden = Boolean(options.length);
+    part("submit").textContent = submitLabel;
+    part("submit").classList.toggle("danger", danger);
+    part("submit").classList.toggle("primary", !danger);
+    part("remove").hidden = !remove;
     backdrop.hidden = false;
-    const first = $("#modal-fields input:not([type=checkbox])");
+    const first = part("fields").querySelector("input:not([type=checkbox])");
     if (first) first.focus();
 
+    const previousKeydown = document.onkeydown;
     const close = (result) => {
       backdrop.hidden = true;
-      $("#modal-form").onsubmit = null;
-      $("#modal-cancel").onclick = null;
-      $("#modal-remove").onclick = null;
+      part("form").onsubmit = null;
+      part("cancel").onclick = null;
+      part("remove").onclick = null;
       backdrop.onclick = null;
-      document.onkeydown = null;
+      document.onkeydown = previousKeydown;
       resolve(result);
     };
-    $("#modal-remove").onclick = () => close({ __remove: true });
-    $("#modal-form").onsubmit = (event) => {
+    part("remove").onclick = () => close({ __remove: true });
+    part("form").onsubmit = (event) => {
       event.preventDefault();
       const values = {};
-      $$("#modal-fields [data-modal-field]").forEach((input) => {
+      part("fields").querySelectorAll("[data-modal-field]").forEach((input) => {
         values[input.dataset.modalField] = input.type === "checkbox" ? input.checked : input.value;
       });
       close(values);
     };
-    $$("#modal-fields [data-modal-option]").forEach((button) =>
+    part("fields").querySelectorAll("[data-modal-option]").forEach((button) =>
       button.addEventListener("click", () => close({ value: button.dataset.modalOption })));
-    $("#modal-cancel").onclick = () => close(null);
+    part("cancel").onclick = () => close(null);
     backdrop.onclick = (event) => { if (event.target === backdrop) close(null); };
     document.onkeydown = (event) => { if (event.key === "Escape") close(null); };
   });
 }
 
-async function confirmModal(title, message, submitLabel = "Delete") {
-  return (await openModal({ title, message, submitLabel, danger: true })) !== null;
+async function confirmModal(title, message, submitLabel = "Delete", top = false) {
+  return (await openModal({ title, message, submitLabel, danger: true, top })) !== null;
 }
 
 function storedItem(key, fallback) {
@@ -1107,7 +1113,7 @@ function renderMeters() {
       </span>
     </div>`).join("") || '<p class="meta">No meter yet.</p>';
   $$("[data-edit-meter]").forEach((button) => button.addEventListener("click", () =>
-    editMeter(state.meters.find((item) => item.id === Number(button.dataset.editMeter)))));
+    editMeter(Number(button.dataset.editMeter))));
   $$("[data-delete-meter]").forEach((button) => button.addEventListener("click", async () => {
     if (!await confirmModal("Delete meter", "Delete this meter and all its readings?")) return;
     try {
@@ -1117,55 +1123,114 @@ function renderMeters() {
   }));
 }
 
-async function editMeter(meter) {
-  // The meter and its registers are managed together in one modal.
-  const fields = [
-    { name: "label", label: "Label", value: meter.label },
-    { name: "unit", label: "Unit", value: meter.unit },
-    { name: "active", label: "Active", type: "checkbox", value: meter.active },
-  ];
-  meter.registers.forEach((register, index) => {
-    fields.push({ type: "heading", label: `Register ${index + 1}` });
-    fields.push({ name: `register-${register.id}-label`, label: "Register label", value: register.label });
-    fields.push({ name: `register-${register.id}-initial`, label: "Start value of the counter", type: "number", value: register.initial_value });
-    fields.push({ name: `register-${register.id}-active`, label: "Active", type: "checkbox", value: register.active });
-    if (meter.registers.length > 1) {
-      fields.push({ name: `register-${register.id}-delete`, label: "Delete this register", type: "checkbox", value: false });
-    }
+const ICON_EDIT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>';
+const ICON_DELETE = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>';
+const ICON_ADD = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/></svg>';
+
+function registerRowsMarkup(meter) {
+  // The meter modal lists the registers; each row edits or deletes in a
+  // stacked modal, and the last row adds one.
+  return meter.registers.map((register) => `
+    <div class="mini-row${register.active ? "" : " inactive"}">
+      <span>${esc(register.label || "register")} (start ${register.initial_value})${register.active ? "" : " — inactive"}</span>
+      <span class="icon-actions">
+        <button class="ghost compact icon-only" data-modal-edit-register="${register.id}" type="button" title="Edit the register">${ICON_EDIT}</button>
+        <button class="ghost compact icon-only danger" data-modal-delete-register="${register.id}" type="button" title="Delete the register">${ICON_DELETE}</button>
+      </span>
+    </div>`).join("") + `
+    <div class="mini-row">
+      <span class="meta">Add a register</span>
+      <span class="icon-actions">
+        <button class="ghost compact icon-only" data-modal-add-register type="button" title="Add a register">${ICON_ADD}</button>
+      </span>
+    </div>`;
+}
+
+async function refreshModalRegisters(meterId) {
+  await loadMeters();
+  const meter = state.meters.find((item) => item.id === meterId);
+  const holder = $("#modal-registers");
+  if (!holder || !meter) return;
+  holder.innerHTML = registerRowsMarkup(meter);
+  wireModalRegisters(meterId);
+}
+
+function wireModalRegisters(meterId) {
+  $$("[data-modal-edit-register]").forEach((button) => button.addEventListener("click", async () => {
+    const meter = state.meters.find((item) => item.id === meterId);
+    const register = meter.registers.find((item) => item.id === Number(button.dataset.modalEditRegister));
+    const answers = await openModal({
+      top: true,
+      title: `Edit register · ${register.label || "register"}`,
+      fields: [
+        { name: "label", label: "Register label (e.g. HP)", value: register.label },
+        { name: "initial_value", label: "Start value of the counter", type: "number", value: register.initial_value },
+        { name: "active", label: "Active", type: "checkbox", value: register.active },
+      ],
+    });
+    if (answers === null) return;
+    try {
+      await api(`/api/registers/${register.id}`, { method: "PUT", body: JSON.stringify({
+        label: answers.label,
+        initial_value: Number(answers.initial_value) || 0,
+        active: answers.active,
+      }) });
+    } catch (error) { showAppError(error); }
+    await refreshModalRegisters(meterId);
+  }));
+  $$("[data-modal-delete-register]").forEach((button) => button.addEventListener("click", async () => {
+    if (!await confirmModal("Delete register", "Delete this register and its values?", "Delete", true)) return;
+    try {
+      await api(`/api/registers/${button.dataset.modalDeleteRegister}`, { method: "DELETE" });
+    } catch (error) { showAppError(error); }
+    await refreshModalRegisters(meterId);
+  }));
+  const addButton = $("[data-modal-add-register]");
+  if (addButton) addButton.addEventListener("click", async () => {
+    const answers = await openModal({
+      top: true,
+      title: "Add a register",
+      submitLabel: "Add",
+      fields: [
+        { name: "label", label: "Register label (e.g. HP)", value: "" },
+        { name: "initial_value", label: "Start value of the counter", type: "number", value: "" },
+      ],
+    });
+    if (answers === null) return;
+    try {
+      await api(`/api/meters/${meterId}/registers`, { method: "POST", body: JSON.stringify({
+        label: answers.label.trim(),
+        initial_value: Number(answers.initial_value) || 0,
+      }) });
+    } catch (error) { showAppError(error); }
+    await refreshModalRegisters(meterId);
   });
-  fields.push({ type: "heading", label: "New register (optional)" });
-  fields.push({ name: "new-label", label: "Register label (e.g. HP)", value: "" });
-  fields.push({ name: "new-initial", label: "Start value of the counter", type: "number", value: "" });
-  const answers = await openModal({ title: `Edit meter · ${meter.label || meter.kind}`, fields });
+}
+
+async function editMeter(meterId) {
+  const meter = state.meters.find((item) => item.id === meterId);
+  if (!meter) return;
+  const promise = openModal({
+    title: `Edit meter · ${meter.label || meter.kind}`,
+    fields: [
+      { name: "label", label: "Label", value: meter.label },
+      { name: "unit", label: "Unit", value: meter.unit },
+      { name: "active", label: "Active", type: "checkbox", value: meter.active },
+      { type: "heading", label: "Registers" },
+      { type: "html", html: `<div id="modal-registers">${registerRowsMarkup(meter)}</div>` },
+    ],
+  });
+  wireModalRegisters(meterId);
+  const answers = await promise;
   if (answers === null) return;
   try {
-    await api(`/api/meters/${meter.id}`, { method: "PUT", body: JSON.stringify({
+    await api(`/api/meters/${meterId}`, { method: "PUT", body: JSON.stringify({
       label: answers.label,
       unit: answers.unit,
       active: answers.active,
     }) });
-    for (const register of meter.registers) {
-      if (answers[`register-${register.id}-delete`]) {
-        await api(`/api/registers/${register.id}`, { method: "DELETE" });
-        continue;
-      }
-      await api(`/api/registers/${register.id}`, { method: "PUT", body: JSON.stringify({
-        label: answers[`register-${register.id}-label`],
-        initial_value: Number(answers[`register-${register.id}-initial`]) || 0,
-        active: answers[`register-${register.id}-active`],
-      }) });
-    }
-    if (answers["new-label"].trim() || answers["new-initial"] !== "") {
-      await api(`/api/meters/${meter.id}/registers`, { method: "POST", body: JSON.stringify({
-        label: answers["new-label"].trim(),
-        initial_value: Number(answers["new-initial"]) || 0,
-      }) });
-    }
     await loadMeters();
-  } catch (error) {
-    showAppError(error);
-    await loadMeters();
-  }
+  } catch (error) { showAppError(error); }
 }
 
 async function addHouse(event) {

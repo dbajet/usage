@@ -221,6 +221,22 @@
     </div>
   </div>
 
+  <!-- A second modal layer, shown on top of the first (e.g. a register over its meter). -->
+  <div id="modal2-backdrop" class="modal-backdrop top-layer" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal2-title">
+      <h3 id="modal2-title"></h3>
+      <p id="modal2-message" class="meta" hidden></p>
+      <form id="modal2-form">
+        <div id="modal2-fields"></div>
+        <div class="actions">
+          <button id="modal2-remove" class="ghost danger push-left" type="button" hidden>Delete</button>
+          <button id="modal2-cancel" class="ghost" type="button">Cancel</button>
+          <button id="modal2-submit" class="primary" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- The new-reading form: meter choice, date, one value per register, photo. -->
   <div id="reading-modal" class="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reading-modal-title">
