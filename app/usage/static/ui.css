@@ -390,6 +390,8 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   cursor: grab;
 }
 .year-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#year-reset { flex: none; }
+#year-reset:disabled { opacity: 0.35; cursor: default; }
 
 .viz-holder { position: relative; }
 .viz-hover line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }

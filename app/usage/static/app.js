@@ -683,6 +683,7 @@ function yearFilter(tables, series) {
   $("#year-fill").style.width = `${percent(toYear) - percent(fromYear)}%`;
   $("#year-thumb-from").style.left = `calc(${percent(fromYear)}% - 8px)`;
   $("#year-thumb-to").style.left = `calc(${percent(toYear)}% - 8px)`;
+  $("#year-reset").disabled = fromYear === minYear && toYear === maxYear;
   return {
     tables: {
       kinds: (tables.kinds || [])
@@ -1225,6 +1226,9 @@ addEventListener("DOMContentLoaded", () => {
   $("#stats-show-graphs").addEventListener("change", saveStatsPrefs);
   $("#stats-merge-graphs").addEventListener("change", saveStatsPrefs);
   wireYearSlider();
+  $("#year-reset").addEventListener("click", () => {
+    if (state.yearBounds) applyYearRange(state.yearBounds.min, state.yearBounds.max);
+  });
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
