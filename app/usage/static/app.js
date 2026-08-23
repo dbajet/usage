@@ -135,10 +135,22 @@ async function confirmModal(title, message, submitLabel = "Delete") {
   return (await openModal({ title, message, submitLabel, danger: true })) !== null;
 }
 
+function storedItem(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; }
+}
+
+function storeItem(key, value) {
+  try { localStorage.setItem(key, String(value)); } catch (_) {}
+}
+
 function showView(name) {
+  storeItem("usage-view", name);
   $$(".app-nav button").forEach((item) => item.classList.toggle("active", item.dataset.nav === name));
   $$(".app-main > section").forEach((section) => { section.hidden = section.id !== `view-${name}`; });
   if (name === "settings") {
+    let tab = storedItem("usage-settings-tab", "meters");
+    if (!state.me.is_admin && (tab === "houses" || tab === "users")) tab = "meters";
+    showSettingsTab(tab);
     loadPasskeys();
     loadMeters();
     if (state.me && state.me.is_admin) loadAdmin();
@@ -182,7 +194,8 @@ function showApp() {
   api("/api/version")
     .then((data) => { $("#version").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : ""); })
     .catch(() => {});
-  showView("stats");
+  const view = storedItem("usage-view", "stats");
+  showView(["stats", "entries", "settings"].includes(view) ? view : "stats");
 }
 
 async function requestLink(event) {
@@ -286,9 +299,11 @@ async function loadPasskeys() {
 async function ensureDashboard() {
   state.dashboard = await api("/api/dashboard");
   const houses = state.dashboard.houses || [];
+  if (!state.houseId) state.houseId = Number(storedItem("usage-house", "0"));
   if (!houses.some((house) => house.id === state.houseId)) {
     state.houseId = houses.length ? houses[0].id : 0;
   }
+  storeItem("usage-house", state.houseId);
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
   $("#house-btn").hidden = houses.length < 2;
@@ -307,6 +322,7 @@ async function chooseHouse() {
   });
   if (choice === null || Number(choice.value) === state.houseId) return;
   state.houseId = Number(choice.value);
+  storeItem("usage-house", state.houseId);
   state.entriesPage = 1;
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
@@ -716,6 +732,7 @@ async function loadMeters() {
 }
 
 function showSettingsTab(name) {
+  storeItem("usage-settings-tab", name);
   $$("#settings-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.settingsTab === name));
   $$("[data-settings-panel]").forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
 }
