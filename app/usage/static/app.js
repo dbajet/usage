@@ -536,12 +536,16 @@ async function loadStats() {
 }
 
 function statsPrefs() {
-  const defaults = { tables: true, graphs: true, merged: false };
+  const defaults = { tables: true, graphs: true, merged: false, fromYear: 0, toYear: 9999 };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem("usage-stats-prefs") || "{}") };
   } catch (_) {
     return defaults;
   }
+}
+
+function storeStatsPrefs(prefs) {
+  try { localStorage.setItem("usage-stats-prefs", JSON.stringify(prefs)); } catch (_) {}
 }
 
 function saveStatsPrefs(event) {
@@ -551,12 +555,23 @@ function saveStatsPrefs(event) {
     // At least one of the two stays on: hiding the last one re-enables the other.
     (event && event.target === tables ? graphs : tables).checked = true;
   }
-  const prefs = {
+  storeStatsPrefs({
+    ...statsPrefs(),
     tables: tables.checked,
     graphs: graphs.checked,
     merged: $("#stats-merge-graphs").checked,
-  };
-  try { localStorage.setItem("usage-stats-prefs", JSON.stringify(prefs)); } catch (_) {}
+  });
+  if (state.statsData) renderStats(state.statsData.tables, state.statsData.series);
+}
+
+function onYearRange(event) {
+  let from = Number($("#year-from").value);
+  let to = Number($("#year-to").value);
+  if (from > to) {
+    // The handles never cross: the moving one pushes the boundary.
+    if (event.target === $("#year-from")) from = to; else to = from;
+  }
+  storeStatsPrefs({ ...statsPrefs(), fromYear: from, toYear: to });
   if (state.statsData) renderStats(state.statsData.tables, state.statsData.series);
 }
 
@@ -568,20 +583,65 @@ function legendMarkup(seriesList) {
     </div>`;
 }
 
+function yearFilter(tables, series) {
+  const prefs = statsPrefs();
+  const allYears = (tables.kinds || []).flatMap((kind) => kind.years.map((year) => year.year));
+  const holder = $("#year-range");
+  if (!allYears.length || Math.min(...allYears) === Math.max(...allYears)) {
+    holder.hidden = true;
+    return { tables, series };
+  }
+  const minYear = Math.min(...allYears);
+  const maxYear = Math.max(...allYears);
+  const fromYear = Math.min(Math.max(prefs.fromYear || minYear, minYear), maxYear);
+  const toYear = Math.min(Math.max(prefs.toYear || maxYear, fromYear), maxYear);
+  holder.hidden = false;
+  ["#year-from", "#year-to"].forEach((selector) => {
+    $(selector).min = String(minYear);
+    $(selector).max = String(maxYear);
+  });
+  $("#year-from").value = String(fromYear);
+  $("#year-to").value = String(toYear);
+  $("#year-range-label").textContent = fromYear === toYear ? String(fromYear) : `${fromYear} – ${toYear}`;
+  const span = Math.max(1, maxYear - minYear);
+  $("#year-fill").style.left = `${((fromYear - minYear) * 100) / span}%`;
+  $("#year-fill").style.width = `${((toYear - fromYear) * 100) / span}%`;
+  return {
+    tables: {
+      kinds: (tables.kinds || [])
+        .map((kind) => ({ ...kind, years: kind.years.filter((year) => year.year >= fromYear && year.year <= toYear) }))
+        .filter((kind) => kind.years.length),
+    },
+    series: {
+      series: (series.series || [])
+        .map((item) => ({
+          ...item,
+          points: item.points.filter((point) => {
+            const year = Number(point.month.slice(0, 4));
+            return year >= fromYear && year <= toYear;
+          }),
+        }))
+        .filter((item) => item.points.length),
+    },
+  };
+}
+
 function renderStats(tables, series) {
   state.statsData = { tables, series };
   const prefs = statsPrefs();
   $("#stats-show-tables").checked = prefs.tables;
   $("#stats-show-graphs").checked = prefs.graphs;
   $("#stats-merge-graphs").checked = prefs.merged;
-  const kinds = tables.kinds || [];
-  if (!kinds.length) {
+  if (!(tables.kinds || []).length) {
+    $("#year-range").hidden = true;
     $("#stats-content").innerHTML = '<p class="meta">No reading yet - add measurements in Entries first.</p>';
     return;
   }
+  const filtered = yearFilter(tables, series);
+  const kinds = filtered.tables.kinds;
   let html = "";
   if (prefs.graphs && prefs.merged) {
-    const allSeries = series.series || [];
+    const allSeries = filtered.series.series;
     html += `
       <div class="card">
         <h3>Trends <span class="meta">(all meters, one scale)</span></h3>
@@ -590,7 +650,7 @@ function renderStats(tables, series) {
       </div>`;
   }
   html += kinds.map((kind) => {
-    const kindSeries = (series.series || []).filter((item) => item.kind === kind.kind);
+    const kindSeries = filtered.series.series.filter((item) => item.kind === kind.kind);
     const title = kind.kind.charAt(0).toUpperCase() + kind.kind.slice(1);
     const parts = [];
     if (prefs.tables) parts.push(`<div class="table-wrap">${statsTable(kind)}</div>`);
@@ -1085,6 +1145,8 @@ addEventListener("DOMContentLoaded", () => {
   $("#stats-show-tables").addEventListener("change", saveStatsPrefs);
   $("#stats-show-graphs").addEventListener("change", saveStatsPrefs);
   $("#stats-merge-graphs").addEventListener("change", saveStatsPrefs);
+  $("#year-from").addEventListener("input", onYearRange);
+  $("#year-to").addEventListener("input", onYearRange);
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);

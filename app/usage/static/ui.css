@@ -324,6 +324,58 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .viz-chart .series path { fill: none; stroke-width: 2; }
 .viz-chart .series circle.dot { stroke: var(--card); stroke-width: 2; }
 
+.year-range { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.year-range .meta { flex: none; min-width: 84px; text-align: right; }
+.year-slider { position: relative; flex: 1; height: 24px; }
+.year-track {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.year-fill { position: absolute; top: 0; height: 4px; border-radius: 2px; background: var(--accent); }
+.year-slider input[type="range"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.year-slider input[type="range"]::-webkit-slider-runnable-track { background: transparent; }
+.year-slider input[type="range"]::-moz-range-track { background: transparent; }
+.year-slider input[type="range"]::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.year-slider input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .viz-holder { position: relative; }
 .viz-hover line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
 .viz-hover line.hov-main { stroke: var(--accent); stroke-dasharray: none; }
@@ -390,6 +442,16 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
   /* The bottom nav eats extra height on small screens. */
   #reading-list .table-wrap { max-height: calc(100dvh - 420px); }
+  /* Compact spacing: slimmer paddings, margins and titles. */
+  .wrap { padding: 0.4rem 0.6rem; }
+  .app-main { padding-top: 0.4rem; }
+  .app-header { min-height: 48px; padding: 0.35rem 0.6rem; }
+  h2 { font-size: 1.05rem; margin-bottom: 0.35rem; }
+  .card { padding: 0.7rem 0.75rem; margin-bottom: 0.55rem; }
+  .card h3 { font-size: 0.9rem; margin-bottom: 0.3rem; }
+  .stats-toggles { margin-bottom: 0.55rem; }
+  .year-range { margin-bottom: 0.55rem; }
+  .site-footer { padding: 0.6rem 0 0.4rem; }
   /* The three switches stay on one row. */
   .stats-toggles { gap: 0.6rem; flex-wrap: nowrap; }
   label.switch { gap: 0.3rem; font-size: 0.78rem; }
