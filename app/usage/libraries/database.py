@@ -179,7 +179,7 @@ class Database:
                 meter_id BIGINT NOT NULL REFERENCES meters(id) ON DELETE CASCADE,
                 read_on DATE NOT NULL,
                 source TEXT NOT NULL DEFAULT 'manual',
-                created_by BIGINT REFERENCES users(id),
+                created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(meter_id, read_on)
             )

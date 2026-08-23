@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Cookie, Request, Response
 
+from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
 from usage.commands.passkey_command import PasskeyCommand
 from usage.constants.constants import Constants
@@ -12,9 +13,17 @@ from usage.handlers.api_message import ApiMessage
 from usage.handlers.auth_link_request import AuthLinkRequest
 from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
+from usage.handlers.house_request import HouseRequest
+from usage.handlers.meter_request import MeterRequest
+from usage.handlers.meter_update_request import MeterUpdateRequest
 from usage.handlers.passkey_assertion_request import PasskeyAssertionRequest
 from usage.handlers.passkey_options_request import PasskeyOptionsRequest
 from usage.handlers.passkey_register_request import PasskeyRegisterRequest
+from usage.handlers.register_request import RegisterRequest
+from usage.handlers.register_update_request import RegisterUpdateRequest
+from usage.handlers.user_house_request import UserHouseRequest
+from usage.handlers.user_request import UserRequest
+from usage.handlers.user_update_request import UserUpdateRequest
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.structures.app_exception import AppException
@@ -29,6 +38,7 @@ class ApiRouter:
         email_sender = EmailSender(settings)
         self._auth_command = AuthCommand(database, settings, email_sender)
         self._passkey_command = PasskeyCommand(database)
+        self._admin_command = AdminCommand(database)
         self._register()
 
     @property
@@ -48,6 +58,20 @@ class ApiRouter:
         self._router.add_api_route("/passkeys", self._register_passkey, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/passkeys", self._list_passkeys, methods=["GET"])
         self._router.add_api_route("/passkeys/{passkey_id}", self._delete_passkey, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/admin/overview", self._admin_overview, methods=["GET"])
+        self._router.add_api_route("/users", self._create_user, methods=["POST"])
+        self._router.add_api_route("/users/{user_id}", self._update_user, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/users/{user_id}", self._delete_user, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/houses", self._create_house, methods=["POST"])
+        self._router.add_api_route("/houses/{house_id}", self._update_house, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/houses/{house_id}", self._delete_house, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/user-houses", self._set_user_house, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/meters", self._create_meter, methods=["POST"])
+        self._router.add_api_route("/meters/{meter_id}", self._update_meter, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/meters/{meter_id}", self._delete_meter, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/meters/{meter_id}/registers", self._create_register, methods=["POST"])
+        self._router.add_api_route("/registers/{register_id}", self._update_register, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/registers/{register_id}", self._delete_register, methods=["DELETE"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
         return {
@@ -145,6 +169,128 @@ class ApiRouter:
         response.delete_cookie(Constants.webauthn_cookie_name)
         self._set_session_cookie(response, token)
         return ApiMessage(message="Signed in.")
+
+    def _admin_overview(self, usage_session: str = Cookie(default="", alias=Constants.cookie_name)) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._admin_command.overview(user)
+
+    def _create_user(
+        self,
+        body: UserRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._admin_command.create_user(user, body.model_dump())
+
+    def _update_user(
+        self,
+        user_id: int,
+        body: UserUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.update_user(user, user_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_user(
+        self,
+        user_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.delete_user(user, user_id)
+        return ApiMessage(message=message["message"])
+
+    def _create_house(
+        self,
+        body: HouseRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._admin_command.create_house(user, body.model_dump())
+
+    def _update_house(
+        self,
+        house_id: int,
+        body: HouseRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.update_house(user, house_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_house(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.delete_house(user, house_id)
+        return ApiMessage(message=message["message"])
+
+    def _set_user_house(
+        self,
+        body: UserHouseRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.set_user_house(user, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _create_meter(
+        self,
+        body: MeterRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._admin_command.create_meter(user, body.model_dump())
+
+    def _update_meter(
+        self,
+        meter_id: int,
+        body: MeterUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.update_meter(user, meter_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_meter(
+        self,
+        meter_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.delete_meter(user, meter_id)
+        return ApiMessage(message=message["message"])
+
+    def _create_register(
+        self,
+        meter_id: int,
+        body: RegisterRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._admin_command.create_register(user, meter_id, body.model_dump())
+
+    def _update_register(
+        self,
+        register_id: int,
+        body: RegisterUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.update_register(user, register_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_register(
+        self,
+        register_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._admin_command.delete_register(user, register_id)
+        return ApiMessage(message=message["message"])
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"

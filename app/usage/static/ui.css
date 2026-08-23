@@ -117,6 +117,24 @@ button.danger { background: var(--danger-soft); color: var(--danger); }
   border-bottom: 1px solid var(--line);
 }
 .mini-row:last-child { border-bottom: none; }
+.mini-row.wrap-row { flex-wrap: wrap; }
+.mini-row.inactive { opacity: 0.55; }
+
+.inline-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+.inline-form input, .inline-form select { width: auto; flex: 1 1 140px; margin-top: 0; }
+.stack-form { margin-top: 0.75rem; }
+label.check { display: flex; align-items: center; gap: 0.35rem; margin: 0.5rem 0; color: var(--text); }
+label.check input { width: auto; margin: 0; }
+label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.85rem; }
+.house-checks { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+}
 
 @media (max-width: 600px) {
   .app-header { flex-direction: column; align-items: stretch; }
