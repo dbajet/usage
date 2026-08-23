@@ -1,0 +1,125 @@
+/* Usage — clean, compact UI following the family_net design language. */
+
+:root {
+  --bg: #f6f5f0;
+  --card: #ffffff;
+  --text: #26221c;
+  --muted: #6f695e;
+  --line: #e4e0d5;
+  --accent: #2f6f4f;
+  --accent-soft: #e3efe8;
+  --danger: #b23a3a;
+  --danger-soft: #f7e4e4;
+  --ok: #2f6f4f;
+  --radius-s: 10px;
+  --radius-m: 16px;
+  --shadow: 0 1px 3px rgba(38, 34, 28, 0.08), 0 6px 20px rgba(38, 34, 28, 0.06);
+}
+
+:root[data-theme="dark"] {
+  --bg: #191713;
+  --card: #221f1a;
+  --text: #ece8df;
+  --muted: #a49c8d;
+  --line: #38342c;
+  --accent: #6fbf95;
+  --accent-soft: #24352c;
+  --danger: #e08a8a;
+  --danger-soft: #3a2626;
+  --ok: #6fbf95;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1, h2, h3 { line-height: 1.2; margin: 0 0 0.5rem; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.05rem; }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 1rem; }
+.wrap.narrow { max-width: 460px; }
+
+.brand { font-weight: 700; font-size: 1.15rem; }
+.version { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: 0.35rem; }
+
+.public-page { min-height: 100vh; display: flex; align-items: flex-start; }
+.public-header { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0 1.5rem; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+label { display: block; margin: 0.75rem 0; font-size: 0.9rem; color: var(--muted); }
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  border: 1px solid transparent;
+  padding: 0.5rem 0.9rem;
+}
+button.primary { background: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.08); }
+button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+button.ghost:hover { background: var(--accent-soft); }
+button.ghost.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+button.compact { padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+button.danger { background: var(--danger-soft); color: var(--danger); }
+
+.actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+
+.meta { color: var(--muted); font-size: 0.9rem; }
+.notice { color: var(--ok); background: var(--accent-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); word-break: break-all; }
+.error { color: var(--danger); background: var(--danger-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); }
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0 1rem;
+  flex-wrap: wrap;
+}
+.app-nav { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.header-actions { display: flex; gap: 0.4rem; }
+
+.mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.mini-row:last-child { border-bottom: none; }
+
+@media (max-width: 600px) {
+  .app-header { flex-direction: column; align-items: stretch; }
+  .actions { flex-direction: column; }
+  .actions button { width: 100%; }
+}

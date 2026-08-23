@@ -8,6 +8,7 @@ def test_class() -> None:
     tested = _Constants
     fields = [
         "app_name",
+        "contact_email",
         "cookie_name",
         "session_days",
         "login_link_minutes",
@@ -24,6 +25,7 @@ def test_class() -> None:
         "source_photo",
         "photo_max_bytes",
         "page_size",
+        "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
     ]
@@ -35,6 +37,13 @@ def test_app_name() -> None:
     tested = Constants
     result = tested.app_name
     expected = "Usage"
+    assert result == expected
+
+
+def test_contact_email() -> None:
+    tested = Constants
+    result = tested.contact_email
+    expected = "usage@edgy.world"
     assert result == expected
 
 
@@ -147,6 +156,16 @@ def test_page_size() -> None:
     tested = Constants
     result = tested.page_size
     expected = 25
+    assert result == expected
+
+
+def test_email_test_suffixes() -> None:
+    tested = Constants
+    result = tested.email_test_suffixes
+    expected = (
+        "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
+        ".test", ".invalid", ".example", ".localhost",
+    )
     assert result == expected
 
 

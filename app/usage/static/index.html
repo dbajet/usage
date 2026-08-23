@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usage</title>
+  <link rel="stylesheet" href="/static/ui.css?v=__BUILD__">
+  <script src="/static/theme.js?v=__BUILD__"></script>
+</head>
+<body>
+
+  <!-- Public page: only the authentication form. -->
+  <section id="login" class="public-page" hidden>
+    <div class="wrap narrow">
+      <header class="public-header">
+        <span class="brand">Usage</span>
+        <button id="theme-btn" class="ghost compact" type="button" title="Toggle theme">◐</button>
+      </header>
+      <div class="card">
+        <h1>Sign in</h1>
+        <p class="meta">Enter your email to receive a sign-in link, or use a passkey.</p>
+        <form id="request-link-form">
+          <label>Email
+            <input id="login-email" type="email" autocomplete="email webauthn" required>
+          </label>
+          <div class="actions">
+            <button class="primary" type="submit">Email me a link</button>
+            <button id="btn-passkey" class="ghost" type="button">Use a passkey</button>
+          </div>
+        </form>
+        <p id="login-notice" class="notice" hidden></p>
+        <p id="login-error" class="error" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Gated application shell. -->
+  <div id="app" class="wrap app-shell" hidden>
+    <header class="app-header">
+      <span class="brand">Usage <span class="version">__VERSION__</span></span>
+      <nav class="app-nav">
+        <button class="ghost" data-nav="entries" type="button">Entries</button>
+        <button class="ghost" data-nav="stats" type="button">Stats</button>
+        <button class="ghost" data-nav="settings" type="button">Settings</button>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-btn-app" class="ghost compact" type="button" title="Toggle theme">◐</button>
+        <button id="btn-logout" class="ghost compact" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section id="view-entries" hidden>
+        <h2>Entries</h2>
+        <p class="meta">The list of measurements will appear here.</p>
+      </section>
+
+      <section id="view-stats" hidden>
+        <h2>Stats</h2>
+        <p class="meta">The usage tables and trends will appear here.</p>
+      </section>
+
+      <section id="view-settings" hidden>
+        <h2>Settings</h2>
+        <div class="card">
+          <h3>Account</h3>
+          <p id="me-line" class="meta"></p>
+        </div>
+        <div class="card">
+          <h3>Passkeys</h3>
+          <p class="meta">Sign in without email on this device.</p>
+          <div id="passkey-list"></div>
+          <div class="actions">
+            <button id="btn-add-passkey" class="primary" type="button">Add a passkey</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <p id="app-error" class="error" hidden></p>
+  </div>
+
+  <script src="/static/app.js?v=__BUILD__"></script>
+</body>
+</html>

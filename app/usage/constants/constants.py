@@ -6,6 +6,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class _Constants:
     app_name: str = "Usage"
+    contact_email: str = "usage@edgy.world"
     cookie_name: str = "usage_session"
     session_days: int = 30
     login_link_minutes: int = 15
@@ -22,6 +23,10 @@ class _Constants:
     source_photo: str = "photo"
     photo_max_bytes: int = 10_000_000
     page_size: int = 25
+    email_test_suffixes: tuple[str, ...] = (
+        "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
+        ".test", ".invalid", ".example", ".localhost",
+    )
     first_admin_email: str = "dbajet@gmail.com"
     first_admin_name: str = "Denis Bajet"
 
