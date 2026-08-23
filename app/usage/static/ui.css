@@ -323,7 +323,23 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .viz-chart .axis text { fill: var(--muted); font-size: 11px; }
 .viz-chart .series path { fill: none; stroke-width: 2; }
 .viz-chart .series circle.dot { stroke: var(--card); stroke-width: 2; }
-.viz-chart .series circle.hit { fill: transparent; }
+
+.viz-holder { position: relative; }
+.viz-hover line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+.viz-hover line.hov-main { stroke: var(--accent); stroke-dasharray: none; }
+.viz-tip {
+  position: absolute;
+  z-index: 5;
+  padding: 0.35rem 0.55rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  pointer-events: none;
+  white-space: nowrap;
+}
 .viz-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.25rem; }
 .viz-legend span { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text); }
 .viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
@@ -374,4 +390,10 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
   /* The bottom nav eats extra height on small screens. */
   #reading-list .table-wrap { max-height: calc(100dvh - 420px); }
+  /* The three switches stay on one row. */
+  .stats-toggles { gap: 0.6rem; flex-wrap: nowrap; }
+  label.switch { gap: 0.3rem; font-size: 0.78rem; }
+  label.switch .slider { width: 30px; height: 17px; }
+  label.switch .slider::after { top: 2.5px; width: 12px; height: 12px; }
+  label.switch input:checked + .slider::after { transform: translateX(12px); }
 }

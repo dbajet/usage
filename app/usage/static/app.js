@@ -544,10 +544,16 @@ function statsPrefs() {
   }
 }
 
-function saveStatsPrefs() {
+function saveStatsPrefs(event) {
+  const tables = $("#stats-show-tables");
+  const graphs = $("#stats-show-graphs");
+  if (!tables.checked && !graphs.checked) {
+    // At least one of the two stays on: hiding the last one re-enables the other.
+    (event && event.target === tables ? graphs : tables).checked = true;
+  }
   const prefs = {
-    tables: $("#stats-show-tables").checked,
-    graphs: $("#stats-show-graphs").checked,
+    tables: tables.checked,
+    graphs: graphs.checked,
     merged: $("#stats-merge-graphs").checked,
   };
   try { localStorage.setItem("usage-stats-prefs", JSON.stringify(prefs)); } catch (_) {}
@@ -579,7 +585,7 @@ function renderStats(tables, series) {
     html += `
       <div class="card">
         <h3>Trends <span class="meta">(all meters, one scale)</span></h3>
-        ${chartMarkup(allSeries)}
+        ${chartMarkup(allSeries, true)}
         ${legendMarkup(allSeries)}
       </div>`;
   }
@@ -599,6 +605,7 @@ function renderStats(tables, series) {
   if (!html) html = '<p class="meta">Tables and graphs are both hidden - enable one above.</p>';
   $("#stats-content").innerHTML = html;
   wireTableHover("#stats-content");
+  wireChartHover("#stats-content");
 }
 
 function clearTableHover(table) {
@@ -646,7 +653,7 @@ function niceStep(rough) {
   return 10 * magnitude;
 }
 
-function chartMarkup(seriesList) {
+function chartMarkup(seriesList, merged = false) {
   const months = [...new Set(seriesList.flatMap((item) => item.points.map((point) => point.month)))].sort();
   const pointCount = seriesList.reduce((count, item) => count + item.points.length, 0);
   if (months.length < 2 || pointCount < 2) return "";
@@ -685,22 +692,110 @@ function chartMarkup(seriesList) {
     const path = item.points
       .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${xAt(point.month).toFixed(1)},${yAt(point.value).toFixed(1)}`)
       .join(" ");
-    const dots = item.points.map((point) => {
-      const tooltip = `<title>${esc(item.label)} · ${esc(point.month)} · ${fmtValue(point.value)}${item.unit ? ` ${esc(item.unit)}` : ""}</title>`;
-      const dot = showDots
-        ? `<circle class="dot" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3" fill="${color}"></circle>`
-        : "";
-      return `${dot}<circle class="hit" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="9">${tooltip}</circle>`;
-    }).join("");
+    const dots = showDots
+      ? item.points.map((point) =>
+          `<circle class="dot" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3" fill="${color}"></circle>`).join("")
+      : "";
     return `<g class="series"><path d="${path}" stroke="${color}"></path>${dots}</g>`;
   });
 
+  const hoverY = `y1="${top}" y2="${top + plotHeight}"`;
+  const config = {
+    months,
+    left,
+    plotWidth,
+    count: months.length,
+    merged,
+    series: seriesList.map((item) => ({
+      label: item.label,
+      unit: item.unit,
+      values: Object.fromEntries(item.points.map((point) => [point.month, point.value])),
+    })),
+  };
   return `
-    <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Monthly consumption trend">
-      <g class="grid">${gridLines.join("")}</g>
-      <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
-      ${paths.join("")}
-    </svg>`;
+    <div class="viz-holder" data-chart="${esc(JSON.stringify(config))}">
+      <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Monthly consumption trend">
+        <g class="grid">${gridLines.join("")}</g>
+        <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        ${paths.join("")}
+        <g class="viz-hover" hidden>
+          <line class="hov-prev" ${hoverY} hidden></line>
+          <line class="hov-next" ${hoverY} hidden></line>
+          <line class="hov-main" ${hoverY}></line>
+        </g>
+      </svg>
+      <div class="viz-tip" hidden></div>
+    </div>`;
+}
+
+function wireChartHover(rootSelector) {
+  $$(`${rootSelector} .viz-holder`).forEach((holder) => {
+    const config = JSON.parse(holder.dataset.chart);
+    const svg = holder.querySelector("svg");
+    const hover = svg.querySelector(".viz-hover");
+    const prevLine = hover.querySelector(".hov-prev");
+    const nextLine = hover.querySelector(".hov-next");
+    const mainLine = hover.querySelector(".hov-main");
+    const tip = holder.querySelector(".viz-tip");
+    const xAt = (index) => config.left + (index * config.plotWidth) / Math.max(1, config.count - 1);
+    const shifted = (month, years) => `${Number(month.slice(0, 4)) + years}-${month.slice(5, 7)}`;
+    const monthLabel = (month) => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
+    const setLine = (line, month) => {
+      const index = config.months.indexOf(month);
+      if (index < 0) { line.setAttribute("hidden", ""); return false; }
+      line.removeAttribute("hidden");
+      line.setAttribute("x1", xAt(index));
+      line.setAttribute("x2", xAt(index));
+      return true;
+    };
+    const rowFor = (month) => {
+      const values = config.series
+        .filter((series) => series.values[month] !== undefined)
+        .map((series) => {
+          const prefix = config.series.length > 1 ? `${series.label}: ` : "";
+          return `${prefix}${fmtThousand(series.values[month])}${series.unit ? ` ${series.unit}` : ""}`;
+        });
+      if (!values.length) return "";
+      return `<strong>${esc(monthLabel(month))}</strong> · ${esc(values.join(" · "))}`;
+    };
+    svg.addEventListener("mousemove", (event) => {
+      const rect = svg.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) * 720) / rect.width;
+      const index = Math.round(((x - config.left) * Math.max(1, config.count - 1)) / config.plotWidth);
+      if (index < 0 || index >= config.count) {
+        hover.setAttribute("hidden", "");
+        tip.hidden = true;
+        return;
+      }
+      const month = config.months[index];
+      hover.removeAttribute("hidden");
+      setLine(mainLine, month);
+      const rows = [rowFor(month)];
+      if (config.merged) {
+        prevLine.setAttribute("hidden", "");
+        nextLine.setAttribute("hidden", "");
+      } else {
+        // Year-over-year: one line twelve months back, one twelve months ahead.
+        const before = shifted(month, -1);
+        const after = shifted(month, 1);
+        if (setLine(prevLine, before)) rows.push(rowFor(before));
+        if (setLine(nextLine, after)) rows.push(rowFor(after));
+      }
+      tip.innerHTML = rows.filter(Boolean).join("<br>");
+      tip.hidden = false;
+      const holderRect = holder.getBoundingClientRect();
+      let tipLeft = event.clientX - holderRect.left + 14;
+      if (tipLeft + tip.offsetWidth > holderRect.width - 8) {
+        tipLeft = Math.max(8, event.clientX - holderRect.left - tip.offsetWidth - 14);
+      }
+      tip.style.left = `${tipLeft}px`;
+      tip.style.top = `${event.clientY - holderRect.top + 14}px`;
+    });
+    svg.addEventListener("mouseleave", () => {
+      hover.setAttribute("hidden", "");
+      tip.hidden = true;
+    });
+  });
 }
 
 async function loadAdmin() {
