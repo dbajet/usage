@@ -477,8 +477,8 @@ function renderReadings(data) {
       return `<td class="cell-reading" data-edit-reading="${reading.id}" title="${esc(`${tip} · ${reading.source} · click to edit`)}">${text}</td>`;
     }).join("");
     const year = month.slice(0, 4);
-    const day = `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${Number(month.slice(8, 10))}`;
-    const label = year === lastYear ? day : `<strong>${esc(year)}</strong> · ${day}`;
+    const monthName = MONTH_NAMES[Number(month.slice(5, 7)) - 1];
+    const label = year === lastYear ? monthName : `<strong>${esc(year)}</strong> · ${monthName}`;
     lastYear = year;
     return `<tr><td title="${esc(month)}">${label}</td>${cells}</tr>`;
   }).join("");
