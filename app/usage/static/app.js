@@ -478,11 +478,12 @@ function renderReadings(data) {
     return `<tr><td title="${esc(month)}">${label}</td>${cells}</tr>`;
   }).join("");
   $("#reading-list").innerHTML = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
-  const pager = [];
-  if (data.page > 1) pager.push(`<button class="ghost compact" data-page="${data.page - 1}" type="button">← Previous</button>`);
-  pager.push(`<span class="meta">Page ${data.page} / ${data.pages} · ${data.total} months</span>`);
-  if (data.page < data.pages) pager.push(`<button class="ghost compact" data-page="${data.page + 1}" type="button">Next →</button>`);
-  $("#reading-pager").innerHTML = pager.join(" ");
+  const chevronLeft = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
+  const chevronRight = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
+  $("#reading-pager").innerHTML = `
+    <button class="ghost compact icon-button" data-page="${data.page - 1}" type="button" aria-label="Previous page"${data.page <= 1 ? " disabled" : ""}>${chevronLeft}</button>
+    <span class="meta">Page ${data.page} / ${data.pages} · ${data.total} months</span>
+    <button class="ghost compact icon-button" data-page="${data.page + 1}" type="button" aria-label="Next page"${data.page >= data.pages ? " disabled" : ""}>${chevronRight}</button>`;
   $$("[data-page]").forEach((button) => button.addEventListener("click", () => loadReadings(Number(button.dataset.page))));
   $$("[data-edit-reading]").forEach((cell) => cell.addEventListener("click", () => editReading(Number(cell.dataset.editReading), data)));
   wireTableHover("#reading-list");
