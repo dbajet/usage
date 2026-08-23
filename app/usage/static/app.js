@@ -123,7 +123,7 @@ function showApp() {
   api("/api/version")
     .then((data) => { $("#version").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : ""); })
     .catch(() => {});
-  showView("entries");
+  showView("stats");
 }
 
 async function requestLink(event) {
