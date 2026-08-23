@@ -377,21 +377,41 @@ function renderValueInputs() {
       placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>`).join("");
 }
 
+async function downscalePhoto(file) {
+  // Phone photos are several MB; ~1.5k px is plenty to read the digits and
+  // uploads far faster on mobile. Falls back to the original on any failure.
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1568 / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1) { bitmap.close(); return file; }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    return blob || file;
+  } catch (_) {
+    return file;
+  }
+}
+
 async function readPhoto() {
   const meter = selectedMeter();
   const file = $("#reading-photo").files[0];
   if (!meter) { showAppError(new Error("Add a meter first.")); return; }
   if (!file) { showAppError(new Error("Choose a photo first.")); return; }
   try {
+    const photo = await downscalePhoto(file);
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = () => reject(new Error("The photo could not be loaded."));
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(photo);
     });
     const data = await api("/api/readings/extract", { method: "POST", body: JSON.stringify({
       meter_id: meter.id,
-      media_type: file.type,
+      media_type: photo.type || file.type,
       image_base64: String(dataUrl).split(",")[1] || "",
     }) });
     let missing = false;
