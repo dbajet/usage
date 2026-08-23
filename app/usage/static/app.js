@@ -7,10 +7,9 @@ let state = {
   me: null,
   admin: null,
   dashboard: null,
-  entriesHouseId: 0,
+  houseId: 0,
   entriesPage: 1,
   readingSource: "manual",
-  statsHouseId: 0,
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -75,6 +74,61 @@ function showAppError(error) {
   target.textContent = error.message || String(error);
   target.hidden = false;
   setTimeout(() => { target.hidden = true; }, 6000);
+}
+
+function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false }) {
+  return new Promise((resolve) => {
+    const backdrop = $("#modal-backdrop");
+    $("#modal-title").textContent = title;
+    const messageTarget = $("#modal-message");
+    messageTarget.textContent = message;
+    messageTarget.hidden = !message;
+    $("#modal-fields").innerHTML = options.length
+      ? options.map((option) => `
+          <button class="ghost option${option.active ? " active" : ""}" type="button" data-modal-option="${esc(String(option.value))}">
+            ${esc(option.label)}
+          </button>`).join("")
+      : fields.map((field) => {
+          if (field.type === "checkbox") {
+            return `<label class="check"><input type="checkbox" data-modal-field="${esc(field.name)}"${field.value ? " checked" : ""}> ${esc(field.label)}</label>`;
+          }
+          const step = field.type === "number" ? ' step="0.01"' : "";
+          return `<label>${esc(field.label)}<input type="${esc(field.type || "text")}"${step} data-modal-field="${esc(field.name)}" value="${esc(field.value ?? "")}"></label>`;
+        }).join("");
+    $("#modal-submit").hidden = Boolean(options.length);
+    $("#modal-submit").textContent = submitLabel;
+    $("#modal-submit").classList.toggle("danger", danger);
+    $("#modal-submit").classList.toggle("primary", !danger);
+    backdrop.hidden = false;
+    const first = $("#modal-fields input:not([type=checkbox])");
+    if (first) first.focus();
+
+    const close = (result) => {
+      backdrop.hidden = true;
+      $("#modal-form").onsubmit = null;
+      $("#modal-cancel").onclick = null;
+      backdrop.onclick = null;
+      document.onkeydown = null;
+      resolve(result);
+    };
+    $("#modal-form").onsubmit = (event) => {
+      event.preventDefault();
+      const values = {};
+      $$("#modal-fields [data-modal-field]").forEach((input) => {
+        values[input.dataset.modalField] = input.type === "checkbox" ? input.checked : input.value;
+      });
+      close(values);
+    };
+    $$("#modal-fields [data-modal-option]").forEach((button) =>
+      button.addEventListener("click", () => close({ value: button.dataset.modalOption })));
+    $("#modal-cancel").onclick = () => close(null);
+    backdrop.onclick = (event) => { if (event.target === backdrop) close(null); };
+    document.onkeydown = (event) => { if (event.key === "Escape") close(null); };
+  });
+}
+
+async function confirmModal(title, message, submitLabel = "Delete") {
+  return (await openModal({ title, message, submitLabel, danger: true })) !== null;
 }
 
 function showView(name) {
@@ -224,23 +278,46 @@ async function loadPasskeys() {
   } catch (error) { showAppError(error); }
 }
 
+async function ensureDashboard() {
+  state.dashboard = await api("/api/dashboard");
+  const houses = state.dashboard.houses || [];
+  if (!houses.some((house) => house.id === state.houseId)) {
+    state.houseId = houses.length ? houses[0].id : 0;
+  }
+  const current = houses.find((house) => house.id === state.houseId);
+  $("#house-name").textContent = current ? current.name : "";
+  $("#house-btn").hidden = houses.length < 2;
+}
+
+function currentView() {
+  const active = $(".app-nav button.active");
+  return active ? active.dataset.nav : "stats";
+}
+
+async function chooseHouse() {
+  const houses = (state.dashboard && state.dashboard.houses) || [];
+  const choice = await openModal({
+    title: "Choose the house",
+    options: houses.map((house) => ({ value: house.id, label: house.name, active: house.id === state.houseId })),
+  });
+  if (choice === null || Number(choice.value) === state.houseId) return;
+  state.houseId = Number(choice.value);
+  state.entriesPage = 1;
+  const current = houses.find((house) => house.id === state.houseId);
+  $("#house-name").textContent = current ? current.name : "";
+  showView(currentView());
+}
+
 async function loadEntries() {
   try {
-    state.dashboard = await api("/api/dashboard");
-    const houses = state.dashboard.houses || [];
-    const select = $("#entries-house");
-    select.innerHTML = houses.map((house) => `<option value="${house.id}">${esc(house.name)}</option>`).join("");
-    if (!houses.some((house) => house.id === state.entriesHouseId)) {
-      state.entriesHouseId = houses.length ? houses[0].id : 0;
-    }
-    select.value = String(state.entriesHouseId);
+    await ensureDashboard();
     renderReadingForm();
     await loadReadings(state.entriesPage);
   } catch (error) { showAppError(error); }
 }
 
 function houseMeters() {
-  return (state.dashboard.meters || []).filter((meter) => meter.house_id === state.entriesHouseId);
+  return (state.dashboard.meters || []).filter((meter) => meter.house_id === state.houseId);
 }
 
 function renderReadingForm() {
@@ -317,13 +394,13 @@ async function addReading(event) {
 }
 
 async function loadReadings(page) {
-  if (!state.entriesHouseId) {
+  if (!state.houseId) {
     $("#reading-list").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
     $("#reading-pager").innerHTML = "";
     return;
   }
   try {
-    const data = await api(`/api/readings?house_id=${state.entriesHouseId}&page=${page}`);
+    const data = await api(`/api/readings?house_id=${state.houseId}&page=${page}`);
     state.entriesPage = data.page;
     renderReadings(data);
   } catch (error) { showAppError(error); }
@@ -351,7 +428,7 @@ function renderReadings(data) {
   $$("[data-page]").forEach((button) => button.addEventListener("click", () => loadReadings(Number(button.dataset.page))));
   $$("[data-edit-reading]").forEach((button) => button.addEventListener("click", () => editReading(Number(button.dataset.editReading), data)));
   $$("[data-delete-reading]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("Delete this reading?")) return;
+    if (!await confirmModal("Delete reading", "Delete this reading?")) return;
     try {
       await api(`/api/readings/${button.dataset.deleteReading}`, { method: "DELETE" });
       await loadReadings(state.entriesPage);
@@ -361,36 +438,38 @@ function renderReadings(data) {
 
 async function editReading(readingId, data) {
   const reading = (data.readings || []).find((item) => item.id === readingId);
-  const readOn = prompt("Date (YYYY-MM-DD):", reading.read_on);
-  if (readOn === null) return;
-  const values = [];
-  for (const value of reading.values) {
-    const answer = prompt(`${value.label || "Counter"}:`, String(value.value));
-    if (answer === null) return;
-    values.push({ register_id: value.register_id, value: Number(answer) });
-  }
+  const answers = await openModal({
+    title: `Edit reading · ${reading.meter_label || reading.kind}`,
+    fields: [
+      { name: "read_on", label: "Date", type: "date", value: reading.read_on },
+      ...reading.values.map((value) => ({
+        name: `register-${value.register_id}`,
+        label: value.label || "Counter",
+        type: "number",
+        value: value.value,
+      })),
+    ],
+  });
+  if (answers === null) return;
+  const values = reading.values.map((value) => ({
+    register_id: value.register_id,
+    value: Number(answers[`register-${value.register_id}`]),
+  }));
   try {
-    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: readOn, values }) });
+    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: answers.read_on, values }) });
     await loadReadings(state.entriesPage);
   } catch (error) { showAppError(error); }
 }
 
 async function loadStats() {
   try {
-    state.dashboard = await api("/api/dashboard");
-    const houses = state.dashboard.houses || [];
-    const select = $("#stats-house");
-    select.innerHTML = houses.map((house) => `<option value="${house.id}">${esc(house.name)}</option>`).join("");
-    if (!houses.some((house) => house.id === state.statsHouseId)) {
-      state.statsHouseId = houses.length ? houses[0].id : 0;
-    }
-    select.value = String(state.statsHouseId);
-    if (!state.statsHouseId) {
+    await ensureDashboard();
+    if (!state.houseId) {
       $("#stats-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
       return;
     }
-    const tables = await api(`/api/stats/tables?house_id=${state.statsHouseId}`);
-    const series = await api(`/api/stats/series?house_id=${state.statsHouseId}`);
+    const tables = await api(`/api/stats/tables?house_id=${state.houseId}`);
+    const series = await api(`/api/stats/series?house_id=${state.houseId}`);
     renderStats(tables, series);
   } catch (error) { showAppError(error); }
 }
@@ -528,15 +607,18 @@ function renderHouses() {
       </span>
     </div>`).join("") || '<p class="meta">No house yet.</p>';
   $$("[data-rename-house]").forEach((button) => button.addEventListener("click", async () => {
-    const name = prompt("House name:", houseName(Number(button.dataset.renameHouse)));
-    if (!name) return;
+    const answers = await openModal({
+      title: "Rename house",
+      fields: [{ name: "name", label: "House name", value: houseName(Number(button.dataset.renameHouse)) }],
+    });
+    if (answers === null || !answers.name.trim()) return;
     try {
-      await api(`/api/houses/${button.dataset.renameHouse}`, { method: "PUT", body: JSON.stringify({ name }) });
+      await api(`/api/houses/${button.dataset.renameHouse}`, { method: "PUT", body: JSON.stringify({ name: answers.name.trim() }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-house]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("Delete this house, its meters and all their readings?")) return;
+    if (!await confirmModal("Delete house", "Delete this house, its meters and all their readings?")) return;
     try {
       await api(`/api/houses/${button.dataset.deleteHouse}`, { method: "DELETE" });
       await loadAdmin();
@@ -574,16 +656,21 @@ function renderUsers() {
   }));
   $$("[data-edit-user]").forEach((button) => button.addEventListener("click", async () => {
     const user = state.admin.users.find((item) => item.id === Number(button.dataset.editUser));
-    const name = prompt("Name:", user.name);
-    if (name === null) return;
-    const isAdmin = confirm("Should this user be an admin? OK = yes, Cancel = no.");
+    const answers = await openModal({
+      title: `Edit user · ${user.email}`,
+      fields: [
+        { name: "name", label: "Name", value: user.name },
+        { name: "is_admin", label: "Admin", type: "checkbox", value: user.is_admin },
+      ],
+    });
+    if (answers === null) return;
     try {
-      await api(`/api/users/${user.id}`, { method: "PUT", body: JSON.stringify({ name, is_admin: isAdmin }) });
+      await api(`/api/users/${user.id}`, { method: "PUT", body: JSON.stringify({ name: answers.name, is_admin: answers.is_admin }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-user]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("Delete this user?")) return;
+    if (!await confirmModal("Delete user", "Delete this user?")) return;
     try {
       await api(`/api/users/${button.dataset.deleteUser}`, { method: "DELETE" });
       await loadAdmin();
@@ -615,32 +702,45 @@ function renderMeters() {
     </div>`).join("") || '<p class="meta">No meter yet.</p>';
   $$("[data-edit-meter]").forEach((button) => button.addEventListener("click", async () => {
     const meter = state.admin.meters.find((item) => item.id === Number(button.dataset.editMeter));
-    const label = prompt("Label:", meter.label);
-    if (label === null) return;
-    const unit = prompt("Unit:", meter.unit);
-    if (unit === null) return;
-    const active = confirm("Should this meter stay active? OK = yes, Cancel = no.");
+    const answers = await openModal({
+      title: `Edit meter · ${meter.label || meter.kind}`,
+      fields: [
+        { name: "label", label: "Label", value: meter.label },
+        { name: "unit", label: "Unit", value: meter.unit },
+        { name: "active", label: "Active", type: "checkbox", value: meter.active },
+      ],
+    });
+    if (answers === null) return;
     try {
-      await api(`/api/meters/${meter.id}`, { method: "PUT", body: JSON.stringify({ label, unit, active }) });
+      await api(`/api/meters/${meter.id}`, { method: "PUT", body: JSON.stringify({
+        label: answers.label,
+        unit: answers.unit,
+        active: answers.active,
+      }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-meter]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("Delete this meter and all its readings?")) return;
+    if (!await confirmModal("Delete meter", "Delete this meter and all its readings?")) return;
     try {
       await api(`/api/meters/${button.dataset.deleteMeter}`, { method: "DELETE" });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-add-register]").forEach((button) => button.addEventListener("click", async () => {
-    const label = prompt("Register label (e.g. HP):", "");
-    if (label === null) return;
-    const initial = prompt("Start value of the counter:", "0");
-    if (initial === null) return;
+    const answers = await openModal({
+      title: "Add register",
+      fields: [
+        { name: "label", label: "Register label (e.g. HP)", value: "" },
+        { name: "initial_value", label: "Start value of the counter", type: "number", value: 0 },
+      ],
+      submitLabel: "Add",
+    });
+    if (answers === null) return;
     try {
       await api(`/api/meters/${button.dataset.addRegister}/registers`, { method: "POST", body: JSON.stringify({
-        label,
-        initial_value: Number(initial) || 0,
+        label: answers.label,
+        initial_value: Number(answers.initial_value) || 0,
       }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
@@ -648,22 +748,26 @@ function renderMeters() {
   $$("[data-edit-register]").forEach((button) => button.addEventListener("click", async () => {
     const register = state.admin.meters.flatMap((meter) => meter.registers)
       .find((item) => item.id === Number(button.dataset.editRegister));
-    const label = prompt("Register label:", register.label);
-    if (label === null) return;
-    const initial = prompt("Start value of the counter:", String(register.initial_value));
-    if (initial === null) return;
-    const active = confirm("Should this register stay active? OK = yes, Cancel = no.");
+    const answers = await openModal({
+      title: `Edit register · ${register.label || "register"}`,
+      fields: [
+        { name: "label", label: "Register label", value: register.label },
+        { name: "initial_value", label: "Start value of the counter", type: "number", value: register.initial_value },
+        { name: "active", label: "Active", type: "checkbox", value: register.active },
+      ],
+    });
+    if (answers === null) return;
     try {
       await api(`/api/registers/${register.id}`, { method: "PUT", body: JSON.stringify({
-        label,
-        initial_value: Number(initial) || 0,
-        active,
+        label: answers.label,
+        initial_value: Number(answers.initial_value) || 0,
+        active: answers.active,
       }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-register]").forEach((button) => button.addEventListener("click", async () => {
-    if (!confirm("Delete this register?")) return;
+    if (!await confirmModal("Delete register", "Delete this register?")) return;
     try {
       await api(`/api/registers/${button.dataset.deleteRegister}`, { method: "DELETE" });
       await loadAdmin();
@@ -739,19 +843,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);
   $("#meter-dual").addEventListener("change", toggleDualRegisters);
-  $("#entries-house").addEventListener("change", () => {
-    state.entriesHouseId = Number($("#entries-house").value);
-    state.entriesPage = 1;
-    renderReadingForm();
-    loadReadings(1);
-  });
+  $("#house-btn").addEventListener("click", chooseHouse);
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
-  $("#stats-house").addEventListener("change", () => {
-    state.statsHouseId = Number($("#stats-house").value);
-    loadStats();
-  });
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));
