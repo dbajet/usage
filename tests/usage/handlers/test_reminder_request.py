@@ -14,12 +14,12 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = ReminderRequest
     result = list(tested.model_fields.keys())
-    expected = ["enabled"]
+    expected = ["house_id", "enabled"]
     assert result == expected
 
 
 def test___init__() -> None:
-    tested = ReminderRequest(enabled=True)
+    tested = ReminderRequest(house_id=7, enabled=True)
     result = tested.model_dump()
-    expected = {"enabled": True}
+    expected = {"house_id": 7, "enabled": True}
     assert result == expected

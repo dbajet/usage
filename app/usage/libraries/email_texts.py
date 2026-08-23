@@ -21,16 +21,16 @@ class EmailTexts:
         return subject, body_lines
 
     @classmethod
-    def reminder(cls, month_label: str, link: str) -> tuple[str, list[str]]:
-        subject = f"{Constants.app_name}: time to record the readings of {month_label}"
+    def reminder(cls, month_label: str, house: str, link: str) -> tuple[str, list[str]]:
+        subject = f"{Constants.app_name}: time to record the readings of {house} for {month_label}"
         body_lines = [
             "Hello,",
             "",
-            f"A new month has started - a good moment to record the meter readings of {month_label}:",
+            f"A new month has started - a good moment to record the meter readings of {house} for {month_label}:",
             link,
             "",
-            "You receive this monthly reminder because you enabled it in Settings;",
-            "you can turn it off there at any time.",
+            "You receive this monthly reminder for this house;",
+            "you can turn it off in Settings > Account at any time.",
         ]
         return subject, body_lines
 

@@ -65,7 +65,8 @@ h3 { font-size: 1.05rem; }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 1rem; }
 .wrap.narrow { max-width: 460px; }
 
-.brand { font-weight: 700; font-size: 1.15rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 1.15rem; }
+.brand-logo { width: 26px; height: 26px; flex: none; }
 .version { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: 0.35rem; }
 
 .public-page { min-height: 100vh; display: flex; align-items: flex-start; }
@@ -196,6 +197,16 @@ td.cell-reading { cursor: pointer; }
 
 .view-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem; }
 .view-heading h2 { margin: 0; }
+.modal-heading {
+  margin: 1rem 0 0.35rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .modal button.option { display: flex; width: 100%; margin: 0.35rem 0; justify-content: flex-start; }
 .modal button.option.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 

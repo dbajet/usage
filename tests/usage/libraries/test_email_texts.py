@@ -23,17 +23,17 @@ def test_sign_in_link() -> None:
 
 def test_reminder() -> None:
     tested = EmailTexts
-    result = tested.reminder("August 2026", "https://usage.example.com")
+    result = tested.reminder("August 2026", "Fremur", "https://usage.example.com")
     expected = (
-        "Usage: time to record the readings of August 2026",
+        "Usage: time to record the readings of Fremur for August 2026",
         [
             "Hello,",
             "",
-            "A new month has started - a good moment to record the meter readings of August 2026:",
+            "A new month has started - a good moment to record the meter readings of Fremur for August 2026:",
             "https://usage.example.com",
             "",
-            "You receive this monthly reminder because you enabled it in Settings;",
-            "you can turn it off there at any time.",
+            "You receive this monthly reminder for this house;",
+            "you can turn it off in Settings > Account at any time.",
         ],
     )
     assert result == expected

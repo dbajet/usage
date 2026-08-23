@@ -114,34 +114,23 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
         database.reset_mock()
         email_sender.reset_mock()
 
+    exp_materialize = call.execute(
+        """
+            INSERT INTO reminders(user_id, house_id)
+            SELECT user_id, house_id FROM user_houses
+            ON CONFLICT (user_id, house_id) DO NOTHING
+            """,
+    )
     exp_fetch = call.fetch_all(
         """
-            SELECT id, email_sealed AS email FROM users
-            WHERE reminder AND (reminder_sent_on IS NULL OR reminder_sent_on < %s)
-            ORDER BY id
+            SELECT reminders.id, users.email_sealed AS email, houses.name_sealed AS house
+            FROM reminders
+            JOIN users ON users.id = reminders.user_id
+            JOIN houses ON houses.id = reminders.house_id
+            WHERE reminders.enabled AND (reminders.sent_on IS NULL OR reminders.sent_on < %s)
+            ORDER BY reminders.id
             """,
         ("2026-09-01",),
-    )
-    exp_claim = call.execute(
-        """
-                UPDATE users SET reminder_sent_on = %s
-                WHERE id = %s AND (reminder_sent_on IS NULL OR reminder_sent_on < %s)
-                RETURNING id
-                """,
-        ("2026-09-01", 7, "2026-09-01"),
-    )
-    exp_send = call.send(
-        "jane@example.com",
-        "Usage: time to record the readings of August 2026",
-        [
-            "Hello,",
-            "",
-            "A new month has started - a good moment to record the meter readings of August 2026:",
-            "https://usage.example.com",
-            "",
-            "You receive this monthly reminder because you enabled it in Settings;",
-            "you can turn it off there at any time.",
-        ],
     )
 
     # not the first of the month: nothing happens
@@ -154,46 +143,54 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
     assert email_sender.mock_calls == []
     reset_all()
 
-    # first of the month: one user claimed and emailed, one already claimed
-    # by the other colour, one whose email fails and is logged
+    # first of the month: one reminder claimed and emailed, one already
+    # claimed by the other colour, one whose email fails and is logged
     mock_datetime.now.side_effect = [datetime(2026, 9, 1, 8, 0, 0, tzinfo=UTC)]
     sealed_rows = [
-        {"id": 7, "email": "sealedJane"},
-        {"id": 8, "email": "sealedJohn"},
-        {"id": 9, "email": "sealedMary"},
+        {"id": 7, "email": "sealedJane", "house": "sealedFremur"},
+        {"id": 8, "email": "sealedJohn", "house": "sealedFremur"},
+        {"id": 9, "email": "sealedMary", "house": "sealedDougmar"},
     ]
     database.fetch_all.side_effect = [sealed_rows]
     database.decrypt_rows.side_effect = [
         [
-            {"id": 7, "email": "jane@example.com"},
-            {"id": 8, "email": "john@example.com"},
-            {"id": 9, "email": "mary@example.com"},
+            {"id": 7, "email": "jane@example.com", "house": "Fremur"},
+            {"id": 8, "email": "john@example.com", "house": "Fremur"},
+            {"id": 9, "email": "mary@example.com", "house": "Dougmar"},
         ],
     ]
-    database.execute.side_effect = [7, 0, 9]
+    database.execute.side_effect = [0, 7, 0, 9]
     email_sender.send.side_effect = [True, False]
     mock_logging.getLogger.side_effect = [logger]
     result = tested.tick()
     assert result is None
     assert mock_datetime.mock_calls == [call.now(UTC)]
     assert mock_logging.mock_calls == [call.getLogger("usage")]
-    assert logger.mock_calls == [call.warning("[REMINDER] email failed for user %s", 9)]
+    assert logger.mock_calls == [call.warning("[REMINDER] email failed for reminder %s", 9)]
     exp_calls = [
+        exp_materialize,
         exp_fetch,
-        call.decrypt_rows(sealed_rows, ("email",)),
-        exp_claim,
+        call.decrypt_rows(sealed_rows, ("email", "house")),
         call.execute(
             """
-                UPDATE users SET reminder_sent_on = %s
-                WHERE id = %s AND (reminder_sent_on IS NULL OR reminder_sent_on < %s)
+                UPDATE reminders SET sent_on = %s
+                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
+                RETURNING id
+                """,
+            ("2026-09-01", 7, "2026-09-01"),
+        ),
+        call.execute(
+            """
+                UPDATE reminders SET sent_on = %s
+                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
                 RETURNING id
                 """,
             ("2026-09-01", 8, "2026-09-01"),
         ),
         call.execute(
             """
-                UPDATE users SET reminder_sent_on = %s
-                WHERE id = %s AND (reminder_sent_on IS NULL OR reminder_sent_on < %s)
+                UPDATE reminders SET sent_on = %s
+                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
                 RETURNING id
                 """,
             ("2026-09-01", 9, "2026-09-01"),
@@ -201,18 +198,30 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
     ]
     assert database.mock_calls == exp_calls
     exp_calls = [
-        exp_send,
         call.send(
-            "mary@example.com",
-            "Usage: time to record the readings of August 2026",
+            "jane@example.com",
+            "Usage: time to record the readings of Fremur for August 2026",
             [
                 "Hello,",
                 "",
-                "A new month has started - a good moment to record the meter readings of August 2026:",
+                "A new month has started - a good moment to record the meter readings of Fremur for August 2026:",
                 "https://usage.example.com",
                 "",
-                "You receive this monthly reminder because you enabled it in Settings;",
-                "you can turn it off there at any time.",
+                "You receive this monthly reminder for this house;",
+                "you can turn it off in Settings > Account at any time.",
+            ],
+        ),
+        call.send(
+            "mary@example.com",
+            "Usage: time to record the readings of Dougmar for August 2026",
+            [
+                "Hello,",
+                "",
+                "A new month has started - a good moment to record the meter readings of Dougmar for August 2026:",
+                "https://usage.example.com",
+                "",
+                "You receive this monthly reminder for this house;",
+                "you can turn it off in Settings > Account at any time.",
             ],
         ),
     ]

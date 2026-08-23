@@ -174,7 +174,8 @@ def test__register() -> None:
         ("/api/houses/{house_id}", ("DELETE",)),
         ("/api/houses/{house_id}", ("PUT",)),
         ("/api/me", ("GET",)),
-        ("/api/me/reminder", ("POST",)),
+        ("/api/me/reminders", ("GET",)),
+        ("/api/me/reminders", ("POST",)),
         ("/api/meters", ("GET",)),
         ("/api/meters", ("POST",)),
         ("/api/meters/{meter_id}", ("DELETE",)),
@@ -275,7 +276,7 @@ def test__me() -> None:
 
     auth_command.user_from_token.side_effect = [helper_user()]
     result = tested._me("the-session")
-    expected = {"user_id": 7, "email": "jane@example.com", "name": "Jane Doe", "is_admin": False, "reminder": False}
+    expected = {"user_id": 7, "email": "jane@example.com", "name": "Jane Doe", "is_admin": False}
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
@@ -299,16 +300,41 @@ def test__set_reminder() -> None:
         stats_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
-    auth_command.set_reminder.side_effect = [{"message": "Monthly reminder enabled."}]
-    result = tested._set_reminder(ReminderRequest(enabled=True), "the-session")
-    expected = ApiMessage(message="Monthly reminder enabled.")
+    reading_command.set_reminder.side_effect = [{"message": "Monthly reminder enabled for this house."}]
+    result = tested._set_reminder(ReminderRequest(house_id=3, enabled=True), "the-session")
+    expected = ApiMessage(message="Monthly reminder enabled for this house.")
     assert result == expected
-    exp_calls = [call.user_from_token("the-session"), call.set_reminder(user, True)]
-    assert auth_command.mock_calls == exp_calls
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
     assert admin_command.mock_calls == []
     assert meter_command.mock_calls == []
-    assert reading_command.mock_calls == []
+    assert reading_command.mock_calls == [call.set_reminder(user, {"house_id": 3, "enabled": True})]
+    assert stats_command.mock_calls == []
+    reset_mocks()
+
+
+def test__reminder_states() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    reading_command.reminder_states.side_effect = [{"disabled_house_ids": [3]}]
+    result = tested._reminder_states("the-session")
+    expected = {"disabled_house_ids": [3]}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == [call.reminder_states(user)]
     assert stats_command.mock_calls == []
     reset_mocks()
 

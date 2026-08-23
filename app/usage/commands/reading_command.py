@@ -198,6 +198,28 @@ class ReadingCommand:
             ],
         }
 
+    def reminder_states(self, user: SessionUser) -> dict[str, Any]:
+        # Reminders are on by default: only explicit opt-outs are stored as rows.
+        rows = self._database.fetch_all(
+            "SELECT house_id FROM reminders WHERE user_id = %s AND NOT enabled ORDER BY house_id",
+            (user.user_id,),
+        )
+        return {"disabled_house_ids": [int(row["house_id"]) for row in rows]}
+
+    def set_reminder(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        house_id = int(data.get("house_id") or 0)
+        enabled = bool(data.get("enabled"))
+        self._require_house(user, house_id)
+        self._database.execute(
+            """
+            INSERT INTO reminders(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """,
+            (user.user_id, house_id, enabled),
+        )
+        result = "Monthly reminder enabled for this house." if enabled else "Monthly reminder disabled for this house."
+        return {"message": result}
+
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
         if user.is_admin:
             rows = self._database.fetch_all("SELECT id FROM houses ORDER BY id")

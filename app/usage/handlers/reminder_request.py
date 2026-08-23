@@ -4,4 +4,5 @@ from pydantic import BaseModel
 
 
 class ReminderRequest(BaseModel):
+    house_id: int
     enabled: bool

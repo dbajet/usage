@@ -60,7 +60,8 @@ class ApiRouter:
         self._router.add_api_route("/version", self._version, methods=["GET"])
         self._router.add_api_route("/session", self._session, methods=["GET"])
         self._router.add_api_route("/me", self._me, methods=["GET"])
-        self._router.add_api_route("/me/reminder", self._set_reminder, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/me/reminders", self._reminder_states, methods=["GET"])
+        self._router.add_api_route("/me/reminders", self._set_reminder, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/auth/request-link", self._request_link, methods=["POST"], response_model=AuthLinkResponse)
         self._router.add_api_route("/auth/verify-link", self._verify_link, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/auth/passkey/options", self._passkey_auth_options, methods=["POST"])
@@ -111,13 +112,17 @@ class ApiRouter:
         user = self._auth_command.user_from_token(usage_session)
         return user.to_dict()
 
+    def _reminder_states(self, usage_session: str = Cookie(default="", alias=Constants.cookie_name)) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._reading_command.reminder_states(user)
+
     def _set_reminder(
         self,
         body: ReminderRequest,
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
-        message = self._auth_command.set_reminder(user, body.enabled)
+        message = self._reading_command.set_reminder(user, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _request_link(self, body: AuthLinkRequest, request: Request) -> AuthLinkResponse:

@@ -483,6 +483,68 @@ def test_extract(require_meter: MagicMock, active_registers: MagicMock) -> None:
     reset_mocks()
 
 
+def test_reminder_states() -> None:
+    tested = helper_instance()
+    database = tested._database
+    meter_reader = tested._meter_reader
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+        meter_reader.reset_mock()
+
+    user = helper_user()
+    database.fetch_all.side_effect = [[{"house_id": 2}, {"house_id": 5}]]
+    result = tested.reminder_states(user)
+    expected = {"disabled_house_ids": [2, 5]}
+    assert result == expected
+    exp_calls = [
+        call.fetch_all(
+            "SELECT house_id FROM reminders WHERE user_id = %s AND NOT enabled ORDER BY house_id",
+            (7,),
+        ),
+    ]
+    assert database.mock_calls == exp_calls
+    assert meter_reader.mock_calls == []
+    reset_mocks()
+
+
+@patch.object(ReadingCommand, "_require_house")
+def test_set_reminder(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+    meter_reader = tested._meter_reader
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+        meter_reader.reset_mock()
+
+    user = helper_user()
+    tests = [
+        (True, "Monthly reminder enabled for this house."),
+        (False, "Monthly reminder disabled for this house."),
+    ]
+    for enabled, message in tests:
+        require_house.side_effect = [None]
+        database.execute.side_effect = [0]
+        result = tested.set_reminder(user, {"house_id": 2, "enabled": enabled})
+        expected = {"message": message}
+        assert result == expected, f"---> {enabled}"
+        assert require_house.mock_calls == [call(user, 2)]
+        exp_calls = [
+            call.execute(
+                """
+            INSERT INTO reminders(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """,
+                (7, 2, enabled),
+            ),
+        ]
+        assert database.mock_calls == exp_calls
+        assert meter_reader.mock_calls == []
+        reset_mocks()
+
+
 def test__visible_house_ids() -> None:
     tested = helper_instance()
     database = tested._database
