@@ -50,8 +50,15 @@
 /* The hidden attribute must beat any display rule (e.g. .public-page's flex). */
 [hidden] { display: none !important; }
 
+html {
+  /* The full-bleed header spans 100vw, which includes the vertical
+     scrollbar: clip the overhang so the page never scrolls sideways. */
+  overflow-x: clip;
+}
+
 body {
   margin: 0;
+  overflow-x: clip;
   background: var(--bg);
   color: var(--text);
   font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -284,17 +291,18 @@ label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.8
   }
   .app-nav button .msym { width: 20px; height: 20px; }
   .house-name { display: none; }
-  /* The tab strip shares the width instead of scrolling: icon above a small
-     label, one flexible column per tab (same look as the bottom nav). */
+  /* The tab strip shares the width instead of scrolling: icon-only tabs
+     (the title attribute keeps the name available). */
   .tabs { gap: 0.25rem; }
   .tabs button {
     flex: 1 1 0;
-    flex-direction: column;
-    gap: 0.15rem;
+    justify-content: center;
     min-width: 0;
-    padding: 0.35rem 0.2rem;
-    font-size: 0.62rem;
+    min-height: 40px;
+    padding: 0.4rem 0.2rem;
   }
+  .tabs button span { display: none; }
+  .tabs button .msym { width: 20px; height: 20px; }
   .inline-form input, .inline-form select { flex-basis: 100%; }
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
 }
