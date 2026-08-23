@@ -221,9 +221,7 @@ class ReadingCommand:
         return {"message": result}
 
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
-        if user.is_admin:
-            rows = self._database.fetch_all("SELECT id FROM houses ORDER BY id")
-            return [int(row["id"]) for row in rows]
+        # Everyone, admins included, only sees the houses they are linked to.
         rows = self._database.fetch_all("SELECT house_id FROM user_houses WHERE user_id = %s ORDER BY house_id", (user.user_id,))
         return [int(row["house_id"]) for row in rows]
 

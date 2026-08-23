@@ -552,23 +552,15 @@ def test__visible_house_ids() -> None:
     def reset_mocks() -> None:
         database.reset_mock()
 
-    # an admin sees every house
-    database.fetch_all.side_effect = [[{"id": 1}, {"id": 2}]]
-    result = tested._visible_house_ids(helper_user(is_admin=True))
-    expected = [1, 2]
-    assert result == expected
-    exp_calls = [call.fetch_all("SELECT id FROM houses ORDER BY id")]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # a common user sees the linked houses
-    database.fetch_all.side_effect = [[{"house_id": 2}]]
-    result = tested._visible_house_ids(helper_user(is_admin=False))
-    expected = [2]
-    assert result == expected
-    exp_calls = [call.fetch_all("SELECT house_id FROM user_houses WHERE user_id = %s ORDER BY house_id", (7,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
+    # everyone, admins included, only sees the linked houses
+    for is_admin in (True, False):
+        database.fetch_all.side_effect = [[{"house_id": 2}]]
+        result = tested._visible_house_ids(helper_user(is_admin=is_admin))
+        expected = [2]
+        assert result == expected, f"---> {is_admin}"
+        exp_calls = [call.fetch_all("SELECT house_id FROM user_houses WHERE user_id = %s ORDER BY house_id", (7,))]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 @patch.object(ReadingCommand, "_visible_house_ids")
