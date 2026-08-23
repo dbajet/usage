@@ -194,7 +194,7 @@ button.icon-button { display: inline-flex; align-items: center; justify-content:
 .modal .actions .push-left { margin-right: auto; }
 td.cell-reading { cursor: pointer; }
 
-.view-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.view-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem; }
 .view-heading h2 { margin: 0; }
 .modal button.option { display: flex; width: 100%; margin: 0.35rem 0; justify-content: flex-start; }
 .modal button.option.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -434,8 +434,9 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .tabs button .msym { width: 20px; height: 20px; }
   .inline-form input, .inline-form select { flex-basis: 100%; }
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
-  /* The bottom nav eats extra height on small screens. */
-  #reading-list .table-wrap { max-height: calc(100dvh - 420px); }
+  /* The bottom nav eats extra height on small screens; the table takes
+     everything left instead of leaving a dead gap above it. */
+  #reading-list .table-wrap { max-height: calc(100dvh - 330px); }
   /* Compact spacing: slimmer paddings, margins and titles. */
   .wrap { padding: 0.4rem 0.6rem; }
   .app-main { padding-top: 0.4rem; }
