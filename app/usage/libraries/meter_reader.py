@@ -87,7 +87,15 @@ class MeterReader:
             "confirm with the dial to its right: if that dial has not completed its lap back to 0, the",
             "pointer has not reached the digit yet - use the previous one. Ignore the small test dials.",
             "Ignore serial numbers, dates and units.",
-            'Reply with ONLY this JSON, nothing else: {"values": [...]}',
+            "Photos can be double-exposed: every stroke then shows a ghost copy at a fixed offset -",
+            "check the unit label and the other digits for the same doubling. Read only the primary",
+            "copy of each digit, and count a digit as 8 only when its two loops are exactly vertically",
+            "aligned: two loops offset along the ghosting direction are a 0 and its ghost.",
+            "Before answering, verify the reading digit by digit: for each digit (or dial) write one",
+            "short line naming the lit segments of its primary copy (A top, B upper-right, C lower-right,",
+            "D bottom, E lower-left, F upper-left, G middle) - or the pointer position - and the digit",
+            "you conclude.",
+            'Then finish with this JSON alone on the last line: {"values": [...]}',
             "with one number per register in the order above, or null when a register cannot be read.",
         ]
 
@@ -101,9 +109,11 @@ class MeterReader:
             if isinstance(block, dict) and block.get("type") == "text":
                 text = str(block.get("text") or "")
                 break
-        stripped = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        # The reply may hold a short digit analysis first; the JSON is the last {...}.
+        stripped = text.strip().removesuffix("```").strip()
+        start = stripped.rfind("{")
         try:
-            values = json.loads(stripped).get("values")
+            values = json.loads(stripped[start:]).get("values")
         except (ValueError, AttributeError):
             raise AppException(502, "The photo could not be analyzed. Try again or enter the value manually.") from None
         if not isinstance(values, list) or len(values) != count:

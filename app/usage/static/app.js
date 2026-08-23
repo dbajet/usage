@@ -448,6 +448,18 @@ function pastePhoto(event) {
   readPhoto();
 }
 
+function cameraPhoto() {
+  // The capture input opens the phone camera directly; the shot lands in the
+  // regular photo input and is read right away.
+  const file = $("#reading-camera").files[0];
+  if (!file) return;
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  $("#reading-photo").files = transfer.files;
+  $("#reading-camera").value = "";
+  readPhoto();
+}
+
 async function addReading(event) {
   event.preventDefault();
   const meter = selectedMeter();
@@ -1312,6 +1324,8 @@ addEventListener("DOMContentLoaded", () => {
   });
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
+  $("#btn-take-photo").addEventListener("click", () => $("#reading-camera").click());
+  $("#reading-camera").addEventListener("change", cameraPhoto);
   $("#reading-form").addEventListener("submit", addReading);
   $("#btn-new-reading").addEventListener("click", openReadingModal);
   $("#btn-prev-month").addEventListener("click", () => {

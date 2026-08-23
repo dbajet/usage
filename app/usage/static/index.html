@@ -257,9 +257,11 @@
         <div id="reading-values" class="inline-form"></div>
         <div class="inline-form">
           <input id="reading-photo" type="file" accept="image/*">
+          <input id="reading-camera" type="file" accept="image/*" capture="environment" hidden>
+          <button id="btn-take-photo" class="ghost mobile-only" type="button">Take a photo</button>
           <button id="btn-read-photo" class="ghost" type="button">Read the photo</button>
         </div>
-        <p class="meta">Tip: on a computer you can paste a copied picture (Ctrl+V).</p>
+        <p class="meta desktop-only">Tip: on a computer you can paste a copied picture (Ctrl+V).</p>
         <p id="reading-hint" class="notice" hidden></p>
         <div class="actions">
           <button id="reading-cancel" class="ghost" type="button">Cancel</button>
