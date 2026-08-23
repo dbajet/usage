@@ -446,6 +446,7 @@ function renderReadings(data) {
   const byKey = new Map(readings.map((reading) => [`${reading.read_on}|${reading.meter_id}`, reading]));
   const header = `<tr><th>Date</th>${meters.map((meter) =>
     `<th>${esc(meter.label)}${meter.unit ? ` <span class="meta">(${esc(meter.unit)})</span>` : ""}</th>`).join("")}</tr>`;
+  let lastYear = "";
   const rows = months.map((month) => {
     const cells = meters.map((meter) => {
       const reading = byKey.get(`${month}|${meter.id}`);
@@ -454,7 +455,11 @@ function renderReadings(data) {
       const tip = reading.values.map((value) => `${value.label || "counter"}: ${fmtThousand(value.value)}`).join(" · ");
       return `<td class="cell-reading" data-edit-reading="${reading.id}" title="${esc(`${tip} · ${reading.source} · click to edit`)}">${text}</td>`;
     }).join("");
-    return `<tr><td>${esc(month)}</td>${cells}</tr>`;
+    const year = month.slice(0, 4);
+    const day = `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${Number(month.slice(8, 10))}`;
+    const label = year === lastYear ? day : `<strong>${esc(year)}</strong> · ${day}`;
+    lastYear = year;
+    return `<tr><td title="${esc(month)}">${label}</td>${cells}</tr>`;
   }).join("");
   $("#reading-list").innerHTML = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
   const pager = [];
