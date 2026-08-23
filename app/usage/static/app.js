@@ -398,10 +398,23 @@ async function readPhoto() {
   } catch (error) { showAppError(error); }
 }
 
+function currentMonthValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function previousMonthValue(value) {
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const shifted = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, "0")}`;
+  return shifted;
+}
+
 function openReadingModal() {
   const meters = houseMeters();
   if (!meters.length) { showAppError(new Error("Add a meter first (Settings, Meters).")); return; }
   renderReadingForm();
+  $("#reading-month").value = currentMonthValue();
   $("#reading-photo").value = "";
   $("#reading-modal").hidden = false;
 }
@@ -419,9 +432,10 @@ async function addReading(event) {
     value: Number(input.value),
   }));
   try {
+    // A monthly reading is stored mid-month, like the imported history.
     await api("/api/readings", { method: "POST", body: JSON.stringify({
       meter_id: meter.id,
-      read_on: $("#reading-date").value,
+      read_on: `${$("#reading-month").value}-15`,
       source: state.readingSource,
       values,
     }) });
@@ -500,7 +514,7 @@ async function editReading(readingId, data) {
   const answers = await openModal({
     title: `Edit reading · ${reading.meter_label || reading.kind}`,
     fields: [
-      { name: "read_on", label: "Date", type: "date", value: reading.read_on },
+      { name: "read_on", label: "Month", type: "month", value: reading.read_on.slice(0, 7) },
       ...reading.values.map((value) => ({
         name: `register-${value.register_id}`,
         label: value.label || "Counter",
@@ -524,7 +538,7 @@ async function editReading(readingId, data) {
     value: Number(answers[`register-${value.register_id}`]),
   }));
   try {
-    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: answers.read_on, values }) });
+    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: `${answers.read_on}-15`, values }) });
     await loadReadings(state.entriesPage);
   } catch (error) { showAppError(error); }
 }
@@ -1160,6 +1174,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
   $("#btn-new-reading").addEventListener("click", openReadingModal);
+  $("#btn-prev-month").addEventListener("click", () => {
+    const input = $("#reading-month");
+    input.value = previousMonthValue(input.value || currentMonthValue());
+  });
   $("#reading-cancel").addEventListener("click", closeReadingModal);
   $("#reading-modal").addEventListener("click", (event) => {
     if (event.target === $("#reading-modal")) closeReadingModal();
