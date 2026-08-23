@@ -327,6 +327,8 @@ label.switch {
   white-space: nowrap;
 }
 label.switch input { position: absolute; width: 0; height: 0; opacity: 0; }
+/* Long switch labels (e.g. the reminder opt-in) wrap inside cards. */
+.card label.switch { margin: 0.75rem 0 0; white-space: normal; }
 label.switch .slider {
   position: relative;
   flex: none;
@@ -410,7 +412,16 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   white-space: nowrap;
 }
 .viz-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.25rem; }
-.viz-legend span { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text); }
+.viz-legend span, .viz-legend .legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.viz-legend .legend-toggle { padding: 0.15rem 0.35rem; border: none; background: none; cursor: pointer; }
+.viz-legend .legend-toggle:hover { background: var(--accent-soft); border-radius: var(--radius-s); }
+.viz-legend .legend-toggle.off { opacity: 0.45; text-decoration: line-through; }
 .viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
 
 @media (max-width: 760px) {

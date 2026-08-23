@@ -11,6 +11,7 @@ let state = {
   houseId: 0,
   entriesPage: 1,
   readingSource: "manual",
+  hiddenMeters: new Set(),
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -193,6 +194,7 @@ function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
   $("#me-line").textContent = `${state.me.name || state.me.email} · ${state.me.email}` + (state.me.is_admin ? " · admin" : "");
+  $("#reminder-toggle").checked = Boolean(state.me.reminder);
   api("/api/version")
     .then((data) => {
       $("#version .version-text").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : "");
@@ -654,11 +656,17 @@ function wireYearSlider() {
   });
 }
 
-function legendMarkup(seriesList) {
+function legendMarkup(seriesList, interactive = false) {
   if (seriesList.length < 2) return "";
   return `
     <div class="viz-legend">
-      ${seriesList.map((item, index) => `<span><i style="background:${VIZ_COLORS[index % VIZ_COLORS.length]}"></i>${esc(item.label)}${item.unit ? ` (${esc(item.unit)})` : ""}</span>`).join("")}
+      ${seriesList.map((item, index) => {
+        const color = item.color || VIZ_COLORS[index % VIZ_COLORS.length];
+        const content = `<i style="background:${color}"></i>${esc(item.label)}${item.unit ? ` (${esc(item.unit)})` : ""}`;
+        if (!interactive) return `<span>${content}</span>`;
+        const off = state.hiddenMeters.has(item.meter_id) ? " off" : "";
+        return `<button class="legend-toggle${off}" type="button" data-legend-toggle="${item.meter_id}" title="Show or hide this meter">${content}</button>`;
+      }).join("")}
     </div>`;
 }
 
@@ -719,12 +727,16 @@ function renderStats(tables, series) {
   const kinds = filtered.tables.kinds;
   let html = "";
   if (prefs.graphs && prefs.merged) {
-    const allSeries = filtered.series.series;
+    const allSeries = filtered.series.series.map((item, index) => ({
+      ...item,
+      color: VIZ_COLORS[index % VIZ_COLORS.length],
+    }));
+    const visibleSeries = allSeries.filter((item) => !state.hiddenMeters.has(item.meter_id));
     html += `
       <div class="card">
-        <h3>Trends <span class="meta">(all meters, one scale)</span></h3>
-        ${chartMarkup(allSeries, true)}
-        ${legendMarkup(allSeries)}
+        <h3>Trends <span class="meta">(all meters, one scale - click the legend to hide a meter)</span></h3>
+        ${chartMarkup(visibleSeries, true) || '<p class="meta">Every meter is hidden - click the legend to bring one back.</p>'}
+        ${legendMarkup(allSeries, true)}
       </div>`;
   }
   html += kinds.map((kind) => {
@@ -744,6 +756,12 @@ function renderStats(tables, series) {
   $("#stats-content").innerHTML = html;
   wireTableHover("#stats-content");
   wireChartHover("#stats-content");
+  $$("[data-legend-toggle]").forEach((button) => button.addEventListener("click", () => {
+    const meterId = Number(button.dataset.legendToggle);
+    if (state.hiddenMeters.has(meterId)) state.hiddenMeters.delete(meterId);
+    else state.hiddenMeters.add(meterId);
+    renderStats(state.statsData.tables, state.statsData.series);
+  }));
 }
 
 function clearTableHover(table) {
@@ -826,7 +844,7 @@ function chartMarkup(seriesList, merged = false) {
 
   const showDots = months.length <= 36;
   const paths = seriesList.map((item, index) => {
-    const color = VIZ_COLORS[index % VIZ_COLORS.length];
+    const color = item.color || VIZ_COLORS[index % VIZ_COLORS.length];
     const path = item.points
       .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${xAt(point.month).toFixed(1)},${yAt(point.value).toFixed(1)}`)
       .join(" ");
@@ -1215,6 +1233,16 @@ addEventListener("DOMContentLoaded", () => {
   $("#btn-passkey").addEventListener("click", signInWithPasskey);
   $("#btn-logout").addEventListener("click", logout);
   $("#btn-add-passkey").addEventListener("click", registerPasskey);
+  $("#reminder-toggle").addEventListener("change", async () => {
+    const toggle = $("#reminder-toggle");
+    try {
+      await api("/api/me/reminder", { method: "POST", body: JSON.stringify({ enabled: toggle.checked }) });
+      state.me.reminder = toggle.checked;
+    } catch (error) {
+      toggle.checked = !toggle.checked;
+      showAppError(error);
+    }
+  });
   $("#house-form").addEventListener("submit", addHouse);
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);

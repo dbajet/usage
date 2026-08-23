@@ -26,6 +26,7 @@ from usage.handlers.passkey_register_request import PasskeyRegisterRequest
 from usage.handlers.reading_request import ReadingRequest
 from usage.handlers.reading_update_request import ReadingUpdateRequest
 from usage.handlers.register_request import RegisterRequest
+from usage.handlers.reminder_request import ReminderRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
@@ -59,6 +60,7 @@ class ApiRouter:
         self._router.add_api_route("/version", self._version, methods=["GET"])
         self._router.add_api_route("/session", self._session, methods=["GET"])
         self._router.add_api_route("/me", self._me, methods=["GET"])
+        self._router.add_api_route("/me/reminder", self._set_reminder, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/auth/request-link", self._request_link, methods=["POST"], response_model=AuthLinkResponse)
         self._router.add_api_route("/auth/verify-link", self._verify_link, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/auth/passkey/options", self._passkey_auth_options, methods=["POST"])
@@ -108,6 +110,15 @@ class ApiRouter:
     def _me(self, usage_session: str = Cookie(default="", alias=Constants.cookie_name)) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
         return user.to_dict()
+
+    def _set_reminder(
+        self,
+        body: ReminderRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._auth_command.set_reminder(user, body.enabled)
+        return ApiMessage(message=message["message"])
 
     def _request_link(self, body: AuthLinkRequest, request: Request) -> AuthLinkResponse:
         issue = self._auth_command.request_link(body.email, str(request.base_url).rstrip("/"))

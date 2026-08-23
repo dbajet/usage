@@ -548,6 +548,8 @@ def test__create_schema() -> None:
                 email_hash TEXT NOT NULL UNIQUE,
                 name_sealed TEXT NOT NULL DEFAULT '',
                 is_admin BOOLEAN NOT NULL DEFAULT false,
+                reminder BOOLEAN NOT NULL DEFAULT false,
+                reminder_sent_on DATE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 last_login_at TIMESTAMPTZ
             )
@@ -680,7 +682,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None]
+    connection.execute.return_value.fetchone.side_effect = [None, None]
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -690,16 +692,26 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (1, "initial encrypted usage schema"),
         ),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (2,)),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder BOOLEAN NOT NULL DEFAULT false"),
+        call.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_sent_on DATE"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (2, "monthly reminder opt-in"),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}]
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}, {"?column?": 1}]
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (1,)),
+        call.execute().fetchone(),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (2,)),
         call.execute().fetchone(),
     ]
     assert connection.mock_calls == exp_calls

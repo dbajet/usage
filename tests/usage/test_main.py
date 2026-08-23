@@ -104,8 +104,20 @@ def test_create() -> None:
         async with application.router.lifespan_context(application):
             pass
 
-    asyncio.run(run_lifespan(result))
+    email_sender = MagicMock()
+    reminder_command = MagicMock()
+    with (
+        patch("usage.main.EmailSender") as email_sender_class,
+        patch("usage.main.ReminderCommand") as reminder_command_class,
+    ):
+        email_sender_class.side_effect = [email_sender]
+        reminder_command_class.side_effect = [reminder_command]
+        asyncio.run(run_lifespan(result))
     assert database.mock_calls == [call.initialize()]
+    assert email_sender_class.mock_calls == [call(settings)]
+    assert reminder_command_class.mock_calls == [call(database, settings, email_sender)]
+    assert email_sender.mock_calls == []
+    assert reminder_command.mock_calls == [call.start()]
 
 
 def test__register_middleware() -> None:

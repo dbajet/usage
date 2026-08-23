@@ -8,6 +8,7 @@ class SessionUser(NamedTuple):
     email: str
     name: str
     is_admin: bool
+    reminder: bool = False
 
     def to_dict(self) -> dict[str, int | str | bool]:
         return {
@@ -15,6 +16,7 @@ class SessionUser(NamedTuple):
             "email": self.email,
             "name": self.name,
             "is_admin": self.is_admin,
+            "reminder": self.reminder,
         }
 
     @classmethod
@@ -24,4 +26,5 @@ class SessionUser(NamedTuple):
             email=str(data.get("email") or ""),
             name=str(data.get("name") or ""),
             is_admin=bool(data.get("is_admin")),
+            reminder=bool(data.get("reminder")),
         )

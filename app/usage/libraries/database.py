@@ -130,6 +130,8 @@ class Database:
                 email_hash TEXT NOT NULL UNIQUE,
                 name_sealed TEXT NOT NULL DEFAULT '',
                 is_admin BOOLEAN NOT NULL DEFAULT false,
+                reminder BOOLEAN NOT NULL DEFAULT false,
+                reminder_sent_on DATE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 last_login_at TIMESTAMPTZ
             )
@@ -236,10 +238,14 @@ class Database:
     def _migrate(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         migrations: list[tuple[int, str]] = [
             (1, "initial encrypted usage schema"),
+            (2, "monthly reminder opt-in"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 2:
+                    connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder BOOLEAN NOT NULL DEFAULT false")
+                    connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reminder_sent_on DATE")
                 connection.execute(
                     "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
                     (version, name),

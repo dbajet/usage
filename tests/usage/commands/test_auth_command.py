@@ -453,7 +453,7 @@ def test_user_from_token(hash_value: MagicMock, mock_datetime: MagicMock) -> Non
     exp_fetch_one = call.fetch_one(
         """
             SELECT users.id AS user_id, users.email_sealed AS email,
-                   users.name_sealed AS name, users.is_admin
+                   users.name_sealed AS name, users.is_admin, users.reminder
             FROM sessions
             JOIN users ON users.id = sessions.user_id
             WHERE sessions.token_hash = %s AND sessions.expires_at > %s
@@ -477,12 +477,12 @@ def test_user_from_token(hash_value: MagicMock, mock_datetime: MagicMock) -> Non
     reset_mocks()
 
     # happy path
-    row = {"user_id": 7, "email": "sealedEmail", "name": "sealedName", "is_admin": True}
+    row = {"user_id": 7, "email": "sealedEmail", "name": "sealedName", "is_admin": True, "reminder": True}
     hash_value.side_effect = ["theTokenHash"]
     database.fetch_one.side_effect = [row]
-    database.decrypt_row.side_effect = [{"user_id": 7, "email": "jane@example.com", "name": "Jane Doe", "is_admin": True}]
+    database.decrypt_row.side_effect = [{"user_id": 7, "email": "jane@example.com", "name": "Jane Doe", "is_admin": True, "reminder": True}]
     result = tested.user_from_token("theToken")
-    expected = SessionUser(user_id=7, email="jane@example.com", name="Jane Doe", is_admin=True)
+    expected = SessionUser(user_id=7, email="jane@example.com", name="Jane Doe", is_admin=True, reminder=True)
     assert result == expected
     exp_calls = [call("theToken")]
     assert hash_value.mock_calls == exp_calls
@@ -491,6 +491,28 @@ def test_user_from_token(hash_value: MagicMock, mock_datetime: MagicMock) -> Non
     exp_calls = [exp_fetch_one, call.decrypt_row(row, ("email", "name"))]
     assert database.mock_calls == exp_calls
     reset_mocks()
+
+
+def test_set_reminder() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    user = SessionUser(user_id=7, email="jane@example.com", name="Jane", is_admin=False)
+    tests = [
+        (True, "Monthly reminder enabled."),
+        (False, "Monthly reminder disabled."),
+    ]
+    for enabled, message in tests:
+        database.execute.side_effect = [0]
+        result = tested.set_reminder(user, enabled)
+        expected = {"message": message}
+        assert result == expected, f"---> {enabled}"
+        exp_calls = [call.execute("UPDATE users SET reminder = %s WHERE id = %s", (enabled, 7))]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 @patch.object(AuthCommand, "_hash")

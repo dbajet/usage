@@ -8,8 +8,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from usage.commands.reminder_command import ReminderCommand
 from usage.handlers.api_router import ApiRouter
 from usage.libraries.database import Database
+from usage.libraries.email_sender import EmailSender
 from usage.libraries.settings_loader import SettingsLoader
 from usage.libraries.static_page import StaticPage
 from usage.structures.app_exception import AppException
@@ -26,6 +28,7 @@ class AppFactory:
         @asynccontextmanager
         async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             self._database.initialize()
+            ReminderCommand(self._database, self._settings, EmailSender(self._settings)).start()
             yield
 
         result = FastAPI(title="Usage", lifespan=lifespan)

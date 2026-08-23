@@ -110,7 +110,7 @@ class AuthCommand:
         row = self._database.fetch_one(
             """
             SELECT users.id AS user_id, users.email_sealed AS email,
-                   users.name_sealed AS name, users.is_admin
+                   users.name_sealed AS name, users.is_admin, users.reminder
             FROM sessions
             JOIN users ON users.id = sessions.user_id
             WHERE sessions.token_hash = %s AND sessions.expires_at > %s
@@ -120,6 +120,11 @@ class AuthCommand:
         if row is None:
             raise AppException(401, "Authentication required.")
         return SessionUser.from_dict(self._database.decrypt_row(row, ("email", "name")))
+
+    def set_reminder(self, user: SessionUser, enabled: bool) -> dict[str, str]:
+        self._database.execute("UPDATE users SET reminder = %s WHERE id = %s", (enabled, user.user_id))
+        result = "Monthly reminder enabled." if enabled else "Monthly reminder disabled."
+        return {"message": result}
 
     def logout(self, token: str) -> None:
         self._database.execute("DELETE FROM sessions WHERE token_hash = %s", (self._hash(token),))

@@ -21,6 +21,24 @@ def test_sign_in_link() -> None:
     assert result == expected
 
 
+def test_reminder() -> None:
+    tested = EmailTexts
+    result = tested.reminder("August 2026", "https://usage.example.com")
+    expected = (
+        "Usage: time to record the readings of August 2026",
+        [
+            "Hello,",
+            "",
+            "A new month has started - a good moment to record the meter readings of August 2026:",
+            "https://usage.example.com",
+            "",
+            "You receive this monthly reminder because you enabled it in Settings;",
+            "you can turn it off there at any time.",
+        ],
+    )
+    assert result == expected
+
+
 def test_footer() -> None:
     tested = EmailTexts
     result = tested.footer("usage@edgy.world")

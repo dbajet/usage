@@ -32,6 +32,7 @@ def test_class() -> None:
         "anthropic_beta_fallbacks",
         "meter_reader_timeout_seconds",
         "meter_reader_max_tokens",
+        "reminder_check_seconds",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -212,6 +213,13 @@ def test_meter_reader_max_tokens() -> None:
     tested = Constants
     result = tested.meter_reader_max_tokens
     expected = 1024
+    assert result == expected
+
+
+def test_reminder_check_seconds() -> None:
+    tested = Constants
+    result = tested.reminder_check_seconds
+    expected = 3600
     assert result == expected
 
 
