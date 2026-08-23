@@ -445,7 +445,7 @@ function chartMarkup(seriesList) {
   const width = 720;
   const height = 240;
   const left = 48;
-  const right = 10;
+  const right = 28;
   const top = 12;
   const bottom = 30;
   const plotWidth = width - left - right;
