@@ -83,7 +83,7 @@ def test_read(
     exp_payload = json.dumps(
         {
             "model": "claude-opus-5",
-            "max_tokens": 1024,
+            "max_tokens": 4096,
             "fallbacks": "default",
             "messages": [
                 {
@@ -127,7 +127,7 @@ def test_read(
     assert instructions.mock_calls == [call(["HC", "HP"])]
     assert values.mock_calls == [call(body, 2)]
     assert request_class.mock_calls == [exp_request_call]
-    assert urlopen.mock_calls == [call(request, timeout=60)]
+    assert urlopen.mock_calls == [call(request, timeout=120)]
     assert response.__enter__.return_value.read.mock_calls == [call()]
     reset_mocks()
 
@@ -142,7 +142,7 @@ def test_read(
     assert instructions.mock_calls == [call(["HC", "HP"])]
     assert values.mock_calls == []
     assert request_class.mock_calls == [exp_request_call]
-    assert urlopen.mock_calls == [call(request, timeout=60)]
+    assert urlopen.mock_calls == [call(request, timeout=120)]
     reset_mocks()
 
     # the response is not valid json
@@ -157,7 +157,7 @@ def test_read(
     assert instructions.mock_calls == [call(["HC", "HP"])]
     assert values.mock_calls == []
     assert request_class.mock_calls == [exp_request_call]
-    assert urlopen.mock_calls == [call(request, timeout=60)]
+    assert urlopen.mock_calls == [call(request, timeout=120)]
     reset_mocks()
 
 
@@ -170,7 +170,18 @@ def test__instructions() -> None:
                 "You are reading a photo of a utility meter (or a car odometer).",
                 "The meter has 2 register(s), in this order: HC, HP.",
                 "Read the current counter value of each register from the photo.",
-                "Ignore serial numbers, dates, units, and any digits after a decimal marker painted in red.",
+                "Digital or odometer displays: read the digits left to right and include the fractional part.",
+                "Water meter LCDs almost always have a decimal point (often faint) before the last three",
+                "digits - look closely for it; e.g. an LCD showing 004359754 is 004359.754 and reads 4359.754.",
+                "Clock-style dials: order the dials by their multiplier labels (largest first), read one digit",
+                "per dial and concatenate them into a single number - do not multiply by the labels.",
+                "Adjacent dials rotate in opposite directions - always follow each dial's printed digit order.",
+                "A dial's digit is the one its pointer has last PASSED, never the one it is approaching:",
+                "of the two digits around the pointer, choose the one that comes earlier in that dial's",
+                "printed rotation order (between 9 and 0 that is 9). When a pointer looks exactly on a digit,",
+                "confirm with the dial to its right: if that dial has not completed its lap back to 0, the",
+                "pointer has not reached the digit yet - use the previous one. Ignore the small test dials.",
+                "Ignore serial numbers, dates and units.",
                 'Reply with ONLY this JSON, nothing else: {"values": [...]}',
                 "with one number per register in the order above, or null when a register cannot be read.",
             ],
@@ -181,7 +192,18 @@ def test__instructions() -> None:
                 "You are reading a photo of a utility meter (or a car odometer).",
                 "The meter has 1 register(s), in this order: register 1.",
                 "Read the current counter value of each register from the photo.",
-                "Ignore serial numbers, dates, units, and any digits after a decimal marker painted in red.",
+                "Digital or odometer displays: read the digits left to right and include the fractional part.",
+                "Water meter LCDs almost always have a decimal point (often faint) before the last three",
+                "digits - look closely for it; e.g. an LCD showing 004359754 is 004359.754 and reads 4359.754.",
+                "Clock-style dials: order the dials by their multiplier labels (largest first), read one digit",
+                "per dial and concatenate them into a single number - do not multiply by the labels.",
+                "Adjacent dials rotate in opposite directions - always follow each dial's printed digit order.",
+                "A dial's digit is the one its pointer has last PASSED, never the one it is approaching:",
+                "of the two digits around the pointer, choose the one that comes earlier in that dial's",
+                "printed rotation order (between 9 and 0 that is 9). When a pointer looks exactly on a digit,",
+                "confirm with the dial to its right: if that dial has not completed its lap back to 0, the",
+                "pointer has not reached the digit yet - use the previous one. Ignore the small test dials.",
+                "Ignore serial numbers, dates and units.",
                 'Reply with ONLY this JSON, nothing else: {"values": [...]}',
                 "with one number per register in the order above, or null when a register cannot be read.",
             ],

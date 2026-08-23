@@ -102,7 +102,7 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
           if (field.type === "checkbox") {
             return `<label class="check"><input type="checkbox" data-modal-field="${esc(field.name)}"${field.value ? " checked" : ""}> ${esc(field.label)}</label>`;
           }
-          const step = field.type === "number" ? ' step="0.01"' : "";
+          const step = field.type === "number" ? ' step="any"' : "";
           return `<label>${esc(field.label)}<input type="${esc(field.type || "text")}"${step} data-modal-field="${esc(field.name)}" value="${esc(field.value ?? "")}"></label>`;
         }).join("");
     part("submit").hidden = Boolean(options.length);
@@ -373,7 +373,7 @@ function renderValueInputs() {
   state.readingSource = "manual";
   $("#reading-hint").hidden = true;
   $("#reading-values").innerHTML = (meter ? meter.registers : []).map((register) => `
-    <input type="number" step="0.01" data-register-value="${register.id}"
+    <input type="number" step="any" data-register-value="${register.id}"
       placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>`).join("");
 }
 

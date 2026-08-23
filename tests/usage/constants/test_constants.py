@@ -205,14 +205,14 @@ def test_anthropic_beta_fallbacks() -> None:
 def test_meter_reader_timeout_seconds() -> None:
     tested = Constants
     result = tested.meter_reader_timeout_seconds
-    expected = 60
+    expected = 120
     assert result == expected
 
 
 def test_meter_reader_max_tokens() -> None:
     tested = Constants
     result = tested.meter_reader_max_tokens
-    expected = 1024
+    expected = 4096
     assert result == expected
 
 
