@@ -196,7 +196,7 @@ button.icon-button { display: inline-flex; align-items: center; justify-content:
 .app-main { padding-top: 1rem; }
 
 .tabs { display: flex; gap: 0.3rem; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 1rem; }
-.tabs button { flex: none; }
+.tabs button { display: inline-flex; flex: none; align-items: center; gap: 0.4rem; white-space: nowrap; }
 .tabs button { color: var(--muted); }
 .tabs button.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 
