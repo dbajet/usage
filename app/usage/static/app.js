@@ -476,26 +476,91 @@ async function loadStats() {
   } catch (error) { showAppError(error); }
 }
 
+function statsPrefs() {
+  const defaults = { tables: true, graphs: true, merged: false };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem("usage-stats-prefs") || "{}") };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function saveStatsPrefs() {
+  const prefs = {
+    tables: $("#stats-show-tables").checked,
+    graphs: $("#stats-show-graphs").checked,
+    merged: $("#stats-merge-graphs").checked,
+  };
+  try { localStorage.setItem("usage-stats-prefs", JSON.stringify(prefs)); } catch (_) {}
+  if (state.statsData) renderStats(state.statsData.tables, state.statsData.series);
+}
+
+function legendMarkup(seriesList) {
+  if (seriesList.length < 2) return "";
+  return `
+    <div class="viz-legend">
+      ${seriesList.map((item, index) => `<span><i style="background:${VIZ_COLORS[index % VIZ_COLORS.length]}"></i>${esc(item.label)}${item.unit ? ` (${esc(item.unit)})` : ""}</span>`).join("")}
+    </div>`;
+}
+
 function renderStats(tables, series) {
+  state.statsData = { tables, series };
+  const prefs = statsPrefs();
+  $("#stats-show-tables").checked = prefs.tables;
+  $("#stats-show-graphs").checked = prefs.graphs;
+  $("#stats-merge-graphs").checked = prefs.merged;
   const kinds = tables.kinds || [];
   if (!kinds.length) {
     $("#stats-content").innerHTML = '<p class="meta">No reading yet - add measurements in Entries first.</p>';
     return;
   }
-  $("#stats-content").innerHTML = kinds.map((kind) => {
+  let html = "";
+  if (prefs.graphs && prefs.merged) {
+    const allSeries = series.series || [];
+    html += `
+      <div class="card">
+        <h3>Trends <span class="meta">(all meters, one scale)</span></h3>
+        ${chartMarkup(allSeries)}
+        ${legendMarkup(allSeries)}
+      </div>`;
+  }
+  html += kinds.map((kind) => {
     const kindSeries = (series.series || []).filter((item) => item.kind === kind.kind);
     const title = kind.kind.charAt(0).toUpperCase() + kind.kind.slice(1);
+    const parts = [];
+    if (prefs.tables) parts.push(`<div class="table-wrap">${statsTable(kind)}</div>`);
+    if (prefs.graphs && !prefs.merged) parts.push(chartMarkup(kindSeries) + legendMarkup(kindSeries));
+    if (!parts.length) return "";
     return `
       <div class="card">
         <h3>${esc(title)}${kind.unit ? ` <span class="meta">(${esc(kind.unit)} per month)</span>` : ""}</h3>
-        <div class="table-wrap">${statsTable(kind)}</div>
-        ${chartMarkup(kindSeries)}
-        ${kindSeries.length > 1 ? `
-          <div class="viz-legend">
-            ${kindSeries.map((item, index) => `<span><i style="background:${VIZ_COLORS[index % VIZ_COLORS.length]}"></i>${esc(item.label)}</span>`).join("")}
-          </div>` : ""}
+        ${parts.join("")}
       </div>`;
   }).join("");
+  if (!html) html = '<p class="meta">Tables and graphs are both hidden - enable one above.</p>';
+  $("#stats-content").innerHTML = html;
+  wireTableHover();
+}
+
+function clearTableHover(table) {
+  table.querySelectorAll(".hl-col").forEach((cell) => cell.classList.remove("hl-col"));
+  table.querySelectorAll(".hl-row").forEach((row) => row.classList.remove("hl-row"));
+}
+
+function wireTableHover() {
+  $$("#stats-content table").forEach((table) => {
+    table.addEventListener("mouseover", (event) => {
+      const cell = event.target.closest("td, th");
+      if (!cell || !table.contains(cell)) return;
+      clearTableHover(table);
+      Array.from(table.rows).forEach((row) => {
+        const target = row.cells[cell.cellIndex];
+        if (target) target.classList.add("hl-col");
+      });
+      cell.closest("tr").classList.add("hl-row");
+    });
+    table.addEventListener("mouseleave", () => clearTableHover(table));
+  });
 }
 
 function fmtValue(value) {
@@ -862,6 +927,9 @@ addEventListener("DOMContentLoaded", () => {
   $("#meter-form").addEventListener("submit", addMeter);
   $("#meter-dual").addEventListener("change", toggleDualRegisters);
   $("#house-btn").addEventListener("click", chooseHouse);
+  $("#stats-show-tables").addEventListener("change", saveStatsPrefs);
+  $("#stats-show-graphs").addEventListener("change", saveStatsPrefs);
+  $("#stats-merge-graphs").addEventListener("change", saveStatsPrefs);
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);

@@ -250,6 +250,15 @@ label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.8
 .table-wrap th:first-child, .table-wrap td:first-child { text-align: left; }
 .table-wrap thead th { color: var(--muted); font-weight: 600; }
 .table-wrap td.total { font-weight: 700; }
+.table-wrap th.hl-col, .table-wrap td.hl-col { background: var(--accent-soft); }
+.table-wrap tr.hl-row th, .table-wrap tr.hl-row td { background: var(--accent-soft); }
+.table-wrap tr.hl-row td.hl-col, .table-wrap tr.hl-row th.hl-col {
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--accent) 30%);
+}
+
+.stats-toggles { margin-top: 0; }
+.stats-toggles label.check { flex: none; margin: 0; white-space: nowrap; }
+.stats-toggles label.check input { flex: none; width: auto; }
 
 .viz-chart { width: 100%; height: auto; display: block; margin-top: 0.5rem; }
 .viz-chart .grid line { stroke: var(--viz-grid); stroke-width: 1; }
