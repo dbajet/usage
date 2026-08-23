@@ -3,7 +3,18 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
-let state = { me: null, admin: null, dashboard: null, entriesHouseId: 0, entriesPage: 1, readingSource: "manual" };
+let state = {
+  me: null,
+  admin: null,
+  dashboard: null,
+  entriesHouseId: 0,
+  entriesPage: 1,
+  readingSource: "manual",
+  statsHouseId: 0,
+};
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const VIZ_COLORS = ["var(--viz-1)", "var(--viz-2)", "var(--viz-3)"];
 
 function esc(value) {
   return String(value)
@@ -57,6 +68,7 @@ function showView(name) {
     if (state.me && state.me.is_admin) loadAdmin();
   }
   if (name === "entries") loadEntries();
+  if (name === "stats") loadStats();
 }
 
 async function load() {
@@ -346,6 +358,129 @@ async function editReading(readingId, data) {
   } catch (error) { showAppError(error); }
 }
 
+async function loadStats() {
+  try {
+    state.dashboard = await api("/api/dashboard");
+    const houses = state.dashboard.houses || [];
+    const select = $("#stats-house");
+    select.innerHTML = houses.map((house) => `<option value="${house.id}">${esc(house.name)}</option>`).join("");
+    if (!houses.some((house) => house.id === state.statsHouseId)) {
+      state.statsHouseId = houses.length ? houses[0].id : 0;
+    }
+    select.value = String(state.statsHouseId);
+    if (!state.statsHouseId) {
+      $("#stats-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+      return;
+    }
+    const tables = await api(`/api/stats/tables?house_id=${state.statsHouseId}`);
+    const series = await api(`/api/stats/series?house_id=${state.statsHouseId}`);
+    renderStats(tables, series);
+  } catch (error) { showAppError(error); }
+}
+
+function renderStats(tables, series) {
+  const kinds = tables.kinds || [];
+  if (!kinds.length) {
+    $("#stats-content").innerHTML = '<p class="meta">No reading yet - add measurements in Entries first.</p>';
+    return;
+  }
+  $("#stats-content").innerHTML = kinds.map((kind) => {
+    const kindSeries = (series.series || []).filter((item) => item.kind === kind.kind);
+    const title = kind.kind.charAt(0).toUpperCase() + kind.kind.slice(1);
+    return `
+      <div class="card">
+        <h3>${esc(title)}${kind.unit ? ` <span class="meta">(${esc(kind.unit)} per month)</span>` : ""}</h3>
+        <div class="table-wrap">${statsTable(kind)}</div>
+        ${chartMarkup(kindSeries)}
+        ${kindSeries.length > 1 ? `
+          <div class="viz-legend">
+            ${kindSeries.map((item, index) => `<span><i style="background:${VIZ_COLORS[index % VIZ_COLORS.length]}"></i>${esc(item.label)}</span>`).join("")}
+          </div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+function fmtValue(value) {
+  return String(Math.round(value * 100) / 100);
+}
+
+function statsTable(kind) {
+  const header = `<tr><th>Year</th>${MONTH_NAMES.map((name) => `<th>${name}</th>`).join("")}<th>Total</th></tr>`;
+  const rows = kind.years.map((year) => `
+    <tr>
+      <td>${year.year}</td>
+      ${year.months.map((month) => `<td>${month === null ? "" : fmtValue(month)}</td>`).join("")}
+      <td class="total">${fmtValue(year.total)}</td>
+    </tr>`).join("");
+  return `<table><thead>${header}</thead><tbody>${rows}</tbody></table>`;
+}
+
+function niceStep(rough) {
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+  const normalized = rough / magnitude;
+  if (normalized <= 1) return magnitude;
+  if (normalized <= 2) return 2 * magnitude;
+  if (normalized <= 5) return 5 * magnitude;
+  return 10 * magnitude;
+}
+
+function chartMarkup(seriesList) {
+  const months = [...new Set(seriesList.flatMap((item) => item.points.map((point) => point.month)))].sort();
+  const pointCount = seriesList.reduce((count, item) => count + item.points.length, 0);
+  if (months.length < 2 || pointCount < 2) return "";
+  const width = 720;
+  const height = 240;
+  const left = 48;
+  const right = 10;
+  const top = 12;
+  const bottom = 30;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxValue = Math.max(1, ...seriesList.flatMap((item) => item.points.map((point) => point.value)));
+  const step = niceStep(maxValue / 4);
+  const yMax = Math.ceil(maxValue / step) * step;
+  const xAt = (month) => left + (months.indexOf(month) * plotWidth) / (months.length - 1);
+  const yAt = (value) => top + plotHeight - (value / yMax) * plotHeight;
+
+  const gridLines = [];
+  const yLabels = [];
+  for (let value = 0; value <= yMax; value += step) {
+    const y = yAt(value);
+    gridLines.push(`<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}"></line>`);
+    yLabels.push(`<text x="${left - 6}" y="${y + 4}" text-anchor="end">${fmtValue(value)}</text>`);
+  }
+  const labelStep = Math.max(1, Math.ceil(months.length / 6));
+  const xLabels = months
+    .filter((month, index) => index % labelStep === 0)
+    .map((month) => {
+      const name = MONTH_NAMES[Number(month.slice(5, 7)) - 1];
+      return `<text x="${xAt(month)}" y="${height - 8}" text-anchor="middle">${name} ${month.slice(2, 4)}</text>`;
+    });
+
+  const showDots = months.length <= 36;
+  const paths = seriesList.map((item, index) => {
+    const color = VIZ_COLORS[index % VIZ_COLORS.length];
+    const path = item.points
+      .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${xAt(point.month).toFixed(1)},${yAt(point.value).toFixed(1)}`)
+      .join(" ");
+    const dots = item.points.map((point) => {
+      const tooltip = `<title>${esc(item.label)} · ${esc(point.month)} · ${fmtValue(point.value)}${item.unit ? ` ${esc(item.unit)}` : ""}</title>`;
+      const dot = showDots
+        ? `<circle class="dot" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3" fill="${color}"></circle>`
+        : "";
+      return `${dot}<circle class="hit" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="9">${tooltip}</circle>`;
+    }).join("");
+    return `<g class="series"><path d="${path}" stroke="${color}"></path>${dots}</g>`;
+  });
+
+  return `
+    <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Monthly consumption trend">
+      <g class="grid">${gridLines.join("")}</g>
+      <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+      ${paths.join("")}
+    </svg>`;
+}
+
 async function loadAdmin() {
   try {
     state.admin = await api("/api/admin/overview");
@@ -591,6 +726,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
+  $("#stats-house").addEventListener("change", () => {
+    state.statsHouseId = Number($("#stats-house").value);
+    loadStats();
+  });
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));

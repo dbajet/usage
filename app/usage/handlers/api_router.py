@@ -9,6 +9,7 @@ from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
 from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
+from usage.commands.stats_command import StatsCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_message import ApiMessage
 from usage.handlers.auth_link_request import AuthLinkRequest
@@ -45,6 +46,7 @@ class ApiRouter:
         self._passkey_command = PasskeyCommand(database)
         self._admin_command = AdminCommand(database)
         self._reading_command = ReadingCommand(database, MeterReader(settings))
+        self._stats_command = StatsCommand(database)
         self._register()
 
     @property
@@ -84,6 +86,8 @@ class ApiRouter:
         self._router.add_api_route("/readings/extract", self._extract_reading, methods=["POST"])
         self._router.add_api_route("/readings/{reading_id}", self._update_reading, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/readings/{reading_id}", self._delete_reading, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/stats/tables", self._stats_tables, methods=["GET"])
+        self._router.add_api_route("/stats/series", self._stats_series, methods=["GET"])
 
     def _version(self) -> dict[str, str]:
         return {
@@ -351,6 +355,22 @@ class ApiRouter:
         user = self._auth_command.user_from_token(usage_session)
         message = self._reading_command.delete_reading(user, reading_id)
         return ApiMessage(message=message["message"])
+
+    def _stats_tables(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._stats_command.tables(user, house_id)
+
+    def _stats_series(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._stats_command.series(user, house_id)
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"
