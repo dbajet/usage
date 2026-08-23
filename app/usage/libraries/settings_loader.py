@@ -22,5 +22,5 @@ class SettingsLoader:
             smtp_password=os.environ.get("SES_SMTP_PASSWORD", ""),
             smtp_sender=os.environ.get("SES_SENDER_EMAIL", ""),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-            anthropic_model=os.environ.get("USAGE_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+            anthropic_model=os.environ.get("USAGE_ANTHROPIC_MODEL", "claude-opus-5"),
         )

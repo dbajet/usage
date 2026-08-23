@@ -25,7 +25,7 @@ def helper_settings(dev_auth_links: bool = False, base_url: str = "https://usage
         smtp_password="theSmtpPassword",
         smtp_sender="sender@example.com",
         anthropic_api_key="theAnthropicKey",
-        anthropic_model="claude-haiku-4-5-20251001",
+        anthropic_model="claude-opus-5",
     )
 
 

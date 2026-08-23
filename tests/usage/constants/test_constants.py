@@ -24,7 +24,13 @@ def test_class() -> None:
         "source_manual",
         "source_photo",
         "photo_max_bytes",
+        "photo_media_types",
         "page_size",
+        "anthropic_url",
+        "anthropic_version",
+        "anthropic_beta_fallbacks",
+        "meter_reader_timeout_seconds",
+        "meter_reader_max_tokens",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -152,10 +158,52 @@ def test_photo_max_bytes() -> None:
     assert result == expected
 
 
+def test_photo_media_types() -> None:
+    tested = Constants
+    result = tested.photo_media_types
+    expected = ("image/jpeg", "image/png", "image/webp", "image/gif")
+    assert result == expected
+
+
 def test_page_size() -> None:
     tested = Constants
     result = tested.page_size
     expected = 25
+    assert result == expected
+
+
+def test_anthropic_url() -> None:
+    tested = Constants
+    result = tested.anthropic_url
+    expected = "https://api.anthropic.com/v1/messages"
+    assert result == expected
+
+
+def test_anthropic_version() -> None:
+    tested = Constants
+    result = tested.anthropic_version
+    expected = "2023-06-01"
+    assert result == expected
+
+
+def test_anthropic_beta_fallbacks() -> None:
+    tested = Constants
+    result = tested.anthropic_beta_fallbacks
+    expected = "server-side-fallback-2026-07-01"
+    assert result == expected
+
+
+def test_meter_reader_timeout_seconds() -> None:
+    tested = Constants
+    result = tested.meter_reader_timeout_seconds
+    expected = 60
+    assert result == expected
+
+
+def test_meter_reader_max_tokens() -> None:
+    tested = Constants
+    result = tested.meter_reader_max_tokens
+    expected = 1024
     assert result == expected
 
 

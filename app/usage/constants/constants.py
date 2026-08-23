@@ -22,7 +22,13 @@ class _Constants:
     source_manual: str = "manual"
     source_photo: str = "photo"
     photo_max_bytes: int = 10_000_000
+    photo_media_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp", "image/gif")
     page_size: int = 25
+    anthropic_url: str = "https://api.anthropic.com/v1/messages"
+    anthropic_version: str = "2023-06-01"
+    anthropic_beta_fallbacks: str = "server-side-fallback-2026-07-01"
+    meter_reader_timeout_seconds: int = 60
+    meter_reader_max_tokens: int = 1024
     email_test_suffixes: tuple[str, ...] = (
         "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
         ".test", ".invalid", ".example", ".localhost",

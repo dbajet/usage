@@ -3,7 +3,7 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
-let state = { me: null, admin: null };
+let state = { me: null, admin: null, dashboard: null, entriesHouseId: 0, entriesPage: 1, readingSource: "manual" };
 
 function esc(value) {
   return String(value)
@@ -56,6 +56,7 @@ function showView(name) {
     loadPasskeys();
     if (state.me && state.me.is_admin) loadAdmin();
   }
+  if (name === "entries") loadEntries();
 }
 
 async function load() {
@@ -185,6 +186,163 @@ async function loadPasskeys() {
         await loadPasskeys();
       } catch (error) { showAppError(error); }
     }));
+  } catch (error) { showAppError(error); }
+}
+
+async function loadEntries() {
+  try {
+    state.dashboard = await api("/api/dashboard");
+    const houses = state.dashboard.houses || [];
+    const select = $("#entries-house");
+    select.innerHTML = houses.map((house) => `<option value="${house.id}">${esc(house.name)}</option>`).join("");
+    if (!houses.some((house) => house.id === state.entriesHouseId)) {
+      state.entriesHouseId = houses.length ? houses[0].id : 0;
+    }
+    select.value = String(state.entriesHouseId);
+    renderReadingForm();
+    await loadReadings(state.entriesPage);
+  } catch (error) { showAppError(error); }
+}
+
+function houseMeters() {
+  return (state.dashboard.meters || []).filter((meter) => meter.house_id === state.entriesHouseId);
+}
+
+function renderReadingForm() {
+  const meters = houseMeters();
+  const select = $("#reading-meter");
+  select.innerHTML = meters.map((meter) => `<option value="${meter.id}">${esc(meter.label || meter.kind)} (${esc(meter.kind)})</option>`).join("");
+  renderValueInputs();
+}
+
+function selectedMeter() {
+  return houseMeters().find((meter) => meter.id === Number($("#reading-meter").value));
+}
+
+function renderValueInputs() {
+  const meter = selectedMeter();
+  state.readingSource = "manual";
+  $("#reading-hint").hidden = true;
+  $("#reading-values").innerHTML = (meter ? meter.registers : []).map((register) => `
+    <input type="number" step="0.01" data-register-value="${register.id}"
+      placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>`).join("");
+}
+
+async function readPhoto() {
+  const meter = selectedMeter();
+  const file = $("#reading-photo").files[0];
+  if (!meter) { showAppError(new Error("Add a meter first.")); return; }
+  if (!file) { showAppError(new Error("Choose a photo first.")); return; }
+  const button = $("#btn-read-photo");
+  button.disabled = true;
+  button.textContent = "Reading…";
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("The photo could not be loaded."));
+      reader.readAsDataURL(file);
+    });
+    const data = await api("/api/readings/extract", { method: "POST", body: JSON.stringify({
+      meter_id: meter.id,
+      media_type: file.type,
+      image_base64: String(dataUrl).split(",")[1] || "",
+    }) });
+    let missing = false;
+    (data.values || []).forEach((item) => {
+      const input = $(`[data-register-value="${item.register_id}"]`);
+      if (input && item.value !== null) input.value = item.value;
+      if (item.value === null) missing = true;
+    });
+    state.readingSource = "photo";
+    const hint = $("#reading-hint");
+    hint.textContent = missing
+      ? "Some registers could not be read - fill them in and verify the rest."
+      : "Values read from the photo - please verify before saving.";
+    hint.hidden = false;
+  } catch (error) { showAppError(error); } finally {
+    button.disabled = false;
+    button.textContent = "Read the photo";
+  }
+}
+
+async function addReading(event) {
+  event.preventDefault();
+  const meter = selectedMeter();
+  if (!meter) { showAppError(new Error("Add a meter first.")); return; }
+  const values = $$("#reading-values [data-register-value]").map((input) => ({
+    register_id: Number(input.dataset.registerValue),
+    value: Number(input.value),
+  }));
+  try {
+    await api("/api/readings", { method: "POST", body: JSON.stringify({
+      meter_id: meter.id,
+      read_on: $("#reading-date").value,
+      source: state.readingSource,
+      values,
+    }) });
+    $("#reading-photo").value = "";
+    renderValueInputs();
+    await loadReadings(1);
+  } catch (error) { showAppError(error); }
+}
+
+async function loadReadings(page) {
+  if (!state.entriesHouseId) {
+    $("#reading-list").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+    $("#reading-pager").innerHTML = "";
+    return;
+  }
+  try {
+    const data = await api(`/api/readings?house_id=${state.entriesHouseId}&page=${page}`);
+    state.entriesPage = data.page;
+    renderReadings(data);
+  } catch (error) { showAppError(error); }
+}
+
+function renderReadings(data) {
+  $("#reading-list").innerHTML = (data.readings || []).map((reading) => `
+    <div class="mini-row wrap-row">
+      <span>
+        <strong>${esc(reading.read_on)}</strong> · ${esc(reading.meter_label || reading.kind)}
+        · ${reading.values.map((value) => `${value.label ? `${esc(value.label)}: ` : ""}${value.value}`).join(" / ")}
+        ${reading.unit ? ` ${esc(reading.unit)}` : ""}
+        <span class="badge">${esc(reading.source)}</span>
+      </span>
+      <span>
+        <button class="ghost compact" data-edit-reading="${reading.id}" type="button">Edit</button>
+        <button class="ghost compact danger" data-delete-reading="${reading.id}" type="button">Delete</button>
+      </span>
+    </div>`).join("") || '<p class="meta">No reading yet.</p>';
+  const pager = [];
+  if (data.page > 1) pager.push(`<button class="ghost compact" data-page="${data.page - 1}" type="button">← Previous</button>`);
+  pager.push(`<span class="meta">Page ${data.page} / ${data.pages} · ${data.total} readings</span>`);
+  if (data.page < data.pages) pager.push(`<button class="ghost compact" data-page="${data.page + 1}" type="button">Next →</button>`);
+  $("#reading-pager").innerHTML = pager.join(" ");
+  $$("[data-page]").forEach((button) => button.addEventListener("click", () => loadReadings(Number(button.dataset.page))));
+  $$("[data-edit-reading]").forEach((button) => button.addEventListener("click", () => editReading(Number(button.dataset.editReading), data)));
+  $$("[data-delete-reading]").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm("Delete this reading?")) return;
+    try {
+      await api(`/api/readings/${button.dataset.deleteReading}`, { method: "DELETE" });
+      await loadReadings(state.entriesPage);
+    } catch (error) { showAppError(error); }
+  }));
+}
+
+async function editReading(readingId, data) {
+  const reading = (data.readings || []).find((item) => item.id === readingId);
+  const readOn = prompt("Date (YYYY-MM-DD):", reading.read_on);
+  if (readOn === null) return;
+  const values = [];
+  for (const value of reading.values) {
+    const answer = prompt(`${value.label || "Counter"}:`, String(value.value));
+    if (answer === null) return;
+    values.push({ register_id: value.register_id, value: Number(answer) });
+  }
+  try {
+    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: readOn, values }) });
+    await loadReadings(state.entriesPage);
   } catch (error) { showAppError(error); }
 }
 
@@ -424,6 +582,15 @@ addEventListener("DOMContentLoaded", () => {
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);
   $("#meter-dual").addEventListener("change", toggleDualRegisters);
+  $("#entries-house").addEventListener("change", () => {
+    state.entriesHouseId = Number($("#entries-house").value);
+    state.entriesPage = 1;
+    renderReadingForm();
+    loadReadings(1);
+  });
+  $("#reading-meter").addEventListener("change", renderValueInputs);
+  $("#btn-read-photo").addEventListener("click", readPhoto);
+  $("#reading-form").addEventListener("submit", addReading);
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));

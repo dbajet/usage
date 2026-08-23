@@ -8,17 +8,21 @@ from fastapi import APIRouter, Cookie, Request, Response
 from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
 from usage.commands.passkey_command import PasskeyCommand
+from usage.commands.reading_command import ReadingCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_message import ApiMessage
 from usage.handlers.auth_link_request import AuthLinkRequest
 from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
+from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
 from usage.handlers.meter_request import MeterRequest
 from usage.handlers.meter_update_request import MeterUpdateRequest
 from usage.handlers.passkey_assertion_request import PasskeyAssertionRequest
 from usage.handlers.passkey_options_request import PasskeyOptionsRequest
 from usage.handlers.passkey_register_request import PasskeyRegisterRequest
+from usage.handlers.reading_request import ReadingRequest
+from usage.handlers.reading_update_request import ReadingUpdateRequest
 from usage.handlers.register_request import RegisterRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
@@ -26,6 +30,7 @@ from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
+from usage.libraries.meter_reader import MeterReader
 from usage.structures.app_exception import AppException
 from usage.structures.settings import Settings
 
@@ -39,6 +44,7 @@ class ApiRouter:
         self._auth_command = AuthCommand(database, settings, email_sender)
         self._passkey_command = PasskeyCommand(database)
         self._admin_command = AdminCommand(database)
+        self._reading_command = ReadingCommand(database, MeterReader(settings))
         self._register()
 
     @property
@@ -72,6 +78,12 @@ class ApiRouter:
         self._router.add_api_route("/meters/{meter_id}/registers", self._create_register, methods=["POST"])
         self._router.add_api_route("/registers/{register_id}", self._update_register, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/registers/{register_id}", self._delete_register, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/dashboard", self._dashboard, methods=["GET"])
+        self._router.add_api_route("/readings", self._list_readings, methods=["GET"])
+        self._router.add_api_route("/readings", self._create_reading, methods=["POST"])
+        self._router.add_api_route("/readings/extract", self._extract_reading, methods=["POST"])
+        self._router.add_api_route("/readings/{reading_id}", self._update_reading, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/readings/{reading_id}", self._delete_reading, methods=["DELETE"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
         return {
@@ -290,6 +302,54 @@ class ApiRouter:
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
         message = self._admin_command.delete_register(user, register_id)
+        return ApiMessage(message=message["message"])
+
+    def _dashboard(self, usage_session: str = Cookie(default="", alias=Constants.cookie_name)) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._reading_command.dashboard(user)
+
+    def _list_readings(
+        self,
+        house_id: int,
+        page: int = 1,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._reading_command.list_readings(user, house_id, page)
+
+    def _create_reading(
+        self,
+        body: ReadingRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._reading_command.create_reading(user, body.model_dump())
+
+    def _extract_reading(
+        self,
+        body: ExtractRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._reading_command.extract(user, body.model_dump())
+
+    def _update_reading(
+        self,
+        reading_id: int,
+        body: ReadingUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._reading_command.update_reading(user, reading_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_reading(
+        self,
+        reading_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._reading_command.delete_reading(user, reading_id)
         return ApiMessage(message=message["message"])
 
     def _rp_id(self, request: Request) -> str:

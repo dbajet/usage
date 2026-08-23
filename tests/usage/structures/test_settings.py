@@ -37,7 +37,7 @@ def test_to_dict() -> None:
         smtp_password="secret",
         smtp_sender="noreply@example.com",
         anthropic_api_key="the-anthropic-key",
-        anthropic_model="claude-haiku-4-5-20251001",
+        anthropic_model="claude-opus-5",
     )
     result = tested.to_dict()
     expected = {
@@ -52,7 +52,7 @@ def test_to_dict() -> None:
         "smtp_password": "secret",
         "smtp_sender": "noreply@example.com",
         "anthropic_api_key": "the-anthropic-key",
-        "anthropic_model": "claude-haiku-4-5-20251001",
+        "anthropic_model": "claude-opus-5",
     }
     assert result == expected
 
@@ -73,7 +73,7 @@ def test_from_dict() -> None:
                 "smtp_password": "secret",
                 "smtp_sender": "noreply@example.com",
                 "anthropic_api_key": "the-anthropic-key",
-                "anthropic_model": "claude-haiku-4-5-20251001",
+                "anthropic_model": "claude-opus-5",
             },
             Settings(
                 database_url="postgresql://localhost/usage",
@@ -87,7 +87,7 @@ def test_from_dict() -> None:
                 smtp_password="secret",
                 smtp_sender="noreply@example.com",
                 anthropic_api_key="the-anthropic-key",
-                anthropic_model="claude-haiku-4-5-20251001",
+                anthropic_model="claude-opus-5",
             ),
         ),
         (

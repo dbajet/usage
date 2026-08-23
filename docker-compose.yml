@@ -24,7 +24,7 @@ services:
       SES_SMTP_PASSWORD: ${SES_SMTP_PASSWORD:-}
       SES_SENDER_EMAIL: ${SES_SENDER_EMAIL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      USAGE_ANTHROPIC_MODEL: ${USAGE_ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      USAGE_ANTHROPIC_MODEL: ${USAGE_ANTHROPIC_MODEL:-claude-opus-5}
     depends_on:
       usage-db:
         condition: service_healthy

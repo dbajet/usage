@@ -58,7 +58,7 @@ def test_load() -> None:
         smtp_password="",
         smtp_sender="",
         anthropic_api_key="",
-        anthropic_model="claude-haiku-4-5-20251001",
+        anthropic_model="claude-opus-5",
     )
     assert result == expected
 
@@ -77,6 +77,6 @@ def test_load() -> None:
         smtp_password="",
         smtp_sender="",
         anthropic_api_key="",
-        anthropic_model="claude-haiku-4-5-20251001",
+        anthropic_model="claude-opus-5",
     )
     assert result == expected

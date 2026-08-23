@@ -26,7 +26,7 @@ def helper_settings(
         smtp_password=smtp_password,
         smtp_sender=smtp_sender,
         anthropic_api_key="the-anthropic-key",
-        anthropic_model="claude-haiku-4-5-20251001",
+        anthropic_model="claude-opus-5",
     )
 
 

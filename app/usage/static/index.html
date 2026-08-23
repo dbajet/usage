@@ -52,7 +52,34 @@
     <main class="app-main">
       <section id="view-entries" hidden>
         <h2>Entries</h2>
-        <p class="meta">The list of measurements will appear here.</p>
+        <div class="card">
+          <label>House
+            <select id="entries-house"></select>
+          </label>
+        </div>
+        <div class="card">
+          <h3>New reading</h3>
+          <form id="reading-form" class="stack-form">
+            <div class="inline-form">
+              <select id="reading-meter"></select>
+              <input id="reading-date" type="date" required>
+            </div>
+            <div id="reading-values" class="inline-form"></div>
+            <div class="inline-form">
+              <input id="reading-photo" type="file" accept="image/*">
+              <button id="btn-read-photo" class="ghost" type="button">Read the photo</button>
+            </div>
+            <p id="reading-hint" class="notice" hidden></p>
+            <div class="actions">
+              <button class="primary" type="submit">Add reading</button>
+            </div>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Measurements</h3>
+          <div id="reading-list"></div>
+          <div id="reading-pager" class="actions"></div>
+        </div>
       </section>
 
       <section id="view-stats" hidden>
