@@ -59,7 +59,7 @@ class AuthCommand:
         with self._database.transaction():
             self._database.execute("DELETE FROM login_links WHERE expires_at < %s", (datetime.now(UTC).isoformat(),))
             active = self._database.fetch_one(
-                "SELECT COUNT(*) AS count FROM login_links WHERE email_hash = %s",
+                "SELECT COUNT(*) AS count FROM login_links WHERE email_hash = %s AND used_at IS NULL",
                 (email_hash,),
             )
             if active is not None and int(active["count"]) >= Constants.login_links_active_max:

@@ -255,7 +255,7 @@ def test__issue_link(
     mock_datetime.now.side_effect = lambda tz: datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
     exp_cleanup_call = call.execute("DELETE FROM login_links WHERE expires_at < %s", ("2026-08-17T12:00:00+00:00",))
     exp_count_call = call.fetch_one(
-        "SELECT COUNT(*) AS count FROM login_links WHERE email_hash = %s",
+        "SELECT COUNT(*) AS count FROM login_links WHERE email_hash = %s AND used_at IS NULL",
         ("theEmailHash",),
     )
 

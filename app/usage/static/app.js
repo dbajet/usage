@@ -25,18 +25,35 @@ function esc(value) {
     .replaceAll("'", "&#39;");
 }
 
+function beginButtonBusy() {
+  const button = document.activeElement;
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return null;
+  button.classList.add("busy");
+  button.disabled = true;
+  return button;
+}
+
+function endButtonBusy(button) {
+  if (!button) return;
+  button.classList.remove("busy");
+  button.disabled = false;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  if (!response.ok) {
-    let message = "The request failed.";
-    try { message = (await response.json()).detail || message; } catch (_) {}
-    throw new Error(message);
-  }
-  if (response.status === 204) return {};
-  return await response.json();
+  const busyButton = beginButtonBusy();
+  try {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+    });
+    if (!response.ok) {
+      let message = "The request failed.";
+      try { message = (await response.json()).detail || message; } catch (_) {}
+      throw new Error(message);
+    }
+    if (response.status === 204) return {};
+    return await response.json();
+  } finally { endButtonBusy(busyButton); }
 }
 
 function showLoginError(error) {
@@ -112,7 +129,10 @@ async function requestLink(event) {
     const email = $("#login-email").value.trim();
     const data = await api("/api/auth/request-link", { method: "POST", body: JSON.stringify({ email }) });
     if (data.dev_link) {
-      showLoginNotice(`Development mode — sign-in link: ${data.dev_link}`);
+      const target = $("#login-notice");
+      target.innerHTML = `Development mode — <a href="${esc(data.dev_link)}">click here to sign in</a>`;
+      target.hidden = false;
+      $("#login-error").hidden = true;
     } else {
       showLoginNotice(data.message);
     }
@@ -245,9 +265,6 @@ async function readPhoto() {
   const file = $("#reading-photo").files[0];
   if (!meter) { showAppError(new Error("Add a meter first.")); return; }
   if (!file) { showAppError(new Error("Choose a photo first.")); return; }
-  const button = $("#btn-read-photo");
-  button.disabled = true;
-  button.textContent = "Reading…";
   try {
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -272,10 +289,7 @@ async function readPhoto() {
       ? "Some registers could not be read - fill them in and verify the rest."
       : "Values read from the photo - please verify before saving.";
     hint.hidden = false;
-  } catch (error) { showAppError(error); } finally {
-    button.disabled = false;
-    button.textContent = "Read the photo";
-  }
+  } catch (error) { showAppError(error); }
 }
 
 async function addReading(event) {

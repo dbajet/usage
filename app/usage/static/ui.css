@@ -108,6 +108,25 @@ button.danger { background: var(--danger-soft); color: var(--danger); }
 
 .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
 
+button.busy { opacity: 0.75; pointer-events: none; }
+button.busy::after {
+  content: "";
+  display: inline-block;
+  vertical-align: -2px;
+  width: 12px;
+  height: 12px;
+  margin-left: 0.45rem;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  border-radius: 50%;
+  animation: busy-spin 0.7s linear infinite;
+}
+
+@keyframes busy-spin {
+  to { transform: rotate(360deg); }
+}
+
 .meta { color: var(--muted); font-size: 0.9rem; }
 .notice { color: var(--ok); background: var(--accent-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); word-break: break-all; }
 .error { color: var(--danger); background: var(--danger-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); }
