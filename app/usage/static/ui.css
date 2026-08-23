@@ -195,7 +195,7 @@ button.icon-button { display: inline-flex; align-items: center; justify-content:
 
 .app-main { padding-top: 1rem; }
 
-.tabs { display: flex; gap: 0.3rem; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 1rem; }
+.tabs { display: flex; gap: 0.3rem; flex-wrap: nowrap; margin-bottom: 1rem; }
 .tabs button { display: inline-flex; flex: none; align-items: center; gap: 0.4rem; white-space: nowrap; }
 .tabs button { color: var(--muted); }
 .tabs button.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
@@ -284,6 +284,17 @@ label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.8
   }
   .app-nav button .msym { width: 20px; height: 20px; }
   .house-name { display: none; }
+  /* The tab strip shares the width instead of scrolling: icon above a small
+     label, one flexible column per tab (same look as the bottom nav). */
+  .tabs { gap: 0.25rem; }
+  .tabs button {
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    padding: 0.35rem 0.2rem;
+    font-size: 0.62rem;
+  }
   .inline-form input, .inline-form select { flex-basis: 100%; }
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
 }
