@@ -7,6 +7,7 @@ let state = {
   me: null,
   admin: null,
   dashboard: null,
+  meters: null,
   houseId: 0,
   entriesPage: 1,
   readingSource: "manual",
@@ -136,6 +137,7 @@ function showView(name) {
   $$(".app-main > section").forEach((section) => { section.hidden = section.id !== `view-${name}`; });
   if (name === "settings") {
     loadPasskeys();
+    loadMeters();
     if (state.me && state.me.is_admin) loadAdmin();
   }
   if (name === "entries") loadEntries();
@@ -583,6 +585,24 @@ async function loadAdmin() {
     $$("#settings-tabs button").forEach((button) => { button.hidden = false; });
     renderHouses();
     renderUsers();
+  } catch (error) { showAppError(error); }
+}
+
+async function loadMeters() {
+  try {
+    await ensureDashboard();
+    const houses = state.dashboard.houses || [];
+    const current = houses.find((house) => house.id === state.houseId);
+    $("#meters-house-name").textContent = current ? current.name : "";
+    if (!state.houseId) {
+      state.meters = [];
+      $("#meter-list").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+      $("#meter-form").hidden = true;
+      return;
+    }
+    $("#meter-form").hidden = false;
+    const data = await api(`/api/meters?house_id=${state.houseId}`);
+    state.meters = data.meters || [];
     renderMeters();
   } catch (error) { showAppError(error); }
 }
@@ -679,12 +699,10 @@ function renderUsers() {
 }
 
 function renderMeters() {
-  const houses = state.admin.houses || [];
-  $("#meter-house").innerHTML = houses.map((house) => `<option value="${house.id}">${esc(house.name)}</option>`).join("");
-  $("#meter-list").innerHTML = (state.admin.meters || []).map((meter) => `
+  $("#meter-list").innerHTML = (state.meters || []).map((meter) => `
     <div class="mini-row wrap-row${meter.active ? "" : " inactive"}">
       <span>
-        <strong>${esc(meter.label || meter.kind)}</strong> · ${esc(meter.kind)} · ${esc(houseName(meter.house_id))}
+        <strong>${esc(meter.label || meter.kind)}</strong> · ${esc(meter.kind)}
         ${meter.unit ? ` · ${esc(meter.unit)}` : ""}${meter.active ? "" : ' <span class="badge">inactive</span>'}
         <br>
         ${meter.registers.map((register) => `
@@ -701,7 +719,7 @@ function renderMeters() {
       </span>
     </div>`).join("") || '<p class="meta">No meter yet.</p>';
   $$("[data-edit-meter]").forEach((button) => button.addEventListener("click", async () => {
-    const meter = state.admin.meters.find((item) => item.id === Number(button.dataset.editMeter));
+    const meter = state.meters.find((item) => item.id === Number(button.dataset.editMeter));
     const answers = await openModal({
       title: `Edit meter · ${meter.label || meter.kind}`,
       fields: [
@@ -717,14 +735,14 @@ function renderMeters() {
         unit: answers.unit,
         active: answers.active,
       }) });
-      await loadAdmin();
+      await loadMeters();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-meter]").forEach((button) => button.addEventListener("click", async () => {
     if (!await confirmModal("Delete meter", "Delete this meter and all its readings?")) return;
     try {
       await api(`/api/meters/${button.dataset.deleteMeter}`, { method: "DELETE" });
-      await loadAdmin();
+      await loadMeters();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-add-register]").forEach((button) => button.addEventListener("click", async () => {
@@ -742,11 +760,11 @@ function renderMeters() {
         label: answers.label,
         initial_value: Number(answers.initial_value) || 0,
       }) });
-      await loadAdmin();
+      await loadMeters();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-edit-register]").forEach((button) => button.addEventListener("click", async () => {
-    const register = state.admin.meters.flatMap((meter) => meter.registers)
+    const register = state.meters.flatMap((meter) => meter.registers)
       .find((item) => item.id === Number(button.dataset.editRegister));
     const answers = await openModal({
       title: `Edit register · ${register.label || "register"}`,
@@ -763,14 +781,14 @@ function renderMeters() {
         initial_value: Number(answers.initial_value) || 0,
         active: answers.active,
       }) });
-      await loadAdmin();
+      await loadMeters();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-register]").forEach((button) => button.addEventListener("click", async () => {
     if (!await confirmModal("Delete register", "Delete this register?")) return;
     try {
       await api(`/api/registers/${button.dataset.deleteRegister}`, { method: "DELETE" });
-      await loadAdmin();
+      await loadMeters();
     } catch (error) { showAppError(error); }
   }));
 }
@@ -815,7 +833,7 @@ async function addMeter(event) {
   }
   try {
     await api("/api/meters", { method: "POST", body: JSON.stringify({
-      house_id: Number($("#meter-house").value),
+      house_id: state.houseId,
       kind: $("#meter-kind").value,
       label: $("#meter-label").value.trim(),
       unit: $("#meter-unit").value.trim(),
@@ -825,7 +843,7 @@ async function addMeter(event) {
     $("#meter-unit").value = "";
     $("#meter-dual").checked = false;
     toggleDualRegisters();
-    await loadAdmin();
+    await loadMeters();
   } catch (error) { showAppError(error); }
 }
 

@@ -29,17 +29,15 @@ def test___init__() -> None:
     reset_mocks()
 
 
-@patch.object(AdminCommand, "_meters")
 @patch.object(AdminCommand, "_houses")
 @patch.object(AdminCommand, "_require_admin")
-def test_overview(require_admin: MagicMock, houses: MagicMock, meters: MagicMock) -> None:
+def test_overview(require_admin: MagicMock, houses: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         require_admin.reset_mock()
         houses.reset_mock()
-        meters.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -58,7 +56,6 @@ def test_overview(require_admin: MagicMock, houses: MagicMock, meters: MagicMock
         ],
     ]
     houses.side_effect = [[{"id": 1, "name": "Fremur"}]]
-    meters.side_effect = [[{"id": 9, "house_id": 1}]]
     result = tested.overview(user)
     expected = {
         "users": [
@@ -80,12 +77,10 @@ def test_overview(require_admin: MagicMock, houses: MagicMock, meters: MagicMock
             },
         ],
         "houses": [{"id": 1, "name": "Fremur"}],
-        "meters": [{"id": 9, "house_id": 1}],
     }
     assert result == expected
     assert require_admin.mock_calls == [call(user)]
     assert houses.mock_calls == [call()]
-    assert meters.mock_calls == [call()]
     exp_calls = [
         call.fetch_all("SELECT user_id, house_id FROM user_houses ORDER BY id"),
         call.fetch_all(
@@ -438,340 +433,6 @@ def test_set_user_house(require_admin: MagicMock) -> None:
     reset_mocks()
 
 
-@patch.object(AdminCommand, "_require_admin")
-def test_create_meter(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-    exp_meter_insert = call.execute(
-        """
-                INSERT INTO meters(house_id, kind, label_sealed, unit)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-        (3, "electricity", "sealedLabel", "kWh"),
-    )
-    exp_register_insert_one = call.execute(
-        """
-                    INSERT INTO registers(meter_id, label_sealed, initial_value, position)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-        (9, "sealedRegisterOne", 100.0, 0),
-    )
-    exp_register_insert_two = call.execute(
-        """
-                    INSERT INTO registers(meter_id, label_sealed, initial_value, position)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-        (9, "sealedRegisterTwo", 200.0, 1),
-    )
-
-    # unknown kind
-    with pytest.raises(AppException) as exc_info:
-        tested.create_meter(user, {"house_id": 3, "kind": "coal"})
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.message == "Unknown meter kind."
-    assert require_admin.mock_calls == [call(user)]
-    assert database.mock_calls == []
-    reset_mocks()
-
-    # unknown house
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.create_meter(user, {"house_id": 3, "kind": "electricity"})
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The house was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # too many registers
-    database.fetch_one.side_effect = [{"id": 3}]
-    with pytest.raises(AppException) as exc_info:
-        tested.create_meter(user, {"house_id": 3, "kind": "electricity", "registers": [{}, {}, {}]})
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.message == "A meter has one or two registers."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path with two registers
-    database.fetch_one.side_effect = [{"id": 3}]
-    database.encrypt.side_effect = ["sealedLabel", "sealedRegisterOne", "sealedRegisterTwo"]
-    database.execute.side_effect = [9, 21, 22]
-    result = tested.create_meter(
-        user,
-        {
-            "house_id": 3,
-            "kind": "electricity",
-            "label": " EDF ",
-            "unit": " kWh ",
-            "registers": [
-                {"label": " HC ", "initial_value": 100.0},
-                {"label": " HP ", "initial_value": 200.0},
-            ],
-        },
-    )
-    expected = {"id": 9}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
-        call.transaction(),
-        call.transaction().__enter__(),
-        call.encrypt("EDF"),
-        exp_meter_insert,
-        call.encrypt("HC"),
-        exp_register_insert_one,
-        call.encrypt("HP"),
-        exp_register_insert_two,
-        call.transaction().__exit__(None, None, None),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-@patch.object(AdminCommand, "_require_admin")
-def test_update_meter(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-
-    # unknown meter
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.update_meter(user, 9, {"label": "EDF"})
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The meter was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path
-    database.fetch_one.side_effect = [{"id": 9}]
-    database.encrypt.side_effect = ["sealedLabel"]
-    database.execute.side_effect = [0]
-    result = tested.update_meter(user, 9, {"label": " EDF ", "unit": " kWh ", "active": True})
-    expected = {"message": "Meter updated."}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,)),
-        call.encrypt("EDF"),
-        call.execute(
-            "UPDATE meters SET label_sealed = %s, unit = %s, active = %s WHERE id = %s",
-            ("sealedLabel", "kWh", True, 9),
-        ),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-@patch.object(AdminCommand, "_require_admin")
-def test_delete_meter(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-
-    # unknown meter
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.delete_meter(user, 9)
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The meter was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path
-    database.fetch_one.side_effect = [{"id": 9}]
-    database.execute.side_effect = [0]
-    result = tested.delete_meter(user, 9)
-    expected = {"message": "Meter deleted, along with its readings."}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,)),
-        call.execute("DELETE FROM meters WHERE id = %s", (9,)),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-@patch.object(AdminCommand, "_require_admin")
-def test_create_register(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-    exp_count_call = call.fetch_one(
-        "SELECT COUNT(*) AS count, COALESCE(MAX(position), -1) AS top FROM registers WHERE meter_id = %s AND active",
-        (9,),
-    )
-    exp_insert = call.execute(
-        """
-            INSERT INTO registers(meter_id, label_sealed, initial_value, position)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id
-            """,
-        (9, "sealedLabel", 100.0, 2),
-    )
-
-    # unknown meter
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.create_register(user, 9, {"label": "HP"})
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The meter was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # two registers already active
-    database.fetch_one.side_effect = [{"id": 9}, {"count": 2, "top": 1}]
-    with pytest.raises(AppException) as exc_info:
-        tested.create_register(user, 9, {"label": "HP"})
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.message == "A meter has at most two active registers."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,)), exp_count_call]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path
-    database.fetch_one.side_effect = [{"id": 9}, {"count": 1, "top": 1}]
-    database.encrypt.side_effect = ["sealedLabel"]
-    database.execute.side_effect = [22]
-    result = tested.create_register(user, 9, {"label": " HP ", "initial_value": 100.0})
-    expected = {"id": 22}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM meters WHERE id = %s", (9,)),
-        exp_count_call,
-        call.encrypt("HP"),
-        exp_insert,
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-@patch.object(AdminCommand, "_require_admin")
-def test_update_register(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-
-    # unknown register
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.update_register(user, 22, {"label": "HP"})
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The register was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM registers WHERE id = %s", (22,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path
-    database.fetch_one.side_effect = [{"id": 22}]
-    database.encrypt.side_effect = ["sealedLabel"]
-    database.execute.side_effect = [0]
-    result = tested.update_register(user, 22, {"label": " HP ", "initial_value": 100.0, "active": False})
-    expected = {"message": "Register updated."}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM registers WHERE id = %s", (22,)),
-        call.encrypt("HP"),
-        call.execute(
-            "UPDATE registers SET label_sealed = %s, initial_value = %s, active = %s WHERE id = %s",
-            ("sealedLabel", 100.0, False, 22),
-        ),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-@patch.object(AdminCommand, "_require_admin")
-def test_delete_register(require_admin: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        require_admin.reset_mock()
-        database.reset_mock()
-
-    user = helper_user()
-    exp_values_call = call.fetch_one("SELECT COUNT(*) AS count FROM reading_values WHERE register_id = %s", (22,))
-
-    # unknown register
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested.delete_register(user, 22)
-    assert exc_info.value.status_code == 404
-    assert exc_info.value.message == "The register was not found."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM registers WHERE id = %s", (22,))]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # the register has readings
-    database.fetch_one.side_effect = [{"id": 22}, {"count": 3}]
-    with pytest.raises(AppException) as exc_info:
-        tested.delete_register(user, 22)
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.message == "This register has readings. Deactivate it instead."
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [call.fetch_one("SELECT id FROM registers WHERE id = %s", (22,)), exp_values_call]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-    # happy path
-    database.fetch_one.side_effect = [{"id": 22}, {"count": 0}]
-    database.execute.side_effect = [0]
-    result = tested.delete_register(user, 22)
-    expected = {"message": "Register deleted."}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM registers WHERE id = %s", (22,)),
-        exp_values_call,
-        call.execute("DELETE FROM registers WHERE id = %s", (22,)),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
 def test__houses() -> None:
     tested = helper_instance()
     database = tested._database
@@ -788,54 +449,6 @@ def test__houses() -> None:
     exp_calls = [
         call.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
         call.decrypt_rows(rows, ("name",)),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
-
-
-def test__meters() -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        database.reset_mock()
-
-    register_rows = [{"id": 21, "meter_id": 9, "label": "sealedHC", "initial_value": 100, "position": 0, "active": True}]
-    meter_rows = [{"id": 9, "house_id": 3, "kind": "electricity", "label": "sealedEDF", "unit": "kWh", "position": 0, "active": True}]
-    database.fetch_all.side_effect = [register_rows, meter_rows]
-    database.decrypt_rows.side_effect = [
-        [{"id": 21, "meter_id": 9, "label": "HC", "initial_value": 100, "position": 0, "active": True}],
-        [{"id": 9, "house_id": 3, "kind": "electricity", "label": "EDF", "unit": "kWh", "position": 0, "active": True}],
-    ]
-    result = tested._meters()
-    expected = [
-        {
-            "id": 9,
-            "house_id": 3,
-            "kind": "electricity",
-            "label": "EDF",
-            "unit": "kWh",
-            "position": 0,
-            "active": True,
-            "registers": [{"id": 21, "label": "HC", "initial_value": 100.0, "position": 0, "active": True}],
-        },
-    ]
-    assert result == expected
-    exp_calls = [
-        call.fetch_all(
-            """
-                SELECT id, meter_id, label_sealed AS label, initial_value, position, active
-                FROM registers ORDER BY meter_id, position
-                """,
-        ),
-        call.decrypt_rows(register_rows, ("label",)),
-        call.fetch_all(
-            """
-                SELECT id, house_id, kind, label_sealed AS label, unit, position, active
-                FROM meters ORDER BY house_id, position, id
-                """,
-        ),
-        call.decrypt_rows(meter_rows, ("label",)),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()

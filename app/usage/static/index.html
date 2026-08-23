@@ -108,24 +108,39 @@
       <section id="view-settings" hidden>
         <h2>Settings</h2>
         <div class="tabs" id="settings-tabs">
-          <button class="ghost active" data-settings-tab="account" type="button">Account</button>
+          <button class="ghost active" data-settings-tab="meters" type="button">Meters</button>
           <button class="ghost" data-settings-tab="houses" type="button" hidden>Houses</button>
           <button class="ghost" data-settings-tab="users" type="button" hidden>Users</button>
-          <button class="ghost" data-settings-tab="meters" type="button" hidden>Meters</button>
+          <button class="ghost" data-settings-tab="account" type="button">Account</button>
         </div>
 
-        <div data-settings-panel="account">
+        <div data-settings-panel="meters">
           <div class="card">
-            <h3>Account</h3>
-            <p id="me-line" class="meta"></p>
-          </div>
-          <div class="card">
-            <h3>Passkeys</h3>
-            <p class="meta">Sign in without email on this device.</p>
-            <div id="passkey-list"></div>
-            <div class="actions">
-              <button id="btn-add-passkey" class="primary" type="button">Add a passkey</button>
-            </div>
+            <h3>Meters · <span id="meters-house-name"></span></h3>
+            <p class="meta">A meter has one or two registers (e.g. off-peak / peak).</p>
+            <div id="meter-list"></div>
+            <form id="meter-form" class="stack-form">
+              <div class="inline-form">
+                <select id="meter-kind">
+                  <option value="water">Water</option>
+                  <option value="electricity">Electricity</option>
+                  <option value="gas">Gas</option>
+                  <option value="mileage">Mileage</option>
+                </select>
+                <input id="meter-label" placeholder="Label (e.g. EDF)">
+                <input id="meter-unit" placeholder="Unit (kWh, m3, km)">
+              </div>
+              <label class="check"><input id="meter-dual" type="checkbox"> Two registers</label>
+              <div class="inline-form">
+                <input id="register-one-label" placeholder="Register 1 label (optional)">
+                <input id="register-one-initial" type="number" step="0.01" placeholder="Register 1 start">
+                <input id="register-two-label" placeholder="Register 2 label" hidden>
+                <input id="register-two-initial" type="number" step="0.01" placeholder="Register 2 start" hidden>
+              </div>
+              <div class="actions">
+                <button class="primary" type="submit">Add meter</button>
+              </div>
+            </form>
           </div>
         </div>
 
@@ -154,34 +169,18 @@
           </div>
         </div>
 
-        <div data-settings-panel="meters" hidden>
+        <div data-settings-panel="account" hidden>
           <div class="card">
-            <h3>Meters</h3>
-            <p class="meta">A meter has one or two registers (e.g. off-peak / peak).</p>
-            <div id="meter-list"></div>
-            <form id="meter-form" class="stack-form">
-              <div class="inline-form">
-                <select id="meter-house" required></select>
-                <select id="meter-kind">
-                  <option value="water">Water</option>
-                  <option value="electricity">Electricity</option>
-                  <option value="gas">Gas</option>
-                  <option value="mileage">Mileage</option>
-                </select>
-                <input id="meter-label" placeholder="Label (e.g. EDF)">
-                <input id="meter-unit" placeholder="Unit (kWh, m3, km)">
-              </div>
-              <label class="check"><input id="meter-dual" type="checkbox"> Two registers</label>
-              <div class="inline-form">
-                <input id="register-one-label" placeholder="Register 1 label (optional)">
-                <input id="register-one-initial" type="number" step="0.01" placeholder="Register 1 start">
-                <input id="register-two-label" placeholder="Register 2 label" hidden>
-                <input id="register-two-initial" type="number" step="0.01" placeholder="Register 2 start" hidden>
-              </div>
-              <div class="actions">
-                <button class="primary" type="submit">Add meter</button>
-              </div>
-            </form>
+            <h3>Account</h3>
+            <p id="me-line" class="meta"></p>
+          </div>
+          <div class="card">
+            <h3>Passkeys</h3>
+            <p class="meta">Sign in without email on this device.</p>
+            <div id="passkey-list"></div>
+            <div class="actions">
+              <button id="btn-add-passkey" class="primary" type="button">Add a passkey</button>
+            </div>
           </div>
         </div>
       </section>

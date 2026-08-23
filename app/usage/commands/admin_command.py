@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.structures.app_exception import AppException
 from usage.structures.session_user import SessionUser
 
 
 class AdminCommand:
-    """Admin-only management of users, houses, user-house links, meters and registers."""
+    """Admin-only management of users, houses and user-house links."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
@@ -32,7 +31,6 @@ class AdminCommand:
         return {
             "users": users,
             "houses": self._houses(),
-            "meters": self._meters(),
         }
 
     def create_user(self, user: SessionUser, data: dict[str, Any]) -> dict[str, Any]:
@@ -135,165 +133,11 @@ class AdminCommand:
         )
         return {"message": "User unlinked from the house."}
 
-    def create_meter(self, user: SessionUser, data: dict[str, Any]) -> dict[str, Any]:
-        self._require_admin(user)
-        house_id = int(data.get("house_id") or 0)
-        kind = str(data.get("kind") or "")
-        if kind not in Constants.kinds:
-            raise AppException(400, "Unknown meter kind.")
-        house = self._database.fetch_one("SELECT id FROM houses WHERE id = %s", (house_id,))
-        if house is None:
-            raise AppException(404, "The house was not found.")
-        registers = list(data.get("registers") or [{}])
-        if not 1 <= len(registers) <= 2:
-            raise AppException(400, "A meter has one or two registers.")
-        with self._database.transaction():
-            meter_id = self._database.execute(
-                """
-                INSERT INTO meters(house_id, kind, label_sealed, unit)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    house_id,
-                    kind,
-                    self._database.encrypt(str(data.get("label") or "").strip()),
-                    str(data.get("unit") or "").strip(),
-                ),
-            )
-            for position, register in enumerate(registers):
-                self._database.execute(
-                    """
-                    INSERT INTO registers(meter_id, label_sealed, initial_value, position)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        meter_id,
-                        self._database.encrypt(str(register.get("label") or "").strip()),
-                        float(register.get("initial_value") or 0),
-                        position,
-                    ),
-                )
-        return {"id": meter_id}
-
-    def update_meter(self, user: SessionUser, meter_id: int, data: dict[str, Any]) -> dict[str, str]:
-        self._require_admin(user)
-        row = self._database.fetch_one("SELECT id FROM meters WHERE id = %s", (meter_id,))
-        if row is None:
-            raise AppException(404, "The meter was not found.")
-        self._database.execute(
-            "UPDATE meters SET label_sealed = %s, unit = %s, active = %s WHERE id = %s",
-            (
-                self._database.encrypt(str(data.get("label") or "").strip()),
-                str(data.get("unit") or "").strip(),
-                bool(data.get("active")),
-                meter_id,
-            ),
-        )
-        return {"message": "Meter updated."}
-
-    def delete_meter(self, user: SessionUser, meter_id: int) -> dict[str, str]:
-        self._require_admin(user)
-        row = self._database.fetch_one("SELECT id FROM meters WHERE id = %s", (meter_id,))
-        if row is None:
-            raise AppException(404, "The meter was not found.")
-        self._database.execute("DELETE FROM meters WHERE id = %s", (meter_id,))
-        return {"message": "Meter deleted, along with its readings."}
-
-    def create_register(self, user: SessionUser, meter_id: int, data: dict[str, Any]) -> dict[str, Any]:
-        self._require_admin(user)
-        meter = self._database.fetch_one("SELECT id FROM meters WHERE id = %s", (meter_id,))
-        if meter is None:
-            raise AppException(404, "The meter was not found.")
-        active = self._database.fetch_one(
-            "SELECT COUNT(*) AS count, COALESCE(MAX(position), -1) AS top FROM registers WHERE meter_id = %s AND active",
-            (meter_id,),
-        )
-        if active is not None and int(active["count"]) >= 2:
-            raise AppException(400, "A meter has at most two active registers.")
-        register_id = self._database.execute(
-            """
-            INSERT INTO registers(meter_id, label_sealed, initial_value, position)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                meter_id,
-                self._database.encrypt(str(data.get("label") or "").strip()),
-                float(data.get("initial_value") or 0),
-                int(active["top"]) + 1 if active is not None else 0,
-            ),
-        )
-        return {"id": register_id}
-
-    def update_register(self, user: SessionUser, register_id: int, data: dict[str, Any]) -> dict[str, str]:
-        self._require_admin(user)
-        row = self._database.fetch_one("SELECT id FROM registers WHERE id = %s", (register_id,))
-        if row is None:
-            raise AppException(404, "The register was not found.")
-        self._database.execute(
-            "UPDATE registers SET label_sealed = %s, initial_value = %s, active = %s WHERE id = %s",
-            (
-                self._database.encrypt(str(data.get("label") or "").strip()),
-                float(data.get("initial_value") or 0),
-                bool(data.get("active")),
-                register_id,
-            ),
-        )
-        return {"message": "Register updated."}
-
-    def delete_register(self, user: SessionUser, register_id: int) -> dict[str, str]:
-        self._require_admin(user)
-        row = self._database.fetch_one("SELECT id FROM registers WHERE id = %s", (register_id,))
-        if row is None:
-            raise AppException(404, "The register was not found.")
-        values = self._database.fetch_one(
-            "SELECT COUNT(*) AS count FROM reading_values WHERE register_id = %s",
-            (register_id,),
-        )
-        if values is not None and int(values["count"]) > 0:
-            raise AppException(409, "This register has readings. Deactivate it instead.")
-        self._database.execute("DELETE FROM registers WHERE id = %s", (register_id,))
-        return {"message": "Register deleted."}
-
     def _houses(self) -> list[dict[str, Any]]:
         return self._database.decrypt_rows(
             self._database.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
             ("name",),
         )
-
-    def _meters(self) -> list[dict[str, Any]]:
-        registers = self._database.decrypt_rows(
-            self._database.fetch_all(
-                """
-                SELECT id, meter_id, label_sealed AS label, initial_value, position, active
-                FROM registers ORDER BY meter_id, position
-                """,
-            ),
-            ("label",),
-        )
-        result = self._database.decrypt_rows(
-            self._database.fetch_all(
-                """
-                SELECT id, house_id, kind, label_sealed AS label, unit, position, active
-                FROM meters ORDER BY house_id, position, id
-                """,
-            ),
-            ("label",),
-        )
-        for meter in result:
-            meter["registers"] = [
-                {
-                    "id": int(register["id"]),
-                    "label": register["label"],
-                    "initial_value": float(register["initial_value"]),
-                    "position": int(register["position"]),
-                    "active": bool(register["active"]),
-                }
-                for register in registers
-                if int(register["meter_id"]) == int(meter["id"])
-            ]
-        return result
 
     def _require_admin(self, user: SessionUser) -> None:
         if not user.is_admin:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Cookie, Request, Response
 
 from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
+from usage.commands.meter_command import MeterCommand
 from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
 from usage.commands.stats_command import StatsCommand
@@ -45,6 +46,7 @@ class ApiRouter:
         self._auth_command = AuthCommand(database, settings, email_sender)
         self._passkey_command = PasskeyCommand(database)
         self._admin_command = AdminCommand(database)
+        self._meter_command = MeterCommand(database)
         self._reading_command = ReadingCommand(database, MeterReader(settings))
         self._stats_command = StatsCommand(database)
         self._register()
@@ -74,6 +76,7 @@ class ApiRouter:
         self._router.add_api_route("/houses/{house_id}", self._update_house, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/houses/{house_id}", self._delete_house, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/user-houses", self._set_user_house, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/meters", self._list_meters, methods=["GET"])
         self._router.add_api_route("/meters", self._create_meter, methods=["POST"])
         self._router.add_api_route("/meters/{meter_id}", self._update_meter, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/meters/{meter_id}", self._delete_meter, methods=["DELETE"], response_model=ApiMessage)
@@ -253,13 +256,21 @@ class ApiRouter:
         message = self._admin_command.set_user_house(user, body.model_dump())
         return ApiMessage(message=message["message"])
 
+    def _list_meters(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._meter_command.list_meters(user, house_id)
+
     def _create_meter(
         self,
         body: MeterRequest,
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._admin_command.create_meter(user, body.model_dump())
+        return self._meter_command.create_meter(user, body.model_dump())
 
     def _update_meter(
         self,
@@ -268,7 +279,7 @@ class ApiRouter:
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
-        message = self._admin_command.update_meter(user, meter_id, body.model_dump())
+        message = self._meter_command.update_meter(user, meter_id, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _delete_meter(
@@ -277,7 +288,7 @@ class ApiRouter:
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
-        message = self._admin_command.delete_meter(user, meter_id)
+        message = self._meter_command.delete_meter(user, meter_id)
         return ApiMessage(message=message["message"])
 
     def _create_register(
@@ -287,7 +298,7 @@ class ApiRouter:
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._admin_command.create_register(user, meter_id, body.model_dump())
+        return self._meter_command.create_register(user, meter_id, body.model_dump())
 
     def _update_register(
         self,
@@ -296,7 +307,7 @@ class ApiRouter:
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
-        message = self._admin_command.update_register(user, register_id, body.model_dump())
+        message = self._meter_command.update_register(user, register_id, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _delete_register(
@@ -305,7 +316,7 @@ class ApiRouter:
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
-        message = self._admin_command.delete_register(user, register_id)
+        message = self._meter_command.delete_register(user, register_id)
         return ApiMessage(message=message["message"])
 
     def _dashboard(self, usage_session: str = Cookie(default="", alias=Constants.cookie_name)) -> dict[str, Any]:
