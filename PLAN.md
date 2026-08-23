@@ -137,10 +137,10 @@ one-way imports, NamedTuples over dicts, mypy strict, `result` naming, sync hand
   image; `backup.sh` runs once at container start then every 86400 s. Each run: `pg_dump` piped through
   `openssl enc -aes-256-cbc -pbkdf2 -pass env:BACKUP_PASSPHRASE` (the dump never touches disk
   unencrypted) into `/backups/<day-of-month>/` — local slots rotate over ~31 days — then `aws s3 cp`
-  to `daily/usage/<date>/`, plus `monthly/usage/<date>/` when the day is the 1st. AWS credentials and
-  `BACKUP_PASSPHRASE` live in a separate `.env.backup` read only by this service (app containers never
-  hold backup-bucket keys). Volumes: `usage_db`, `usage_backups` (no images volume — photos are never
-  stored). Ports 8063/8064 chosen to avoid family_net's 8053/8054
+  to `daily/usage/<date>/`, plus `monthly/usage/<date>/` when the day is the 1st. As in family_net,
+  compose maps the AWS credentials and `USAGE_BACKUP_PASSPHRASE` from the single `.env` into the
+  backup service only — the app containers never receive backup-bucket keys. Volumes: `usage_db`,
+  `usage_backups` (no images volume — photos are never stored). Ports 8063/8064 chosen to avoid family_net's 8053/8054
   on the same server — verify they are free during first deploy.
 - `deploy/deploy-from-local.sh`: rsync (excluding `.git`, `.env`, `__pycache__`) to
   `ubuntu@45.85.249.159:/opt/usage/`, then run server-side script with `APP_VERSION` from git date.
@@ -150,11 +150,10 @@ one-way imports, NamedTuples over dicts, mypy strict, `result` naming, sync hand
 - `deploy/nginx-usage.edgy.world.conf`: upstream on 8063, HTTPS via certbot, rate limit on
   `/api/auth/`, `client_max_body_size 15m` (base64 photos), CSP/HSTS here, X-* headers from middleware.
 - Production `.env` lives only on the server (`USAGE_COOKIE_SECURE=true`, `USAGE_DEV_AUTH_LINKS=false`,
-  `USAGE_BASE_URL=https://usage.edgy.world`, `USAGE_ENCRYPTION_KEY`, `DATABASE_URL`, SES + Anthropic
-  keys). Backup secrets live in a separate server-only `.env.backup`:
-  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `S3_BACKUP_BUCKET`, `BACKUP_PASSPHRASE` (kept in the
-  password manager along with `USAGE_ENCRYPTION_KEY` — restoring needs both). Repo carries
-  `.env.backup.example`.
+  `USAGE_BASE_URL=https://usage.edgy.world`, `USAGE_ENCRYPTION_KEY`, `USAGE_DB_PASSWORD`, SES +
+  Anthropic keys, and the backup settings `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`,
+  `S3_BACKUP_BUCKET`, `USAGE_BACKUP_PASSPHRASE` — the passphrase kept in the password manager along
+  with `USAGE_ENCRYPTION_KEY`, since restoring needs both). Repo carries `.env.example` only.
   Repo carries `.env.example` only — never commit secrets (family_net's `.env` mishap not repeated).
 
 ## Tooling & tests

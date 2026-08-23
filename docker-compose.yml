@@ -1,0 +1,81 @@
+services:
+  # Blue/green: two identical app containers; nginx points at exactly one.
+  # deploy/deploy-prod.sh builds the idle colour, health-checks it, switches
+  # nginx, then stops the old colour. Locally, start one colour:
+  #   docker compose up -d --build usage-app-blue
+  usage-app-blue: &usage-app
+    container_name: usage-app-blue
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${USAGE_BLUE_BIND:-8063}:8063"
+    environment:
+      DATABASE_URL: postgresql://user_usage:${USAGE_DB_PASSWORD:-usage_dev_password}@usage-db:5432/db_usage
+      USAGE_ENCRYPTION_KEY: ${USAGE_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      USAGE_DEV_AUTH_LINKS: ${USAGE_DEV_AUTH_LINKS:-true}
+      USAGE_COOKIE_SECURE: ${USAGE_COOKIE_SECURE:-false}
+      USAGE_PORT: "8063"
+      USAGE_BASE_URL: ${USAGE_BASE_URL:-}
+      APP_VERSION: ${APP_VERSION:-dev}
+      BUILD_TIME: ${BUILD_TIME:-}
+      SES_SMTP_HOST: ${SES_SMTP_HOST:-}
+      SES_SMTP_PORT: ${SES_SMTP_PORT:-587}
+      SES_SMTP_USERNAME: ${SES_SMTP_USERNAME:-}
+      SES_SMTP_PASSWORD: ${SES_SMTP_PASSWORD:-}
+      SES_SENDER_EMAIL: ${SES_SENDER_EMAIL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      USAGE_ANTHROPIC_MODEL: ${USAGE_ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+    depends_on:
+      usage-db:
+        condition: service_healthy
+
+  usage-app-green:
+    <<: *usage-app
+    container_name: usage-app-green
+    ports:
+      - "${USAGE_GREEN_BIND:-8064}:8063"
+
+  usage-db:
+    container_name: usage-db
+    image: postgres:16-alpine
+    # Restart policies bypass depends_on: after a daemon restart the apps come
+    # back on their own, so the database must too or they crash-loop on DNS.
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user_usage
+      POSTGRES_PASSWORD: ${USAGE_DB_PASSWORD:-usage_dev_password}
+      POSTGRES_DB: db_usage
+    volumes:
+      - usage_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_usage -d db_usage"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  usage-backup:
+    container_name: usage-backup
+    build:
+      context: .
+      dockerfile: deploy/backup.Dockerfile
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${USAGE_DB_PASSWORD:-usage_dev_password}
+      BACKUP_PASSPHRASE: ${USAGE_BACKUP_PASSPHRASE:-usage_dev_backup_passphrase}
+      BACKUP_INTERVAL_SECONDS: ${USAGE_BACKUP_INTERVAL_SECONDS:-86400}
+      S3_BACKUP_BUCKET: ${S3_BACKUP_BUCKET:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-west-2}
+    volumes:
+      - usage_backups:/backups
+      - ./deploy/backup.sh:/backup/backup.sh:ro
+    depends_on:
+      usage-db:
+        condition: service_healthy
+    # Same cadence as the other apps on this host: one run at start, then daily.
+    command: ["bash", "-c", "while true; do bash /backup/backup.sh; sleep \"$${BACKUP_INTERVAL_SECONDS}\"; done"]
+
+volumes:
+  usage_db:
+  usage_backups:
