@@ -120,6 +120,9 @@ function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
   $("#me-line").textContent = `${state.me.name || state.me.email} · ${state.me.email}` + (state.me.is_admin ? " · admin" : "");
+  api("/api/version")
+    .then((data) => { $("#version").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : ""); })
+    .catch(() => {});
   showView("entries");
 }
 
@@ -498,11 +501,16 @@ function chartMarkup(seriesList) {
 async function loadAdmin() {
   try {
     state.admin = await api("/api/admin/overview");
-    $("#admin-panels").hidden = false;
+    $$("#settings-tabs button").forEach((button) => { button.hidden = false; });
     renderHouses();
     renderUsers();
     renderMeters();
   } catch (error) { showAppError(error); }
+}
+
+function showSettingsTab(name) {
+  $$("#settings-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.settingsTab === name));
+  $$("[data-settings-panel]").forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
 }
 
 function houseName(houseId) {
@@ -747,5 +755,6 @@ addEventListener("DOMContentLoaded", () => {
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));
+  $$("#settings-tabs button").forEach((button) => button.addEventListener("click", () => showSettingsTab(button.dataset.settingsTab)));
   load();
 });

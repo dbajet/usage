@@ -134,16 +134,53 @@ button.busy::after {
 .notice { color: var(--ok); background: var(--accent-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); word-break: break-all; }
 .error { color: var(--danger); background: var(--danger-soft); padding: 0.6rem 0.8rem; border-radius: var(--radius-s); }
 
+.msym { width: 18px; height: 18px; flex: none; }
+button.icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 0.45rem; }
+
+/* The theme button shows the mode it switches TO. */
+.icon-light { display: none; }
+:root[data-theme="dark"] .icon-light { display: inline; }
+:root[data-theme="dark"] .icon-dark { display: none; }
+
+/* One-line sticky top banner: brand, nav, account icons (our-stories layout). */
 .app-header {
+  position: sticky;
+  z-index: 30;
+  top: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.5rem 0 1rem;
-  flex-wrap: wrap;
+  min-height: 56px;
+  margin-inline: calc(50% - 50vw);
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
 }
-.app-nav { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-.header-actions { display: flex; gap: 0.4rem; }
+.app-nav { display: flex; flex: 1; justify-content: center; gap: 0.3rem; }
+.app-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.app-nav button.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.account-bar { display: flex; flex: none; gap: 0.3rem; }
+
+.app-main { padding-top: 1rem; }
+
+.tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.tabs button { color: var(--muted); }
+.tabs button.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+
+.site-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 1.5rem 0 1rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
 
 .mini-row {
   display: flex;
@@ -190,8 +227,35 @@ label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.8
 .viz-legend span { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text); }
 .viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
 
-@media (max-width: 600px) {
-  .app-header { flex-direction: column; align-items: stretch; }
-  .actions { flex-direction: column; }
-  .actions button { width: 100%; }
+@media (max-width: 760px) {
+  /* The nav becomes a fixed bottom bar (our-stories pattern); the top banner
+     keeps the brand and account icons on one line. */
+  .app-shell { padding-bottom: 5.5rem; }
+  .account-bar { margin-left: auto; }
+  .app-nav {
+    position: fixed;
+    z-index: 35;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 0;
+    padding: 0.3rem 0.3rem max(0.3rem, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  .app-nav button {
+    flex-direction: column;
+    gap: 0.15rem;
+    min-height: 48px;
+    padding: 0.3rem 0.1rem;
+    border-color: transparent;
+    font-size: 0.62rem;
+  }
+  .app-nav button .msym { width: 20px; height: 20px; }
+  .inline-form input, .inline-form select { flex-basis: 100%; }
+  .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
 }
