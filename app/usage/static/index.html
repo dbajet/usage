@@ -85,13 +85,10 @@
       </section>
 
       <section id="view-stats" hidden>
-        <h2>Stats</h2>
-        <div class="card">
-          <div class="inline-form stats-toggles">
-            <label class="check"><input id="stats-show-tables" type="checkbox" checked> Tables</label>
-            <label class="check"><input id="stats-show-graphs" type="checkbox" checked> Graphs</label>
-            <label class="check"><input id="stats-merge-graphs" type="checkbox"> Merge the graphs</label>
-          </div>
+        <div class="stats-toggles">
+          <label class="switch"><input id="stats-show-tables" type="checkbox" checked><span class="slider"></span> Tables</label>
+          <label class="switch"><input id="stats-show-graphs" type="checkbox" checked><span class="slider"></span> Graphs</label>
+          <label class="switch"><input id="stats-merge-graphs" type="checkbox"><span class="slider"></span> Merge the graphs</label>
         </div>
         <div id="stats-content"></div>
       </section>
