@@ -190,6 +190,12 @@ class ReadingCommand:
         if len(image_base64) * 3 // 4 > Constants.photo_max_bytes:
             raise AppException(400, "The photo is too large.")
         registers = self._active_registers(meter_id)
+        register_id = int(data.get("register_id") or 0)
+        if register_id:
+            # A cycling display shows one register at a time: read one per photo.
+            registers = [register for register in registers if int(register["id"]) == register_id]
+            if not registers:
+                raise AppException(404, "The register was not found.")
         values = self._meter_reader.read(image_base64, media_type, [str(register["label"]) for register in registers])
         return {
             "values": [

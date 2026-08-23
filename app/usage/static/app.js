@@ -368,13 +368,33 @@ function selectedMeter() {
   return houseMeters().find((meter) => meter.id === Number($("#reading-meter").value));
 }
 
+const ICON_CAMERA = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-260q75 0 127.5-52.5T660-440q0-75-52.5-127.5T480-620q-75 0-127.5 52.5T300-440q0 75 52.5 127.5T480-260Zm0-80q-42 0-71-29t-29-71q0-42 29-71t71-29q42 0 71 29t29 71q0 42-29 71t-71 29ZM160-120q-33 0-56.5-23.5T80-200v-480q0-33 23.5-56.5T160-760h126l74-80h240l74 80h126q33 0 56.5 23.5T880-680v480q0 33-23.5 56.5T800-120H160Zm0-80h640v-480H638l-73-80H395l-73 80H160v480Zm320-240Z"/></svg>';
+const ICON_PICTURE = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z"/></svg>';
+
 function renderValueInputs() {
   const meter = selectedMeter();
   state.readingSource = "manual";
   $("#reading-hint").hidden = true;
+  // A photo per register: cycling displays show one register at a time.
   $("#reading-values").innerHTML = (meter ? meter.registers : []).map((register) => `
-    <input type="number" step="any" data-register-value="${register.id}"
-      placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>`).join("");
+    <div class="value-row">
+      <input type="number" step="any" data-register-value="${register.id}"
+        placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>
+      <button class="ghost icon-only mobile-only" data-photo-camera="${register.id}" type="button"
+        title="Take a photo of ${esc(register.label || "the counter")}">${ICON_CAMERA}</button>
+      <button class="ghost icon-only" data-photo-file="${register.id}" type="button"
+        title="Read ${esc(register.label || "the counter")} from a photo">${ICON_PICTURE}</button>
+    </div>`).join("");
+  $$("[data-photo-camera]").forEach((button) => button.addEventListener("click", () => {
+    state.photoTarget = Number(button.dataset.photoCamera);
+    state.photoButton = button;
+    $("#reading-camera").click();
+  }));
+  $$("[data-photo-file]").forEach((button) => button.addEventListener("click", () => {
+    state.photoTarget = Number(button.dataset.photoFile);
+    state.photoButton = button;
+    $("#reading-photo").click();
+  }));
 }
 
 async function downscalePhoto(file) {
@@ -401,6 +421,8 @@ async function readPhoto() {
   const file = $("#reading-photo").files[0];
   if (!meter) { showAppError(new Error("Add a meter first.")); return; }
   if (!file) { showAppError(new Error("Choose a photo first.")); return; }
+  const button = state.photoButton;
+  if (button) { button.classList.add("busy"); button.disabled = true; }
   try {
     const photo = await downscalePhoto(file);
     const dataUrl = await new Promise((resolve, reject) => {
@@ -413,6 +435,7 @@ async function readPhoto() {
       meter_id: meter.id,
       media_type: photo.type || file.type,
       image_base64: String(dataUrl).split(",")[1] || "",
+      register_id: state.photoTarget || 0,
     }) });
     let missing = false;
     (data.values || []).forEach((item) => {
@@ -423,10 +446,14 @@ async function readPhoto() {
     state.readingSource = "photo";
     const hint = $("#reading-hint");
     hint.textContent = missing
-      ? "Some registers could not be read - fill them in and verify the rest."
+      ? "The register could not be read - fill it in manually."
       : "Values read from the photo - please verify before saving.";
     hint.hidden = false;
-  } catch (error) { showAppError(error); }
+  } catch (error) { showAppError(error); } finally {
+    if (button) { button.classList.remove("busy"); button.disabled = false; }
+    state.photoButton = null;
+    $("#reading-photo").value = "";
+  }
 }
 
 function currentMonthValue() {
@@ -462,6 +489,13 @@ function pastePhoto(event) {
   event.preventDefault();
   const file = item.getAsFile();
   if (!file) return;
+  // The paste lands on the focused register, else the first empty one.
+  const inputs = $$("#reading-values [data-register-value]");
+  const target = inputs.find((input) => input === document.activeElement)
+    || inputs.find((input) => !input.value) || inputs[0];
+  if (!target) return;
+  state.photoTarget = Number(target.dataset.registerValue);
+  state.photoButton = $(`[data-photo-file="${state.photoTarget}"]`);
   const transfer = new DataTransfer();
   transfer.items.add(file);
   $("#reading-photo").files = transfer.files;
@@ -1343,8 +1377,7 @@ addEventListener("DOMContentLoaded", () => {
     if (state.yearBounds) applyYearRange(state.yearBounds.min, state.yearBounds.max);
   });
   $("#reading-meter").addEventListener("change", renderValueInputs);
-  $("#btn-read-photo").addEventListener("click", readPhoto);
-  $("#btn-take-photo").addEventListener("click", () => $("#reading-camera").click());
+  $("#reading-photo").addEventListener("change", readPhoto);
   $("#reading-camera").addEventListener("change", cameraPhoto);
   $("#reading-form").addEventListener("submit", addReading);
   $("#btn-new-reading").addEventListener("click", openReadingModal);

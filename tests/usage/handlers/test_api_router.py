@@ -1143,7 +1143,7 @@ def test__extract_reading() -> None:
     assert admin_command.mock_calls == []
     assert meter_command.mock_calls == []
     exp_calls = [
-        call.extract(user, {"meter_id": 9, "image_base64": "aGVsbG8=", "media_type": "image/jpeg"}),
+        call.extract(user, {"meter_id": 9, "image_base64": "aGVsbG8=", "media_type": "image/jpeg", "register_id": 0}),
     ]
     assert reading_command.mock_calls == exp_calls
     assert stats_command.mock_calls == []

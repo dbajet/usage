@@ -249,18 +249,16 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reading-modal-title">
       <h3 id="reading-modal-title">New reading</h3>
       <form id="reading-form" class="stack-form">
-        <div class="inline-form">
+        <div class="inline-form nowrap-row">
           <select id="reading-meter"></select>
           <input id="reading-month" type="month" required>
-          <button id="btn-prev-month" class="ghost" type="button">Previous month</button>
+          <button id="btn-prev-month" class="ghost icon-only" type="button" title="Previous month" aria-label="Previous month">
+            <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-120q-138 0-240.5-91.5T122-440h82q14 104 92.5 172T480-200q117 0 198.5-81.5T760-480q0-117-81.5-198.5T480-760q-69 0-129 32t-101 88h110v80H120v-240h80v94q51-64 124.5-99T480-840q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-480q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-120Zm112-192L440-464v-216h80v184l128 128-56 56Z"/></svg>
+          </button>
         </div>
-        <div id="reading-values" class="inline-form"></div>
-        <div class="inline-form">
-          <input id="reading-photo" type="file" accept="image/*">
-          <input id="reading-camera" type="file" accept="image/*" capture="environment" hidden>
-          <button id="btn-take-photo" class="ghost mobile-only" type="button">Take a photo</button>
-          <button id="btn-read-photo" class="ghost" type="button">Read the photo</button>
-        </div>
+        <div id="reading-values" class="stack-values"></div>
+        <input id="reading-photo" type="file" accept="image/*" hidden>
+        <input id="reading-camera" type="file" accept="image/*" capture="environment" hidden>
         <p class="meta desktop-only">Tip: on a computer you can paste a copied picture (Ctrl+V).</p>
         <p id="reading-hint" class="notice" hidden></p>
         <div class="actions">

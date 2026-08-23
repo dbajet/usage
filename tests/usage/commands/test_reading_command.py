@@ -482,6 +482,36 @@ def test_extract(require_meter: MagicMock, active_registers: MagicMock) -> None:
     assert meter_reader.mock_calls == [call.read("aGVsbG8=", "image/jpeg", ["HC", "HP"])]
     reset_mocks()
 
+    # a cycling display: one register per photo
+    require_meter.side_effect = [{"id": 9, "house_id": 1}]
+    active_registers.side_effect = [[{"id": 21, "label": "HC"}, {"id": 22, "label": "HP"}]]
+    meter_reader.read.side_effect = [[17273.0]]
+    result = tested.extract(user, data | {"register_id": 22})
+    expected = {
+        "values": [
+            {"register_id": 22, "label": "HP", "value": 17273.0},
+        ],
+    }
+    assert result == expected
+    assert require_meter.mock_calls == [call(user, 9)]
+    assert active_registers.mock_calls == [call(9)]
+    assert database.mock_calls == []
+    assert meter_reader.mock_calls == [call.read("aGVsbG8=", "image/jpeg", ["HP"])]
+    reset_mocks()
+
+    # unknown register
+    require_meter.side_effect = [{"id": 9, "house_id": 1}]
+    active_registers.side_effect = [[{"id": 21, "label": "HC"}]]
+    with pytest.raises(AppException) as exc_info:
+        tested.extract(user, data | {"register_id": 99})
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.message == "The register was not found."
+    assert require_meter.mock_calls == [call(user, 9)]
+    assert active_registers.mock_calls == [call(9)]
+    assert database.mock_calls == []
+    assert meter_reader.mock_calls == []
+    reset_mocks()
+
 
 def test_reminder_states() -> None:
     tested = helper_instance()

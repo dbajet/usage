@@ -159,6 +159,7 @@ button.icon-button { display: inline-flex; align-items: center; justify-content:
   background: var(--card);
 }
 .app-nav { display: flex; flex: 1; justify-content: center; gap: 0.3rem; }
+.app-header button.ghost { border-color: transparent; }
 .app-nav button {
   display: inline-flex;
   align-items: center;
@@ -258,7 +259,12 @@ button.icon-only .msym { width: 16px; height: 16px; }
 
 .inline-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
 .inline-form input, .inline-form select { width: auto; flex: 1 1 140px; margin-top: 0; }
+.inline-form.nowrap-row { flex-wrap: nowrap; }
+.inline-form.nowrap-row input, .inline-form.nowrap-row select { min-width: 0; }
 .stack-form { margin-top: 0.75rem; }
+.stack-values { margin-top: 0.25rem; }
+.value-row { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
+.value-row input { flex: 1; min-width: 0; margin-top: 0; }
 label.check { display: flex; align-items: center; gap: 0.35rem; margin: 0.5rem 0; color: var(--text); }
 label.check input { width: auto; margin: 0; }
 label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.85rem; }
@@ -505,6 +511,7 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .tabs button span { display: none; }
   .tabs button .msym { width: 20px; height: 20px; }
   .inline-form input, .inline-form select { flex-basis: 100%; }
+  .inline-form.nowrap-row input, .inline-form.nowrap-row select { flex-basis: auto; }
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
   /* Compact spacing: slimmer paddings, margins and titles. */
   .wrap { padding: 0.4rem 0.6rem; }
