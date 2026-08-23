@@ -11,12 +11,12 @@ class StaticPage:
     def __init__(self, static_dir: Path) -> None:
         self._static_dir = static_dir
 
-    def render(self, file_name: str) -> HTMLResponse:
+    def render(self, file_name: str, media_type: str = "text/html") -> HTMLResponse:
         html = (self._static_dir / file_name).read_text(encoding="utf-8")
         build = os.environ.get("BUILD_TIME") or self._asset_version()
         version = os.environ.get("APP_VERSION", "dev")
         result = html.replace("__BUILD__", build).replace("__VERSION__", version)
-        return HTMLResponse(result, headers={"Cache-Control": "no-store"})
+        return HTMLResponse(result, media_type=media_type, headers={"Cache-Control": "no-store"})
 
     def _asset_version(self) -> str:
         digest = hashlib.sha256()

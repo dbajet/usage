@@ -52,6 +52,19 @@ def test_render(tmp_path: Path) -> None:
     exp_cache_control = "no-store"
     assert result.headers["cache-control"] == exp_cache_control
 
+    # with an explicit media type (the service worker)
+    environment = {"BUILD_TIME": "2026-08-18T00:00:00Z", "APP_VERSION": "1.2.3"}
+    with patch.dict(os.environ, environment, clear=True):
+        result = tested.render("app.js", "application/javascript")
+    expected = b"console.log(1);"
+    assert result.body == expected
+    exp_media_type = "application/javascript"
+    assert result.media_type == exp_media_type
+    exp_status_code = 200
+    assert result.status_code == exp_status_code
+    exp_cache_control = "no-store"
+    assert result.headers["cache-control"] == exp_cache_control
+
 
 def test__asset_version(tmp_path: Path) -> None:
     helper_populate(tmp_path)

@@ -36,6 +36,8 @@ class AppFactory:
         result.include_router(ApiRouter(self._database, self._settings).router)
         result.mount("/static", StaticFiles(directory=self._static_dir.as_posix()), name="static")
         result.add_api_route("/", self._index, methods=["GET"], response_class=HTMLResponse)
+        # The service worker lives at the root so its scope covers the whole app.
+        result.add_api_route("/sw.js", self._service_worker, methods=["GET"], response_class=HTMLResponse)
         result.add_api_route("/healthz", self._healthz, methods=["GET"])
         return result
 
@@ -56,6 +58,9 @@ class AppFactory:
 
     def _index(self) -> HTMLResponse:
         return self._static_page.render("index.html")
+
+    def _service_worker(self) -> HTMLResponse:
+        return self._static_page.render("sw.js", "application/javascript")
 
     def _healthz(self) -> dict[str, bool]:
         return {"ok": self._database.health()}

@@ -88,7 +88,7 @@ def test_create() -> None:
         result = tested.create()
     assert isinstance(result, FastAPI)
     assert result.title == "Usage"
-    exp_paths = ["/", "/docs", "/docs/oauth2-redirect", "/healthz", "/openapi.json", "/redoc", "/static"]
+    exp_paths = ["/", "/docs", "/docs/oauth2-redirect", "/healthz", "/openapi.json", "/redoc", "/static", "/sw.js"]
     assert sorted(route.path for route in result.routes) == exp_paths
     assert settings_loader_class.mock_calls == [call()]
     assert loader.mock_calls == [call.load()]
@@ -213,6 +213,34 @@ def test__index() -> None:
     assert database_class.mock_calls == [call(settings)]
     assert static_page_class.mock_calls == [call(Path("/media/APPLICATIONS/git_dbajet/usage/app/usage/static"))]
     assert static_page.mock_calls == [call.render("index.html")]
+    assert database.mock_calls == []
+
+
+def test__service_worker() -> None:
+    module = helper_module()
+    settings = helper_settings()
+    loader = MagicMock()
+    database = MagicMock()
+    static_page = MagicMock()
+    with (
+        patch("usage.main.SettingsLoader") as settings_loader_class,
+        patch("usage.main.Database") as database_class,
+        patch("usage.main.StaticPage") as static_page_class,
+    ):
+        settings_loader_class.side_effect = [loader]
+        loader.load.side_effect = [settings]
+        database_class.side_effect = [database]
+        static_page_class.side_effect = [static_page]
+        tested = module.AppFactory()
+    page = SimpleNamespace(body="the-worker")
+    static_page.render.side_effect = [page]
+    result = tested._service_worker()
+    assert result is page
+    assert settings_loader_class.mock_calls == [call()]
+    assert loader.mock_calls == [call.load()]
+    assert database_class.mock_calls == [call(settings)]
+    assert static_page_class.mock_calls == [call(Path("/media/APPLICATIONS/git_dbajet/usage/app/usage/static"))]
+    assert static_page.mock_calls == [call.render("sw.js", "application/javascript")]
     assert database.mock_calls == []
 
 
