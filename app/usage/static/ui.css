@@ -246,10 +246,23 @@ label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.8
 .table-wrap { overflow-x: auto; }
 
 /* The entries page never scrolls as a whole - only the table body does,
-   under a sticky header row. */
+   under a sticky header row. A flex chain from the shell down hands the
+   table exactly the height left over on any screen. */
+body.view-fixed #app { display: flex; flex-direction: column; height: 100dvh; }
+body.view-fixed .app-main { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+body.view-fixed #view-entries { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+body.view-fixed #view-entries .card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 0.5rem;
+}
+body.view-fixed #reading-list { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+body.view-fixed .site-footer, body.view-fixed #app-error { width: 100%; }
 #reading-list .table-wrap {
-  min-height: 180px;
-  max-height: calc(100dvh - 330px);
+  flex: 1;
+  min-height: 120px;
   overflow-y: auto;
 }
 #reading-list thead th {
@@ -445,9 +458,6 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .tabs button .msym { width: 20px; height: 20px; }
   .inline-form input, .inline-form select { flex-basis: 100%; }
   .mini-row.wrap-row { flex-direction: column; align-items: stretch; }
-  /* The bottom nav eats extra height on small screens; the table takes
-     everything left instead of leaving a dead gap above it. */
-  #reading-list .table-wrap { max-height: calc(100dvh - 330px); }
   /* Compact spacing: slimmer paddings, margins and titles. */
   .wrap { padding: 0.4rem 0.6rem; }
   .app-main { padding-top: 0.4rem; }

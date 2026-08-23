@@ -145,6 +145,8 @@ function storeItem(key, value) {
 
 function showView(name) {
   storeItem("usage-view", name);
+  // Entries fits the viewport: the table body scrolls, never the page.
+  document.body.classList.toggle("view-fixed", name === "entries");
   $$(".app-nav button").forEach((item) => item.classList.toggle("active", item.dataset.nav === name));
   $$(".app-main > section").forEach((section) => { section.hidden = section.id !== `view-${name}`; });
   if (name === "settings") {
