@@ -423,6 +423,20 @@ function closeReadingModal() {
   $("#reading-modal").hidden = true;
 }
 
+function pastePhoto(event) {
+  if ($("#reading-modal").hidden) return;
+  const item = Array.from(event.clipboardData ? event.clipboardData.items : [])
+    .find((entry) => entry.type.startsWith("image/"));
+  if (!item) return;
+  event.preventDefault();
+  const file = item.getAsFile();
+  if (!file) return;
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  $("#reading-photo").files = transfer.files;
+  readPhoto();
+}
+
 async function addReading(event) {
   event.preventDefault();
   const meter = selectedMeter();
@@ -1182,6 +1196,7 @@ addEventListener("DOMContentLoaded", () => {
   $("#reading-modal").addEventListener("click", (event) => {
     if (event.target === $("#reading-modal")) closeReadingModal();
   });
+  document.addEventListener("paste", pastePhoto);
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));
