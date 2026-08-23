@@ -77,7 +77,7 @@ function showAppError(error) {
   setTimeout(() => { target.hidden = true; }, 6000);
 }
 
-function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false }) {
+function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false }) {
   return new Promise((resolve) => {
     const backdrop = $("#modal-backdrop");
     $("#modal-title").textContent = title;
@@ -100,6 +100,7 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
     $("#modal-submit").textContent = submitLabel;
     $("#modal-submit").classList.toggle("danger", danger);
     $("#modal-submit").classList.toggle("primary", !danger);
+    $("#modal-remove").hidden = !remove;
     backdrop.hidden = false;
     const first = $("#modal-fields input:not([type=checkbox])");
     if (first) first.focus();
@@ -108,10 +109,12 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
       backdrop.hidden = true;
       $("#modal-form").onsubmit = null;
       $("#modal-cancel").onclick = null;
+      $("#modal-remove").onclick = null;
       backdrop.onclick = null;
       document.onkeydown = null;
       resolve(result);
     };
+    $("#modal-remove").onclick = () => close({ __remove: true });
     $("#modal-form").onsubmit = (event) => {
       event.preventDefault();
       const values = {};
@@ -374,6 +377,18 @@ async function readPhoto() {
   } catch (error) { showAppError(error); }
 }
 
+function openReadingModal() {
+  const meters = houseMeters();
+  if (!meters.length) { showAppError(new Error("Add a meter first (Settings, Meters).")); return; }
+  renderReadingForm();
+  $("#reading-photo").value = "";
+  $("#reading-modal").hidden = false;
+}
+
+function closeReadingModal() {
+  $("#reading-modal").hidden = true;
+}
+
 async function addReading(event) {
   event.preventDefault();
   const meter = selectedMeter();
@@ -391,6 +406,7 @@ async function addReading(event) {
     }) });
     $("#reading-photo").value = "";
     renderValueInputs();
+    closeReadingModal();
     await loadReadings(1);
   } catch (error) { showAppError(error); }
 }
@@ -408,34 +424,47 @@ async function loadReadings(page) {
   } catch (error) { showAppError(error); }
 }
 
+function fmtThousand(value) {
+  return Number(value).toLocaleString("en-US");
+}
+
 function renderReadings(data) {
-  $("#reading-list").innerHTML = (data.readings || []).map((reading) => `
-    <div class="mini-row wrap-row">
-      <span>
-        <strong>${esc(reading.read_on)}</strong> · ${esc(reading.meter_label || reading.kind)}
-        · ${reading.values.map((value) => `${value.label ? `${esc(value.label)}: ` : ""}${value.value}`).join(" / ")}
-        ${reading.unit ? ` ${esc(reading.unit)}` : ""}
-        <span class="badge">${esc(reading.source)}</span>
-      </span>
-      <span>
-        <button class="ghost compact" data-edit-reading="${reading.id}" type="button">Edit</button>
-        <button class="ghost compact danger" data-delete-reading="${reading.id}" type="button">Delete</button>
-      </span>
-    </div>`).join("") || '<p class="meta">No reading yet.</p>';
+  const readings = data.readings || [];
+  if (!readings.length) {
+    $("#reading-list").innerHTML = '<p class="meta">No reading yet - add one with the button above.</p>';
+    $("#reading-pager").innerHTML = "";
+    return;
+  }
+  const meters = [];
+  readings.forEach((reading) => {
+    if (!meters.some((meter) => meter.id === reading.meter_id)) {
+      meters.push({ id: reading.meter_id, label: reading.meter_label || reading.kind, unit: reading.unit });
+    }
+  });
+  meters.sort((a, b) => a.id - b.id);
+  const months = [...new Set(readings.map((reading) => reading.read_on))];
+  const byKey = new Map(readings.map((reading) => [`${reading.read_on}|${reading.meter_id}`, reading]));
+  const header = `<tr><th>Date</th>${meters.map((meter) =>
+    `<th>${esc(meter.label)}${meter.unit ? ` <span class="meta">(${esc(meter.unit)})</span>` : ""}</th>`).join("")}</tr>`;
+  const rows = months.map((month) => {
+    const cells = meters.map((meter) => {
+      const reading = byKey.get(`${month}|${meter.id}`);
+      if (!reading) return "<td></td>";
+      const text = reading.values.map((value) => fmtThousand(value.value)).join(" / ");
+      const tip = reading.values.map((value) => `${value.label || "counter"}: ${fmtThousand(value.value)}`).join(" · ");
+      return `<td class="cell-reading" data-edit-reading="${reading.id}" title="${esc(`${tip} · ${reading.source} · click to edit`)}">${text}</td>`;
+    }).join("");
+    return `<tr><td>${esc(month)}</td>${cells}</tr>`;
+  }).join("");
+  $("#reading-list").innerHTML = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
   const pager = [];
   if (data.page > 1) pager.push(`<button class="ghost compact" data-page="${data.page - 1}" type="button">← Previous</button>`);
-  pager.push(`<span class="meta">Page ${data.page} / ${data.pages} · ${data.total} readings</span>`);
+  pager.push(`<span class="meta">Page ${data.page} / ${data.pages} · ${data.total} months</span>`);
   if (data.page < data.pages) pager.push(`<button class="ghost compact" data-page="${data.page + 1}" type="button">Next →</button>`);
   $("#reading-pager").innerHTML = pager.join(" ");
   $$("[data-page]").forEach((button) => button.addEventListener("click", () => loadReadings(Number(button.dataset.page))));
-  $$("[data-edit-reading]").forEach((button) => button.addEventListener("click", () => editReading(Number(button.dataset.editReading), data)));
-  $$("[data-delete-reading]").forEach((button) => button.addEventListener("click", async () => {
-    if (!await confirmModal("Delete reading", "Delete this reading?")) return;
-    try {
-      await api(`/api/readings/${button.dataset.deleteReading}`, { method: "DELETE" });
-      await loadReadings(state.entriesPage);
-    } catch (error) { showAppError(error); }
-  }));
+  $$("[data-edit-reading]").forEach((cell) => cell.addEventListener("click", () => editReading(Number(cell.dataset.editReading), data)));
+  wireTableHover("#reading-list");
 }
 
 async function editReading(readingId, data) {
@@ -451,8 +480,17 @@ async function editReading(readingId, data) {
         value: value.value,
       })),
     ],
+    remove: true,
   });
   if (answers === null) return;
+  if (answers.__remove) {
+    if (!await confirmModal("Delete reading", "Delete this reading?")) return;
+    try {
+      await api(`/api/readings/${readingId}`, { method: "DELETE" });
+      await loadReadings(state.entriesPage);
+    } catch (error) { showAppError(error); }
+    return;
+  }
   const values = reading.values.map((value) => ({
     register_id: value.register_id,
     value: Number(answers[`register-${value.register_id}`]),
@@ -539,7 +577,7 @@ function renderStats(tables, series) {
   }).join("");
   if (!html) html = '<p class="meta">Tables and graphs are both hidden - enable one above.</p>';
   $("#stats-content").innerHTML = html;
-  wireTableHover();
+  wireTableHover("#stats-content");
 }
 
 function clearTableHover(table) {
@@ -547,8 +585,8 @@ function clearTableHover(table) {
   table.querySelectorAll(".hl-row").forEach((row) => row.classList.remove("hl-row"));
 }
 
-function wireTableHover() {
-  $$("#stats-content table").forEach((table) => {
+function wireTableHover(rootSelector) {
+  $$(`${rootSelector} table`).forEach((table) => {
     table.addEventListener("mouseover", (event) => {
       const cell = event.target.closest("td, th");
       if (!cell || !table.contains(cell)) return;
@@ -933,6 +971,11 @@ addEventListener("DOMContentLoaded", () => {
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
+  $("#btn-new-reading").addEventListener("click", openReadingModal);
+  $("#reading-cancel").addEventListener("click", closeReadingModal);
+  $("#reading-modal").addEventListener("click", (event) => {
+    if (event.target === $("#reading-modal")) closeReadingModal();
+  });
   const themeApp = $("#theme-btn-app");
   if (themeApp) themeApp.addEventListener("click", toggleTheme);
   $$(".app-nav button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.nav)));

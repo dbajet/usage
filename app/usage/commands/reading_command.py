@@ -61,7 +61,7 @@ class ReadingCommand:
         self._require_house(user, house_id)
         total_row = self._database.fetch_one(
             """
-            SELECT COUNT(*) AS count FROM readings
+            SELECT COUNT(DISTINCT readings.read_on) AS count FROM readings
             JOIN meters ON meters.id = readings.meter_id
             WHERE meters.house_id = %s
             """,
@@ -70,6 +70,16 @@ class ReadingCommand:
         total = int(total_row["count"]) if total_row is not None else 0
         pages = max(1, -(-total // Constants.page_size))
         current = min(max(1, page), pages)
+        dates = self._database.fetch_all(
+            """
+            SELECT DISTINCT readings.read_on FROM readings
+            JOIN meters ON meters.id = readings.meter_id
+            WHERE meters.house_id = %s
+            ORDER BY readings.read_on DESC
+            LIMIT %s OFFSET %s
+            """,
+            (house_id, Constants.page_size, (current - 1) * Constants.page_size),
+        )
         readings = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
@@ -77,11 +87,10 @@ class ReadingCommand:
                        meters.kind, meters.label_sealed AS meter_label, meters.unit
                 FROM readings
                 JOIN meters ON meters.id = readings.meter_id
-                WHERE meters.house_id = %s
+                WHERE meters.house_id = %s AND readings.read_on = ANY(%s)
                 ORDER BY readings.read_on DESC, readings.id DESC
-                LIMIT %s OFFSET %s
                 """,
-                (house_id, Constants.page_size, (current - 1) * Constants.page_size),
+                (house_id, [row["read_on"] for row in dates]),
             ),
             ("meter_label",),
         )

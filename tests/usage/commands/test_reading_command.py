@@ -108,11 +108,21 @@ def test_list_readings(require_house: MagicMock) -> None:
     user = helper_user()
     exp_count_call = call.fetch_one(
         """
-            SELECT COUNT(*) AS count FROM readings
+            SELECT COUNT(DISTINCT readings.read_on) AS count FROM readings
             JOIN meters ON meters.id = readings.meter_id
             WHERE meters.house_id = %s
             """,
         (1,),
+    )
+    exp_dates_call = call.fetch_all(
+        """
+            SELECT DISTINCT readings.read_on FROM readings
+            JOIN meters ON meters.id = readings.meter_id
+            WHERE meters.house_id = %s
+            ORDER BY readings.read_on DESC
+            LIMIT %s OFFSET %s
+            """,
+        (1, 25, 0),
     )
     exp_page_call = call.fetch_all(
         """
@@ -120,11 +130,10 @@ def test_list_readings(require_house: MagicMock) -> None:
                        meters.kind, meters.label_sealed AS meter_label, meters.unit
                 FROM readings
                 JOIN meters ON meters.id = readings.meter_id
-                WHERE meters.house_id = %s
+                WHERE meters.house_id = %s AND readings.read_on = ANY(%s)
                 ORDER BY readings.read_on DESC, readings.id DESC
-                LIMIT %s OFFSET %s
                 """,
-        (1, 25, 0),
+        (1, ["2026-01-15"]),
     )
     exp_values_call = call.fetch_all(
         """
@@ -146,7 +155,7 @@ def test_list_readings(require_house: MagicMock) -> None:
     ]
     require_house.side_effect = [None]
     database.fetch_one.side_effect = [{"count": 1}]
-    database.fetch_all.side_effect = [reading_rows, value_rows]
+    database.fetch_all.side_effect = [[{"read_on": "2026-01-15"}], reading_rows, value_rows]
     database.decrypt_rows.side_effect = [
         [{"id": 31, "meter_id": 9, "read_on": "2026-01-15", "source": "manual", "kind": "electricity", "meter_label": "EDF", "unit": "kWh"}],
         [{"reading_id": 31, "register_id": 21, "value": 17273, "label": "HC", "position": 0}],
@@ -173,6 +182,7 @@ def test_list_readings(require_house: MagicMock) -> None:
     assert require_house.mock_calls == [call(user, 1)]
     exp_calls = [
         exp_count_call,
+        exp_dates_call,
         exp_page_call,
         call.decrypt_rows(reading_rows, ("meter_label",)),
         exp_values_call,
@@ -185,7 +195,7 @@ def test_list_readings(require_house: MagicMock) -> None:
     # an out-of-range page is clamped
     require_house.side_effect = [None]
     database.fetch_one.side_effect = [{"count": 0}]
-    database.fetch_all.side_effect = [[], []]
+    database.fetch_all.side_effect = [[], [], []]
     database.decrypt_rows.side_effect = [[], []]
     result = tested.list_readings(user, 1, 9)
     expected = {"readings": [], "total": 0, "page": 1, "pages": 1}
@@ -193,7 +203,18 @@ def test_list_readings(require_house: MagicMock) -> None:
     assert require_house.mock_calls == [call(user, 1)]
     exp_calls = [
         exp_count_call,
-        exp_page_call,
+        exp_dates_call,
+        call.fetch_all(
+            """
+                SELECT readings.id, readings.meter_id, readings.read_on, readings.source,
+                       meters.kind, meters.label_sealed AS meter_label, meters.unit
+                FROM readings
+                JOIN meters ON meters.id = readings.meter_id
+                WHERE meters.house_id = %s AND readings.read_on = ANY(%s)
+                ORDER BY readings.read_on DESC, readings.id DESC
+                """,
+            (1, []),
+        ),
         call.decrypt_rows([], ("meter_label",)),
         call.fetch_all(
             """

@@ -74,27 +74,11 @@
 
     <main class="app-main">
       <section id="view-entries" hidden>
-        <h2>Entries</h2>
-        <div class="card">
-          <h3>New reading</h3>
-          <form id="reading-form" class="stack-form">
-            <div class="inline-form">
-              <select id="reading-meter"></select>
-              <input id="reading-date" type="date" required>
-            </div>
-            <div id="reading-values" class="inline-form"></div>
-            <div class="inline-form">
-              <input id="reading-photo" type="file" accept="image/*">
-              <button id="btn-read-photo" class="ghost" type="button">Read the photo</button>
-            </div>
-            <p id="reading-hint" class="notice" hidden></p>
-            <div class="actions">
-              <button class="primary" type="submit">Add reading</button>
-            </div>
-          </form>
+        <div class="view-heading">
+          <h2>Entries</h2>
+          <button id="btn-new-reading" class="primary" type="button">Add a reading</button>
         </div>
         <div class="card">
-          <h3>Measurements</h3>
           <div id="reading-list"></div>
           <div id="reading-pager" class="actions"></div>
         </div>
@@ -216,8 +200,32 @@
       <form id="modal-form">
         <div id="modal-fields"></div>
         <div class="actions">
+          <button id="modal-remove" class="ghost danger push-left" type="button" hidden>Delete</button>
           <button id="modal-cancel" class="ghost" type="button">Cancel</button>
           <button id="modal-submit" class="primary" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- The new-reading form: meter choice, date, one value per register, photo. -->
+  <div id="reading-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reading-modal-title">
+      <h3 id="reading-modal-title">New reading</h3>
+      <form id="reading-form" class="stack-form">
+        <div class="inline-form">
+          <select id="reading-meter"></select>
+          <input id="reading-date" type="date" required>
+        </div>
+        <div id="reading-values" class="inline-form"></div>
+        <div class="inline-form">
+          <input id="reading-photo" type="file" accept="image/*">
+          <button id="btn-read-photo" class="ghost" type="button">Read the photo</button>
+        </div>
+        <p id="reading-hint" class="notice" hidden></p>
+        <div class="actions">
+          <button id="reading-cancel" class="ghost" type="button">Cancel</button>
+          <button class="primary" type="submit">Add reading</button>
         </div>
       </form>
     </div>
