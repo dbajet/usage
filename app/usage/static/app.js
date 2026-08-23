@@ -478,9 +478,10 @@ function renderReadings(data) {
     }).join("");
     const year = month.slice(0, 4);
     const monthName = MONTH_NAMES[Number(month.slice(5, 7)) - 1];
-    const label = year === lastYear ? monthName : `<strong>${esc(year)}</strong> · ${monthName}`;
+    const newYear = year !== lastYear;
+    const label = newYear ? `<strong>${esc(year)}</strong>&nbsp;·&nbsp;${monthName}` : monthName;
     lastYear = year;
-    return `<tr><td title="${esc(month)}">${label}</td>${cells}</tr>`;
+    return `<tr${newYear ? ' class="year-row"' : ""}><td title="${esc(month)}">${label}</td>${cells}</tr>`;
   }).join("");
   $("#reading-list").innerHTML = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
   const chevronLeft = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';

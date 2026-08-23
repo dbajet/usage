@@ -281,6 +281,13 @@ body.view-fixed #app-error { width: 100%; }
   background: var(--card);
 }
 
+#reading-list td:first-child { white-space: nowrap; }
+/* The first row of each year stands out slightly. */
+#reading-list tr.year-row td {
+  border-top: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--card) 94%, var(--accent) 6%);
+}
+
 #reading-pager {
   display: flex;
   align-items: center;
