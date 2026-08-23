@@ -599,15 +599,59 @@ function saveStatsPrefs(event) {
   if (state.statsData) renderStats(state.statsData.tables, state.statsData.series);
 }
 
-function onYearRange(event) {
-  let from = Number($("#year-from").value);
-  let to = Number($("#year-to").value);
-  if (from > to) {
-    // The handles never cross: the moving one pushes the boundary.
-    if (event.target === $("#year-from")) from = to; else to = from;
-  }
+function applyYearRange(from, to) {
   storeStatsPrefs({ ...statsPrefs(), fromYear: from, toYear: to });
   if (state.statsData) renderStats(state.statsData.tables, state.statsData.series);
+}
+
+function wireYearSlider() {
+  const slider = $("#year-slider");
+  let active = null;
+  const yearAt = (event) => {
+    const rect = slider.getBoundingClientRect();
+    const bounds = state.yearBounds;
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    return Math.round(bounds.min + ratio * (bounds.max - bounds.min));
+  };
+  slider.addEventListener("pointerdown", (event) => {
+    if (!state.yearBounds) return;
+    event.preventDefault();
+    const bounds = state.yearBounds;
+    const year = yearAt(event);
+    active = Math.abs(year - bounds.from) <= Math.abs(year - bounds.to) ? "from" : "to";
+    slider.setPointerCapture(event.pointerId);
+    if (active === "from") applyYearRange(Math.min(year, bounds.to), bounds.to);
+    else applyYearRange(bounds.from, Math.max(year, bounds.from));
+  });
+  slider.addEventListener("pointermove", (event) => {
+    if (!active || !state.yearBounds) return;
+    const bounds = state.yearBounds;
+    const year = yearAt(event);
+    if (active === "from") {
+      const from = Math.min(year, bounds.to);
+      if (from !== bounds.from) applyYearRange(from, bounds.to);
+    } else {
+      const to = Math.max(year, bounds.from);
+      if (to !== bounds.to) applyYearRange(bounds.from, to);
+    }
+  });
+  const stop = () => { active = null; };
+  slider.addEventListener("pointerup", stop);
+  slider.addEventListener("pointercancel", stop);
+  [["#year-thumb-from", "from"], ["#year-thumb-to", "to"]].forEach(([selector, which]) => {
+    $(selector).addEventListener("keydown", (event) => {
+      if (!state.yearBounds) return;
+      const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+      if (!delta) return;
+      event.preventDefault();
+      const bounds = state.yearBounds;
+      if (which === "from") {
+        applyYearRange(Math.min(Math.max(bounds.min, bounds.from + delta), bounds.to), bounds.to);
+      } else {
+        applyYearRange(bounds.from, Math.max(Math.min(bounds.max, bounds.to + delta), bounds.from));
+      }
+    });
+  });
 }
 
 function legendMarkup(seriesList) {
@@ -631,16 +675,14 @@ function yearFilter(tables, series) {
   const fromYear = Math.min(Math.max(prefs.fromYear || minYear, minYear), maxYear);
   const toYear = Math.min(Math.max(prefs.toYear || maxYear, fromYear), maxYear);
   holder.hidden = false;
-  ["#year-from", "#year-to"].forEach((selector) => {
-    $(selector).min = String(minYear);
-    $(selector).max = String(maxYear);
-  });
-  $("#year-from").value = String(fromYear);
-  $("#year-to").value = String(toYear);
-  $("#year-range-label").textContent = fromYear === toYear ? String(fromYear) : `${fromYear} – ${toYear}`;
+  state.yearBounds = { min: minYear, max: maxYear, from: fromYear, to: toYear };
   const span = Math.max(1, maxYear - minYear);
-  $("#year-fill").style.left = `${((fromYear - minYear) * 100) / span}%`;
-  $("#year-fill").style.width = `${((toYear - fromYear) * 100) / span}%`;
+  const percent = (year) => ((year - minYear) * 100) / span;
+  $("#year-range-label").textContent = fromYear === toYear ? String(fromYear) : `${fromYear} – ${toYear}`;
+  $("#year-fill").style.left = `${percent(fromYear)}%`;
+  $("#year-fill").style.width = `${percent(toYear) - percent(fromYear)}%`;
+  $("#year-thumb-from").style.left = `calc(${percent(fromYear)}% - 8px)`;
+  $("#year-thumb-to").style.left = `calc(${percent(toYear)}% - 8px)`;
   return {
     tables: {
       kinds: (tables.kinds || [])
@@ -1182,8 +1224,7 @@ addEventListener("DOMContentLoaded", () => {
   $("#stats-show-tables").addEventListener("change", saveStatsPrefs);
   $("#stats-show-graphs").addEventListener("change", saveStatsPrefs);
   $("#stats-merge-graphs").addEventListener("change", saveStatsPrefs);
-  $("#year-from").addEventListener("input", onYearRange);
-  $("#year-to").addEventListener("input", onYearRange);
+  wireYearSlider();
   $("#reading-meter").addEventListener("change", renderValueInputs);
   $("#btn-read-photo").addEventListener("click", readPhoto);
   $("#reading-form").addEventListener("submit", addReading);
