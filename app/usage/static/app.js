@@ -194,7 +194,10 @@ function showApp() {
   $("#app").hidden = false;
   $("#me-line").textContent = `${state.me.name || state.me.email} · ${state.me.email}` + (state.me.is_admin ? " · admin" : "");
   api("/api/version")
-    .then((data) => { $("#version").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : ""); })
+    .then((data) => {
+      $("#version .version-text").textContent = `v${data.version}` + (data.build ? ` · ${data.build}` : "");
+      $("#version").hidden = false;
+    })
     .catch(() => {});
   const view = storedItem("usage-view", "stats");
   showView(["stats", "entries", "settings"].includes(view) ? view : "stats");
@@ -1145,6 +1148,8 @@ addEventListener("DOMContentLoaded", () => {
   $("#meter-form").addEventListener("submit", addMeter);
   $("#meter-dual").addEventListener("change", toggleDualRegisters);
   $("#house-btn").addEventListener("click", chooseHouse);
+  // On narrow screens the version hides behind the info icon: a tap reveals it.
+  $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));
   $("#stats-show-tables").addEventListener("change", saveStatsPrefs);
   $("#stats-show-graphs").addEventListener("change", saveStatsPrefs);
   $("#stats-merge-graphs").addEventListener("change", saveStatsPrefs);

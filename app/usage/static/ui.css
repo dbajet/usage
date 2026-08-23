@@ -206,14 +206,23 @@ td.cell-reading { cursor: pointer; }
 .tabs button { color: var(--muted); }
 .tabs button.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 
-.site-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 1.5rem 0 1rem;
+.version-tag {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.66rem;
+  white-space: nowrap;
+  cursor: default;
 }
+.version-tag > .msym { display: none; width: 16px; height: 16px; }
+.version-tag .version-text { overflow: hidden; text-overflow: ellipsis; }
 
 .mini-row {
   display: flex;
@@ -259,7 +268,7 @@ body.view-fixed #view-entries .card {
   margin-bottom: 0.5rem;
 }
 body.view-fixed #reading-list { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-body.view-fixed .site-footer, body.view-fixed #app-error { width: 100%; }
+body.view-fixed #app-error { width: 100%; }
 #reading-list .table-wrap {
   flex: 1;
   min-height: 120px;
@@ -444,6 +453,23 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   }
   .app-nav button .msym { width: 20px; height: 20px; }
   .house-name { display: none; }
+  /* The build stamp shrinks to an info icon; a tap reveals it in a bubble. */
+  .version-tag { cursor: pointer; }
+  .version-tag > .msym { display: block; }
+  .version-tag .version-text { display: none; }
+  .version-tag.open .version-text {
+    display: block;
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 0.6rem);
+    left: 0;
+    overflow: visible;
+    padding: 0.4rem 0.65rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-s);
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
   /* The tab strip shares the width instead of scrolling: icon-only tabs
      (the title attribute keeps the name available). */
   .tabs { gap: 0.25rem; }
@@ -467,7 +493,6 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   .card h3 { font-size: 0.9rem; margin-bottom: 0.3rem; }
   .stats-toggles { margin-bottom: 0.55rem; }
   .year-range { margin-bottom: 0.55rem; }
-  .site-footer { padding: 0.6rem 0 0.4rem; }
   /* The three switches stay on one row. */
   .stats-toggles { gap: 0.6rem; flex-wrap: nowrap; }
   label.switch { gap: 0.3rem; font-size: 0.78rem; }
