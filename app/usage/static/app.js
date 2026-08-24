@@ -930,16 +930,19 @@ function chartMarkup(seriesList, merged = false) {
     return `<g class="series"><path d="${path}" stroke="${color}"></path>${dots}</g>`;
   });
 
-  const hoverY = `y1="${top}" y2="${top + plotHeight}"`;
   const config = {
     months,
     left,
     plotWidth,
     count: months.length,
     merged,
-    series: seriesList.map((item) => ({
+    top,
+    plotHeight,
+    yMax,
+    series: seriesList.map((item, index) => ({
       label: item.label,
       unit: item.unit,
+      color: item.color || VIZ_COLORS[index % VIZ_COLORS.length],
       values: Object.fromEntries(item.points.map((point) => [point.month, point.value])),
     })),
   };
@@ -950,9 +953,7 @@ function chartMarkup(seriesList, merged = false) {
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
         ${paths.join("")}
         <g class="viz-hover" hidden>
-          <line class="hov-prev" ${hoverY} hidden></line>
-          <line class="hov-next" ${hoverY} hidden></line>
-          <line class="hov-main" ${hoverY}></line>
+          <g class="hov-dots"></g>
         </g>
       </svg>
       <div class="viz-tip" hidden></div>
@@ -964,20 +965,26 @@ function wireChartHover(rootSelector) {
     const config = JSON.parse(holder.dataset.chart);
     const svg = holder.querySelector("svg");
     const hover = svg.querySelector(".viz-hover");
-    const prevLine = hover.querySelector(".hov-prev");
-    const nextLine = hover.querySelector(".hov-next");
-    const mainLine = hover.querySelector(".hov-main");
+    const dots = hover.querySelector(".hov-dots");
+    const yAt = (value) => config.top + config.plotHeight - (value / config.yMax) * config.plotHeight;
     const tip = holder.querySelector(".viz-tip");
     const xAt = (index) => config.left + (index * config.plotWidth) / Math.max(1, config.count - 1);
     const shifted = (month, years) => `${Number(month.slice(0, 4)) + years}-${month.slice(5, 7)}`;
     const monthLabel = (month) => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
-    const setLine = (line, month) => {
+    const addDots = (month) => {
       const index = config.months.indexOf(month);
-      if (index < 0) { line.setAttribute("hidden", ""); return false; }
-      line.removeAttribute("hidden");
-      line.setAttribute("x1", xAt(index));
-      line.setAttribute("x2", xAt(index));
-      return true;
+      if (index < 0) return;
+      config.series.forEach((series) => {
+        const value = series.values[month];
+        if (value === undefined) return;
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("class", "hov-dot");
+        dot.setAttribute("cx", xAt(index).toFixed(1));
+        dot.setAttribute("cy", yAt(value).toFixed(1));
+        dot.setAttribute("r", "4.5");
+        dot.setAttribute("stroke", series.color);
+        dots.appendChild(dot);
+      });
     };
     const rowFor = (month) => {
       const values = config.series
@@ -1000,17 +1007,17 @@ function wireChartHover(rootSelector) {
       }
       const month = config.months[index];
       hover.removeAttribute("hidden");
-      setLine(mainLine, month);
       const rows = [rowFor(month)];
-      if (config.merged) {
-        prevLine.setAttribute("hidden", "");
-        nextLine.setAttribute("hidden", "");
-      } else {
-        // Year-over-year: one line twelve months back, one twelve months ahead.
-        const before = shifted(month, -1);
-        const after = shifted(month, 1);
-        if (setLine(prevLine, before)) rows.push(rowFor(before));
-        if (setLine(nextLine, after)) rows.push(rowFor(after));
+      dots.innerHTML = "";
+      // A ring on the hovered value, like the year-over-year ones.
+      addDots(month);
+      if (!config.merged) {
+        // Year-over-year: a dot on the value twelve months back and ahead.
+        [shifted(month, -1), shifted(month, 1)].forEach((other) => {
+          if (config.months.indexOf(other) < 0) return;
+          rows.push(rowFor(other));
+          addDots(other);
+        });
       }
       tip.innerHTML = rows.filter(Boolean).join("<br>");
       tip.hidden = false;

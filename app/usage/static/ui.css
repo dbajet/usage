@@ -422,8 +422,7 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 #year-reset:disabled { opacity: 0.35; cursor: default; }
 
 .viz-holder { position: relative; }
-.viz-hover line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
-.viz-hover line.hov-main { stroke: var(--accent); stroke-dasharray: none; }
+.viz-hover .hov-dot { fill: var(--card); stroke-width: 2.5; }
 .viz-tip {
   position: absolute;
   z-index: 5;
