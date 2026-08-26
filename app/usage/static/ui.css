@@ -112,20 +112,23 @@ button.danger { background: var(--danger-soft); color: var(--danger); }
 
 .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
 
-button.busy { opacity: 0.75; pointer-events: none; }
+/* The spinner overlays the hidden label so the button never changes size. */
+button.busy { position: relative; pointer-events: none; color: transparent !important; }
+button.busy svg { visibility: hidden; }
 button.busy::after {
   content: "";
-  display: inline-block;
-  vertical-align: -2px;
+  position: absolute;
+  inset: 0;
   width: 12px;
   height: 12px;
-  margin-left: 0.45rem;
+  margin: auto;
   border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-right-color: currentColor;
+  border-top-color: var(--text);
+  border-right-color: var(--text);
   border-radius: 50%;
   animation: busy-spin 0.7s linear infinite;
 }
+button.primary.busy::after, button.danger.busy::after { border-top-color: #ffffff; border-right-color: #ffffff; }
 
 @keyframes busy-spin {
   to { transform: rotate(360deg); }

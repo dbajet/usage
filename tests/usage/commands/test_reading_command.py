@@ -76,9 +76,13 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
         call.decrypt_rows(house_rows, ("name",)),
         call.fetch_all(
             """
-                    SELECT id, house_id, kind, label_sealed AS label, unit
-                    FROM meters WHERE active ORDER BY house_id, position, id
+                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit
+                    FROM meters
+                    LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                    WHERE meters.active
+                    ORDER BY meters.house_id, COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                     """,
+            (7,),
         ),
         call.decrypt_rows(meter_rows, ("label",)),
         call.fetch_all(

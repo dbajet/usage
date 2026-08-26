@@ -77,12 +77,64 @@ def test_list_meters(require_house: MagicMock) -> None:
         call.decrypt_rows(register_rows, ("label",)),
         call.fetch_all(
             """
-                SELECT id, house_id, kind, label_sealed AS label, unit, position, active
-                FROM meters WHERE house_id = %s ORDER BY position, id
+                SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
+                       meters.unit, meters.position, meters.active
+                FROM meters
+                LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                WHERE meters.house_id = %s
+                ORDER BY COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                 """,
-            (3,),
+            (7, 3),
         ),
         call.decrypt_rows(meter_rows, ("label",)),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
+@patch.object(MeterCommand, "_require_house")
+def test_set_order(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+
+    # the list must be a permutation of the house meters
+    require_house.side_effect = [None]
+    database.fetch_all.side_effect = [[{"id": 7}, {"id": 8}, {"id": 9}]]
+    with pytest.raises(AppException) as exc_info:
+        tested.set_order(user, {"house_id": 3, "meter_ids": [9, 7]})
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The order must include every meter of the house exactly once."
+    assert require_house.mock_calls == [call(user, 3)]
+    exp_calls = [call.fetch_all("SELECT id FROM meters WHERE house_id = %s ORDER BY id", (3,))]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # happy path: one row per meter for this user only
+    require_house.side_effect = [None]
+    database.fetch_all.side_effect = [[{"id": 7}, {"id": 8}, {"id": 9}]]
+    database.execute.side_effect = [0, 0, 0]
+    result = tested.set_order(user, {"house_id": 3, "meter_ids": [9, 7, 8]})
+    expected = {"message": "Meter order saved."}
+    assert result == expected
+    assert require_house.mock_calls == [call(user, 3)]
+    exp_upsert = """
+                    INSERT INTO meter_orders(user_id, meter_id, position) VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, meter_id) DO UPDATE SET position = EXCLUDED.position
+                    """
+    exp_calls = [
+        call.fetch_all("SELECT id FROM meters WHERE house_id = %s ORDER BY id", (3,)),
+        call.transaction(),
+        call.transaction().__enter__(),
+        call.execute(exp_upsert, (7, 9, 0)),
+        call.execute(exp_upsert, (7, 7, 1)),
+        call.execute(exp_upsert, (7, 8, 2)),
+        call.transaction().__exit__(None, None, None),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()

@@ -32,9 +32,13 @@ class ReadingCommand:
             for meter in self._database.decrypt_rows(
                 self._database.fetch_all(
                     """
-                    SELECT id, house_id, kind, label_sealed AS label, unit
-                    FROM meters WHERE active ORDER BY house_id, position, id
+                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit
+                    FROM meters
+                    LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                    WHERE meters.active
+                    ORDER BY meters.house_id, COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                     """,
+                    (user.user_id,),
                 ),
                 ("label",),
             )

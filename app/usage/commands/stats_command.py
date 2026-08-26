@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.structures.app_exception import AppException
 from usage.structures.session_user import SessionUser
@@ -22,9 +21,14 @@ class StatsCommand:
 
     def tables(self, user: SessionUser, house_id: int) -> dict[str, Any]:
         self._require_house(user, house_id)
-        meters, consumption = self._house_consumption(house_id)
+        meters, consumption = self._house_consumption(user, house_id)
         kinds: list[dict[str, Any]] = []
-        for kind in Constants.kinds:
+        # The kinds follow the user's own meter order, not a fixed one.
+        ordered_kinds: list[str] = []
+        for meter in meters:
+            if str(meter["kind"]) not in ordered_kinds:
+                ordered_kinds.append(str(meter["kind"]))
+        for kind in ordered_kinds:
             kind_meters = [meter for meter in meters if str(meter["kind"]) == kind]
             merged: dict[int, float] = {}
             for meter in kind_meters:
@@ -38,7 +42,7 @@ class StatsCommand:
 
     def series(self, user: SessionUser, house_id: int) -> dict[str, Any]:
         self._require_house(user, house_id)
-        meters, consumption = self._house_consumption(house_id)
+        meters, consumption = self._house_consumption(user, house_id)
         result: list[dict[str, Any]] = []
         for meter in meters:
             months = consumption.get(int(meter["id"]), {})
@@ -58,14 +62,17 @@ class StatsCommand:
             )
         return {"series": result}
 
-    def _house_consumption(self, house_id: int) -> tuple[list[dict[str, Any]], dict[int, dict[int, float]]]:
+    def _house_consumption(self, user: SessionUser, house_id: int) -> tuple[list[dict[str, Any]], dict[int, dict[int, float]]]:
         meters = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT id, kind, label_sealed AS label, unit
-                FROM meters WHERE house_id = %s ORDER BY position, id
+                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit
+                FROM meters
+                LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                WHERE meters.house_id = %s
+                ORDER BY COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                 """,
-                (house_id,),
+                (user.user_id, house_id),
             ),
             ("label",),
         )

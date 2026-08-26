@@ -31,10 +31,14 @@ class MeterCommand:
         meters = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT id, house_id, kind, label_sealed AS label, unit, position, active
-                FROM meters WHERE house_id = %s ORDER BY position, id
+                SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
+                       meters.unit, meters.position, meters.active
+                FROM meters
+                LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                WHERE meters.house_id = %s
+                ORDER BY COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                 """,
-                (house_id,),
+                (user.user_id, house_id),
             ),
             ("label",),
         )
@@ -154,6 +158,25 @@ class MeterCommand:
             raise AppException(409, "This register has readings. Deactivate it instead.")
         self._database.execute("DELETE FROM registers WHERE id = %s", (register_id,))
         return {"message": "Register deleted."}
+
+    def set_order(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        """Store this user's own meter order for a house; other users keep theirs."""
+        house_id = int(data.get("house_id") or 0)
+        meter_ids = [int(meter_id) for meter_id in data.get("meter_ids") or []]
+        self._require_house(user, house_id)
+        rows = self._database.fetch_all("SELECT id FROM meters WHERE house_id = %s ORDER BY id", (house_id,))
+        if sorted(meter_ids) != sorted(int(row["id"]) for row in rows):
+            raise AppException(400, "The order must include every meter of the house exactly once.")
+        with self._database.transaction():
+            for position, meter_id in enumerate(meter_ids):
+                self._database.execute(
+                    """
+                    INSERT INTO meter_orders(user_id, meter_id, position) VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, meter_id) DO UPDATE SET position = EXCLUDED.position
+                    """,
+                    (user.user_id, meter_id, position),
+                )
+        return {"message": "Meter order saved."}
 
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
         # Everyone, admins included, only sees the houses they are linked to.

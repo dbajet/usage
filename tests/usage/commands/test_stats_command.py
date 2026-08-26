@@ -56,19 +56,9 @@ def test_tables(require_house: MagicMock, house_consumption: MagicMock) -> None:
     require_house.side_effect = [None]
     house_consumption.side_effect = [(meters, consumption)]
     result = tested.tables(user, 3)
+    # The kinds appear in the order of the user's meters: electricity first here.
     expected = {
         "kinds": [
-            {
-                "kind": "water",
-                "unit": "m3",
-                "years": [
-                    {
-                        "year": 2026,
-                        "months": [7.0, None, None, None, None, None, None, None, None, None, None, None],
-                        "total": 7.0,
-                    },
-                ],
-            },
             {
                 "kind": "electricity",
                 "unit": "kWh",
@@ -85,11 +75,22 @@ def test_tables(require_house: MagicMock, house_consumption: MagicMock) -> None:
                     },
                 ],
             },
+            {
+                "kind": "water",
+                "unit": "m3",
+                "years": [
+                    {
+                        "year": 2026,
+                        "months": [7.0, None, None, None, None, None, None, None, None, None, None, None],
+                        "total": 7.0,
+                    },
+                ],
+            },
         ],
     }
     assert result == expected
     assert require_house.mock_calls == [call(user, 3)]
-    assert house_consumption.mock_calls == [call(3)]
+    assert house_consumption.mock_calls == [call(user, 3)]
     assert database.mock_calls == []
     reset_mocks()
 
@@ -141,7 +142,7 @@ def test_series(require_house: MagicMock, house_consumption: MagicMock) -> None:
     }
     assert result == expected
     assert require_house.mock_calls == [call(user, 3)]
-    assert house_consumption.mock_calls == [call(3)]
+    assert house_consumption.mock_calls == [call(user, 3)]
     assert database.mock_calls == []
     reset_mocks()
 
@@ -172,7 +173,7 @@ def test__house_consumption(register_consumption: MagicMock) -> None:
         {24312: 0.0, 24313: 0.0},
         {24312: 0.0, 24313: 133.0},
     ]
-    result = tested._house_consumption(3)
+    result = tested._house_consumption(helper_user(), 3)
     expected = (
         [{"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh"}],
         {1: {24312: 0.0, 24313: 133.0}},
@@ -186,10 +187,13 @@ def test__house_consumption(register_consumption: MagicMock) -> None:
     exp_calls = [
         call.fetch_all(
             """
-                SELECT id, kind, label_sealed AS label, unit
-                FROM meters WHERE house_id = %s ORDER BY position, id
+                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit
+                FROM meters
+                LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
+                WHERE meters.house_id = %s
+                ORDER BY COALESCE(meter_orders.position, meters.position), meters.position, meters.id
                 """,
-            (3,),
+            (7, 3),
         ),
         call.decrypt_rows(meter_rows, ("label",)),
         call.fetch_all(

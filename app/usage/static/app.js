@@ -567,7 +567,9 @@ function renderReadings(data) {
       meters.push({ id: reading.meter_id, label: reading.meter_label || reading.kind, unit: reading.unit });
     }
   });
-  meters.sort((a, b) => a.id - b.id);
+  // Columns follow the user's own meter order from the dashboard.
+  const order = new Map(houseMeters().map((meter, index) => [meter.id, index]));
+  meters.sort((a, b) => (order.has(a.id) ? order.get(a.id) : 1000 + a.id) - (order.has(b.id) ? order.get(b.id) : 1000 + b.id));
   const months = [...new Set(readings.map((reading) => reading.read_on))];
   const byKey = new Map(readings.map((reading) => [`${reading.read_on}|${reading.meter_id}`, reading]));
   const header = `<tr><th>Date</th>${meters.map((meter) =>
@@ -1170,8 +1172,12 @@ function renderUsers() {
   }));
 }
 
+const ICON_UP = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z"/></svg>';
+const ICON_DOWN = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160 160-480l56-57 224 224v-487h80v487l224-224 56 57-320 320Z"/></svg>';
+
 function renderMeters() {
-  $("#meter-list").innerHTML = (state.meters || []).map((meter) => `
+  const meters = state.meters || [];
+  $("#meter-list").innerHTML = meters.map((meter, index) => `
     <div class="mini-row wrap-row${meter.active ? "" : " inactive"}">
       <span>
         <strong>${esc(meter.label || meter.kind)}</strong> · ${esc(meter.kind)}
@@ -1180,11 +1186,27 @@ function renderMeters() {
         <span class="meta">${meter.registers.map((register) =>
           `${esc(register.label || "register")} (start ${register.initial_value})${register.active ? "" : " — inactive"}`).join(" · ")}</span>
       </span>
-      <span>
+      <span class="icon-actions">
+        <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="-1" type="button"
+          title="Move up"${index === 0 ? " disabled" : ""}>${ICON_UP}</button>
+        <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="1" type="button"
+          title="Move down"${index === meters.length - 1 ? " disabled" : ""}>${ICON_DOWN}</button>
         <button class="ghost compact" data-edit-meter="${meter.id}" type="button">Edit</button>
         <button class="ghost compact danger" data-delete-meter="${meter.id}" type="button">Delete</button>
       </span>
     </div>`).join("") || '<p class="meta">No meter yet.</p>';
+  $$("[data-move-meter]").forEach((button) => button.addEventListener("click", async () => {
+    // The order is personal: it only changes what THIS user sees everywhere.
+    const ids = state.meters.map((meter) => meter.id);
+    const index = ids.indexOf(Number(button.dataset.moveMeter));
+    const target = index + Number(button.dataset.moveDelta);
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    try {
+      await api("/api/me/meter-order", { method: "POST", body: JSON.stringify({ house_id: state.houseId, meter_ids: ids }) });
+      await loadMeters();
+    } catch (error) { showAppError(error); }
+  }));
   $$("[data-edit-meter]").forEach((button) => button.addEventListener("click", () =>
     editMeter(Number(button.dataset.editMeter))));
   $$("[data-delete-meter]").forEach((button) => button.addEventListener("click", async () => {
