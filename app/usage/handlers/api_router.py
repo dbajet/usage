@@ -18,6 +18,7 @@ from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
 from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
+from usage.handlers.meter_axis_request import MeterAxisRequest
 from usage.handlers.meter_color_request import MeterColorRequest
 from usage.handlers.meter_order_request import MeterOrderRequest
 from usage.handlers.meter_request import MeterRequest
@@ -81,6 +82,7 @@ class ApiRouter:
         self._router.add_api_route("/houses/{house_id}", self._update_house, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/houses/{house_id}", self._delete_house, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/user-houses", self._set_user_house, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/me/meter-axis", self._set_meter_axis, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/me/meter-color", self._set_meter_color, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/me/meter-order", self._set_meter_order, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/meters", self._list_meters, methods=["GET"])
@@ -274,6 +276,15 @@ class ApiRouter:
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
         message = self._admin_command.set_user_house(user, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _set_meter_axis(
+        self,
+        body: MeterAxisRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._meter_command.set_axis(user, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _set_meter_color(

@@ -230,6 +230,7 @@ class Database:
                 meter_id BIGINT NOT NULL REFERENCES meters(id) ON DELETE CASCADE,
                 position INTEGER,
                 color TEXT NOT NULL DEFAULT '',
+                axis TEXT NOT NULL DEFAULT '',
                 UNIQUE(user_id, meter_id)
             )
             """,
@@ -261,10 +262,13 @@ class Database:
             (3, "three decimal reading values"),
             (4, "per user meter order"),
             (5, "per user meter colors"),
+            (6, "merged graph axis per user"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 6:
+                    connection.execute("ALTER TABLE meter_orders ADD COLUMN IF NOT EXISTS axis TEXT NOT NULL DEFAULT ''")
                 if version == 5:
                     # A colour-only row must not hijack the order: position becomes optional.
                     connection.execute("ALTER TABLE meter_orders ALTER COLUMN position DROP NOT NULL")

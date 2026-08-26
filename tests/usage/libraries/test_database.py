@@ -668,6 +668,7 @@ def test__create_schema() -> None:
                 meter_id BIGINT NOT NULL REFERENCES meters(id) ON DELETE CASCADE,
                 position INTEGER,
                 color TEXT NOT NULL DEFAULT '',
+                axis TEXT NOT NULL DEFAULT '',
                 UNIQUE(user_id, meter_id)
             )
             """
@@ -705,7 +706,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None, None, None, None, None]
+    connection.execute.return_value.fetchone.side_effect = [None, None, None, None, None, None]
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -744,12 +745,19 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (5, "per user meter colors"),
         ),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (6,)),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE meter_orders ADD COLUMN IF NOT EXISTS axis TEXT NOT NULL DEFAULT ''"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (6, "merged graph axis per user"),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 5
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 6
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -762,6 +770,8 @@ def test__migrate() -> None:
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (4,)),
         call.execute().fetchone(),
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (5,)),
+        call.execute().fetchone(),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (6,)),
         call.execute().fetchone(),
     ]
     assert connection.mock_calls == exp_calls

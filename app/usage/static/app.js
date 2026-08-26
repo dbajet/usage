@@ -752,7 +752,8 @@ function legendMarkup(seriesList, interactive = false) {
     <div class="viz-legend">
       ${seriesList.map((item, index) => {
         const color = item.color || VIZ_COLORS[index % VIZ_COLORS.length];
-        const content = `<i style="background:${color}"></i>${esc(item.label)}${item.unit ? ` (${esc(item.unit)})` : ""}`;
+        const side = interactive && item.axis === "right" ? ' <span class="meta">· right</span>' : "";
+        const content = `<i style="background:${color}"></i>${esc(item.label)}${item.unit ? ` (${esc(item.unit)})` : ""}${side}`;
         if (!interactive) return `<span>${content}</span>`;
         const off = state.hiddenMeters.has(item.meter_id) ? " off" : "";
         return `<button class="legend-toggle${off}" type="button" data-legend-toggle="${item.meter_id}" title="Show or hide this meter">${content}</button>`;
@@ -822,9 +823,10 @@ function renderStats(tables, series) {
       color: item.color || VIZ_COLORS[index % VIZ_COLORS.length],
     }));
     const visibleSeries = allSeries.filter((item) => !state.hiddenMeters.has(item.meter_id));
+    const dual = visibleSeries.some((item) => item.axis === "right") && visibleSeries.some((item) => item.axis !== "right");
     html += `
       <div class="card">
-        <h3>Trends <span class="meta">(all meters, one scale - click the legend to hide a meter)</span></h3>
+        <h3>Trends <span class="meta">(all meters, ${dual ? "left and right scales" : "one scale"} - click the legend to hide a meter)</span></h3>
         ${chartMarkup(visibleSeries, true) || '<p class="meta">Every meter is hidden - click the legend to bring one back.</p>'}
         ${legendMarkup(allSeries, true)}
       </div>`;
@@ -903,26 +905,46 @@ function chartMarkup(seriesList, merged = false) {
   const months = [...new Set(seriesList.flatMap((item) => item.points.map((point) => point.month)))].sort();
   const pointCount = seriesList.reduce((count, item) => count + item.points.length, 0);
   if (months.length < 2 || pointCount < 2) return "";
+  // Merged graphs can read some meters on a second, right-hand scale.
+  const onRight = (item) => merged && item.axis === "right";
+  const rightSeries = seriesList.filter(onRight);
+  const leftSeries = seriesList.filter((item) => !onRight(item));
+  const dual = rightSeries.length > 0 && leftSeries.length > 0;
   const width = 720;
   const height = 240;
   const left = 48;
-  const right = 28;
+  const right = dual ? 48 : 28;
   const top = 12;
   const bottom = 30;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maxValue = Math.max(1, ...seriesList.flatMap((item) => item.points.map((point) => point.value)));
-  const step = niceStep(maxValue / 4);
-  const yMax = Math.ceil(maxValue / step) * step;
+  const scaleOf = (list) => {
+    const maxValue = Math.max(1, ...list.flatMap((item) => item.points.map((point) => point.value)));
+    const step = niceStep(maxValue / 4);
+    return { step, yMax: Math.ceil(maxValue / step) * step };
+  };
+  const leftScale = scaleOf(leftSeries.length ? leftSeries : rightSeries);
+  const divisions = Math.round(leftScale.yMax / leftScale.step);
+  const rightScale = { step: 0, yMax: 0 };
+  if (dual) {
+    // Both scales share the grid lines: same divisions, each with a nice step.
+    const maxValue = Math.max(1, ...rightSeries.flatMap((item) => item.points.map((point) => point.value)));
+    rightScale.step = niceStep(maxValue / divisions);
+    rightScale.yMax = rightScale.step * divisions;
+  }
   const xAt = (month) => left + (months.indexOf(month) * plotWidth) / (months.length - 1);
-  const yAt = (value) => top + plotHeight - (value / yMax) * plotHeight;
+  const yOn = (value, yMax) => top + plotHeight - (value / yMax) * plotHeight;
+  const yAt = (value, item) => yOn(value, dual && onRight(item) ? rightScale.yMax : leftScale.yMax);
 
   const gridLines = [];
   const yLabels = [];
-  for (let value = 0; value <= yMax; value += step) {
-    const y = yAt(value);
+  for (let division = 0; division <= divisions; division += 1) {
+    const y = yOn(division * leftScale.step, leftScale.yMax);
     gridLines.push(`<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}"></line>`);
-    yLabels.push(`<text x="${left - 6}" y="${y + 4}" text-anchor="end">${fmtValue(value)}</text>`);
+    yLabels.push(`<text x="${left - 6}" y="${y + 4}" text-anchor="end">${fmtValue(division * leftScale.step)}</text>`);
+    if (dual) {
+      yLabels.push(`<text x="${width - right + 6}" y="${y + 4}" text-anchor="start">${fmtValue(division * rightScale.step)}</text>`);
+    }
   }
   const labelStep = Math.max(1, Math.ceil(months.length / 6));
   const xLabels = months
@@ -936,11 +958,11 @@ function chartMarkup(seriesList, merged = false) {
   const paths = seriesList.map((item, index) => {
     const color = item.color || VIZ_COLORS[index % VIZ_COLORS.length];
     const path = item.points
-      .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${xAt(point.month).toFixed(1)},${yAt(point.value).toFixed(1)}`)
+      .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${xAt(point.month).toFixed(1)},${yAt(point.value, item).toFixed(1)}`)
       .join(" ");
     const dots = showDots
       ? item.points.map((point) =>
-          `<circle class="dot" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3" fill="${color}"></circle>`).join("")
+          `<circle class="dot" cx="${xAt(point.month).toFixed(1)}" cy="${yAt(point.value, item).toFixed(1)}" r="3" fill="${color}"></circle>`).join("")
       : "";
     return `<g class="series"><path d="${path}" stroke="${color}"></path>${dots}</g>`;
   });
@@ -953,11 +975,13 @@ function chartMarkup(seriesList, merged = false) {
     merged,
     top,
     plotHeight,
-    yMax,
+    yMax: leftScale.yMax,
+    yMaxRight: dual ? rightScale.yMax : 0,
     series: seriesList.map((item, index) => ({
       label: item.label,
       unit: item.unit,
       color: item.color || VIZ_COLORS[index % VIZ_COLORS.length],
+      right: onRight(item) && dual,
       values: Object.fromEntries(item.points.map((point) => [point.month, point.value])),
     })),
   };
@@ -981,7 +1005,10 @@ function wireChartHover(rootSelector) {
     const svg = holder.querySelector("svg");
     const hover = svg.querySelector(".viz-hover");
     const dots = hover.querySelector(".hov-dots");
-    const yAt = (value) => config.top + config.plotHeight - (value / config.yMax) * config.plotHeight;
+    const yAt = (value, series) => {
+      const yMax = series && series.right ? config.yMaxRight : config.yMax;
+      return config.top + config.plotHeight - (value / yMax) * config.plotHeight;
+    };
     const tip = holder.querySelector(".viz-tip");
     const xAt = (index) => config.left + (index * config.plotWidth) / Math.max(1, config.count - 1);
     const shifted = (month, years) => `${Number(month.slice(0, 4)) + years}-${month.slice(5, 7)}`;
@@ -995,7 +1022,7 @@ function wireChartHover(rootSelector) {
         const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         dot.setAttribute("class", "hov-dot");
         dot.setAttribute("cx", xAt(index).toFixed(1));
-        dot.setAttribute("cy", yAt(value).toFixed(1));
+        dot.setAttribute("cy", yAt(value, series).toFixed(1));
         dot.setAttribute("r", "4.5");
         dot.setAttribute("stroke", series.color);
         dots.appendChild(dot);
@@ -1185,6 +1212,8 @@ function renderUsers() {
   }));
 }
 
+const ICON_AXIS_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M80-80v-800h80v800H80Zm160-160v-160h640v160H240Zm0-320v-160h400v160H240Z"/></svg>';
+const ICON_AXIS_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M800-80v-800h80v800h-80ZM80-240v-160h640v160H80Zm240-320v-160h400v160H320Z"/></svg>';
 const ICON_UP = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z"/></svg>';
 const ICON_DOWN = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160 160-480l56-57 224 224v-487h80v487l224-224 56 57-320 320Z"/></svg>';
 
@@ -1203,6 +1232,10 @@ function renderMeters() {
         <button class="ghost compact icon-only" data-color-meter="${meter.id}" type="button" title="Choose the colour">
           <span class="swatch" style="background:${esc(meter.color || "var(--muted)")}"></span>
         </button>
+        <button class="ghost compact icon-only${meter.axis === "right" ? " active" : ""}" data-axis-meter="${meter.id}" type="button"
+          title="Merged graph: ${meter.axis === "right" ? "right axis (click for left)" : "left axis (click for right)"}">
+          ${meter.axis === "right" ? ICON_AXIS_RIGHT : ICON_AXIS_LEFT}
+        </button>
         <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="-1" type="button"
           title="Move up"${index === 0 ? " disabled" : ""}>${ICON_UP}</button>
         <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="1" type="button"
@@ -1220,6 +1253,17 @@ function renderMeters() {
     [ids[index], ids[target]] = [ids[target], ids[index]];
     try {
       await api("/api/me/meter-order", { method: "POST", body: JSON.stringify({ house_id: state.houseId, meter_ids: ids }) });
+      await loadMeters();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-axis-meter]").forEach((button) => button.addEventListener("click", async () => {
+    // Which side of the merged graph this meter reads on - personal, like the colour.
+    const meter = state.meters.find((item) => item.id === Number(button.dataset.axisMeter));
+    try {
+      await api("/api/me/meter-axis", { method: "POST", body: JSON.stringify({
+        meter_id: meter.id,
+        axis: meter.axis === "right" ? "left" : "right",
+      }) });
       await loadMeters();
     } catch (error) { showAppError(error); }
   }));

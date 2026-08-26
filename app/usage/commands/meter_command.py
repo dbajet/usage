@@ -34,7 +34,8 @@ class MeterCommand:
                 """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
                        meters.unit, meters.position, meters.active,
-                       COALESCE(meter_orders.color, '') AS color
+                       COALESCE(meter_orders.color, '') AS color,
+                       COALESCE(meter_orders.axis, '') AS axis
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s
@@ -195,6 +196,24 @@ class MeterCommand:
             (user.user_id, meter_id, color),
         )
         return {"message": "Meter colour saved."}
+
+    def set_axis(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        """Store which Y axis of the merged graph this user's meter reads on."""
+        meter_id = int(data.get("meter_id") or 0)
+        axis = str(data.get("axis") or "").strip().lower()
+        if axis == "left":
+            axis = ""
+        if axis not in ("", "right"):
+            raise AppException(400, "The axis is either left or right.")
+        self._require_meter(user, meter_id)
+        self._database.execute(
+            """
+            INSERT INTO meter_orders(user_id, meter_id, position, axis) VALUES (%s, %s, NULL, %s)
+            ON CONFLICT (user_id, meter_id) DO UPDATE SET axis = EXCLUDED.axis
+            """,
+            (user.user_id, meter_id, axis),
+        )
+        return {"message": "Meter axis saved."}
 
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
         # Everyone, admins included, only sees the houses they are linked to.

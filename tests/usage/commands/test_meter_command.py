@@ -79,7 +79,8 @@ def test_list_meters(require_house: MagicMock) -> None:
             """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
                        meters.unit, meters.position, meters.active,
-                       COALESCE(meter_orders.color, '') AS color
+                       COALESCE(meter_orders.color, '') AS color,
+                       COALESCE(meter_orders.axis, '') AS axis
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s
@@ -176,6 +177,48 @@ def test_set_color(require_meter: MagicMock) -> None:
         result = tested.set_color(user, {"meter_id": 9, "color": color})
         expected = {"message": "Meter colour saved."}
         assert result == expected, f"---> {color}"
+        assert require_meter.mock_calls == [call(user, 9)]
+        exp_calls = [call.execute(exp_upsert, (7, 9, stored))]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
+
+
+@patch.object(MeterCommand, "_require_meter")
+def test_set_axis(require_meter: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_meter.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+
+    # an unknown axis
+    with pytest.raises(AppException) as exc_info:
+        tested.set_axis(user, {"meter_id": 9, "axis": "middle"})
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The axis is either left or right."
+    assert require_meter.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # right, then back to the left default
+    exp_upsert = """
+            INSERT INTO meter_orders(user_id, meter_id, position, axis) VALUES (%s, %s, NULL, %s)
+            ON CONFLICT (user_id, meter_id) DO UPDATE SET axis = EXCLUDED.axis
+            """
+    tests = [
+        (" Right ", "right"),
+        ("left", ""),
+        ("", ""),
+    ]
+    for axis, stored in tests:
+        require_meter.side_effect = [{"id": 9, "house_id": 3}]
+        database.execute.side_effect = [0]
+        result = tested.set_axis(user, {"meter_id": 9, "axis": axis})
+        expected = {"message": "Meter axis saved."}
+        assert result == expected, f"---> {axis}"
         assert require_meter.mock_calls == [call(user, 9)]
         exp_calls = [call.execute(exp_upsert, (7, 9, stored))]
         assert database.mock_calls == exp_calls
