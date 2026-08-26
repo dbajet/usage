@@ -25,10 +25,35 @@ from pathlib import Path
 from usage.commands.import_command import ImportCommand
 from usage.libraries.database import Database
 from usage.libraries.settings_loader import SettingsLoader
-print(ImportCommand(Database(SettingsLoader().load())).run(Path('/tmp/$file'), '$house'))
+from usage.structures.app_exception import AppException
+try:
+    print(ImportCommand(Database(SettingsLoader().load())).run(Path('/tmp/$file'), '$house'))
+except AppException as exception:
+    print(f'⚠️  {exception.message}')
+"
+}
+
+import_mileage() {  # file house label
+    local file="$1" house="$2" label="$3"
+    if [ ! -f "$file" ]; then
+        echo "⚠️  $file not found - skipping $label."
+        return
+    fi
+    $COMPOSE cp "$file" "$APP:/tmp/$file"
+    $COMPOSE exec -T "$APP" python -c "
+from pathlib import Path
+from usage.commands.import_command import ImportCommand
+from usage.libraries.database import Database
+from usage.libraries.settings_loader import SettingsLoader
+from usage.structures.app_exception import AppException
+try:
+    print(ImportCommand(Database(SettingsLoader().load())).import_mileage(Path('/tmp/$file'), '$house', '$label'))
+except AppException as exception:
+    print(f'⚠️  {exception.message}')
 "
 }
 
 import_one "fremur_edf_gdf_eau.csv" "Fremur"
 import_one "dougmar_edf_gdf_eau.csv" "Dougmar"
+import_mileage "dougmar_volvo.csv" "Dougmar" "Volvo"
 echo "✅ Import finished."

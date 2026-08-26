@@ -105,6 +105,173 @@ def test_run(
     reset_mocks()
 
 
+@patch.object(ImportCommand, "_import_simple")
+@patch.object(ImportCommand, "_insert_meter")
+@patch.object(ImportCommand, "_parse_mileage")
+@patch.object(ImportCommand, "_meter_exists")
+@patch.object(ImportCommand, "_house_id")
+def test_import_mileage(
+    house_id: MagicMock,
+    meter_exists: MagicMock,
+    parse_mileage: MagicMock,
+    insert_meter: MagicMock,
+    import_simple: MagicMock,
+) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        house_id.reset_mock()
+        meter_exists.reset_mock()
+        parse_mileage.reset_mock()
+        insert_meter.reset_mock()
+        import_simple.reset_mock()
+        database.reset_mock()
+
+    # unknown house
+    house_id.side_effect = [0]
+    with pytest.raises(AppException) as exc_info:
+        tested.import_mileage(Path("volvo.csv"), "Dougmar", "Volvo")
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.message == "The house 'Dougmar' was not found - import its history first."
+    assert house_id.mock_calls == [call("Dougmar")]
+    assert meter_exists.mock_calls == []
+    assert parse_mileage.mock_calls == []
+    assert insert_meter.mock_calls == []
+    assert import_simple.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # the meter is already there
+    house_id.side_effect = [2]
+    meter_exists.side_effect = [True]
+    with pytest.raises(AppException) as exc_info:
+        tested.import_mileage(Path("volvo.csv"), "Dougmar", "Volvo")
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.message == "The meter 'Volvo' already exists - the mileage was probably imported."
+    assert house_id.mock_calls == [call("Dougmar")]
+    assert meter_exists.mock_calls == [call(2, "Volvo")]
+    assert parse_mileage.mock_calls == []
+    assert insert_meter.mock_calls == []
+    assert import_simple.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # an empty file
+    house_id.side_effect = [2]
+    meter_exists.side_effect = [False]
+    parse_mileage.side_effect = [[]]
+    with pytest.raises(AppException) as exc_info:
+        tested.import_mileage(Path("volvo.csv"), "Dougmar", "Volvo")
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The file holds no readings."
+    assert house_id.mock_calls == [call("Dougmar")]
+    assert meter_exists.mock_calls == [call(2, "Volvo")]
+    assert parse_mileage.mock_calls == [call(Path("volvo.csv"))]
+    assert insert_meter.mock_calls == []
+    assert import_simple.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # happy path: the first value is the register baseline
+    points = [("2014-07-15", 16300.0), ("2014-09-15", 19791.0)]
+    house_id.side_effect = [2]
+    meter_exists.side_effect = [False]
+    parse_mileage.side_effect = [points]
+    database.fetch_one.side_effect = [{"position": 3}]
+    insert_meter.side_effect = [9]
+    import_simple.side_effect = [(1, 2, 2)]
+    result = tested.import_mileage(Path("volvo.csv"), "Dougmar", "Volvo")
+    expected = {"house": "Dougmar", "meters": 1, "registers": 1, "readings": 2, "values": 2}
+    assert result == expected
+    assert house_id.mock_calls == [call("Dougmar")]
+    assert meter_exists.mock_calls == [call(2, "Volvo")]
+    assert parse_mileage.mock_calls == [call(Path("volvo.csv"))]
+    assert insert_meter.mock_calls == [call(2, "mileage", "Volvo", "km", 3)]
+    assert import_simple.mock_calls == [call(9, 16300.0, points)]
+    exp_calls = [
+        call.transaction(),
+        call.transaction().__enter__(),
+        call.fetch_one(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM meters WHERE house_id = %s",
+            (2,),
+        ),
+        call.transaction().__exit__(None, None, None),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__parse_mileage(tmp_path: Path) -> None:
+    tested = helper_instance()
+    content = "\n".join([
+        "\tVolvo",
+        "",
+        "Jul-2014\t16,300",
+        "Aug-2014",
+        "Sep-2014\t19,791",
+        "not-a-month\t123",
+        "Aug-2026",
+    ])
+    path = tmp_path / "volvo.csv"
+    path.write_text(content, encoding="utf-8")
+    result = tested._parse_mileage(path)
+    expected = [("2014-07-15", 16300.0), ("2014-09-15", 19791.0)]
+    assert result == expected
+
+
+def test__house_id() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sealed_rows = [{"id": 1, "name": "sealedFremur"}, {"id": 2, "name": "sealedDougmar"}]
+    tests = [
+        ("Fremur", 1),
+        (" dougmar ", 2),
+        ("Nowhere", 0),
+    ]
+    for house_name, expected in tests:
+        database.fetch_all.side_effect = [sealed_rows]
+        database.decrypt_rows.side_effect = [[{"id": 1, "name": "Fremur"}, {"id": 2, "name": "Dougmar"}]]
+        result = tested._house_id(house_name)
+        assert result == expected, f"---> {house_name}"
+        exp_calls = [
+            call.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
+            call.decrypt_rows(sealed_rows, ("name",)),
+        ]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
+
+
+def test__meter_exists() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sealed_rows = [{"id": 9, "label": "sealedVolvo"}]
+    tests = [
+        ("Volvo", True),
+        (" volvo ", True),
+        ("Tesla", False),
+    ]
+    for label, expected in tests:
+        database.fetch_all.side_effect = [sealed_rows]
+        database.decrypt_rows.side_effect = [[{"id": 9, "label": "Volvo"}]]
+        result = tested._meter_exists(2, label)
+        assert result is expected, f"---> {label}"
+        exp_calls = [
+            call.fetch_all("SELECT id, label_sealed AS label FROM meters WHERE house_id = %s ORDER BY id", (2,)),
+            call.decrypt_rows(sealed_rows, ("label",)),
+        ]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
+
+
 def test__house_exists() -> None:
     tested = helper_instance()
     database = tested._database
@@ -374,6 +541,7 @@ def test__number() -> None:
     tests = [
         ("17273", 17273.0),
         (" 298.6 ", 298.6),
+        ("16,300", 16300.0),
         ("HC", None),
         ("", None),
     ]

@@ -49,6 +49,67 @@ class ImportCommand:
                 result["values"] += values
         return result
 
+    def import_mileage(self, csv_path: Path, house_name: str, label: str) -> dict[str, Any]:
+        """Mileage history (month + odometer per line) added to an existing house.
+
+        The first line with a value is the baseline: the register starts there,
+        so the first month shows no consumption. Empty months are skipped and
+        their consumption is spread by the stats, like any gap.
+        """
+        house_id = self._house_id(house_name)
+        if house_id == 0:
+            raise AppException(404, f"The house '{house_name}' was not found - import its history first.")
+        if self._meter_exists(house_id, label):
+            raise AppException(409, f"The meter '{label}' already exists - the mileage was probably imported.")
+        points = self._parse_mileage(csv_path)
+        if not points:
+            raise AppException(400, "The file holds no readings.")
+        result: dict[str, Any] = {"house": house_name, "meters": 1, "registers": 0, "readings": 0, "values": 0}
+        with self._database.transaction():
+            position_row = self._database.fetch_one(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM meters WHERE house_id = %s",
+                (house_id,),
+            )
+            position = int(position_row["position"]) if position_row is not None else 0
+            meter_id = self._insert_meter(house_id, Constants.kind_mileage, label, "km", position)
+            registers, readings, values = self._import_simple(meter_id, points[0][1], points)
+            result["registers"] += registers
+            result["readings"] += readings
+            result["values"] += values
+        return result
+
+    def _parse_mileage(self, csv_path: Path) -> list[tuple[str, float]]:
+        result: list[tuple[str, float]] = []
+        for line in csv_path.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) < 2:
+                continue
+            read_on = self._month_date(fields[0].strip())
+            value = self._number(fields[1])
+            if not read_on or value is None:
+                continue
+            result.append((read_on, value))
+        return result
+
+    def _house_id(self, house_name: str) -> int:
+        rows = self._database.decrypt_rows(
+            self._database.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
+            ("name",),
+        )
+        normalized = house_name.strip().lower()
+        for row in rows:
+            if str(row["name"]).strip().lower() == normalized:
+                return int(row["id"])
+        return 0
+
+    def _meter_exists(self, house_id: int, label: str) -> bool:
+        rows = self._database.decrypt_rows(
+            self._database.fetch_all("SELECT id, label_sealed AS label FROM meters WHERE house_id = %s ORDER BY id", (house_id,)),
+            ("label",),
+        )
+        normalized = label.strip().lower()
+        return any(str(row["label"]).strip().lower() == normalized for row in rows)
+
     def _house_exists(self, house_name: str) -> bool:
         rows = self._database.decrypt_rows(
             self._database.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
@@ -167,6 +228,6 @@ class ImportCommand:
 
     def _number(self, value: str) -> float | None:
         try:
-            return float(value.strip())
+            return float(value.strip().replace(",", ""))
         except ValueError:
             return None
