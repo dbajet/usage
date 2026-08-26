@@ -21,6 +21,9 @@
   --viz-1: #2a78d6;
   --viz-2: #eb6834;
   --viz-3: #1baf7a;
+  --viz-4: #8f62d9;
+  --viz-5: #c2478f;
+  --viz-6: #a07b1f;
   --viz-grid: #e4e0d5;
 }
 
@@ -28,6 +31,9 @@
   --viz-1: #3987e5;
   --viz-2: #d95926;
   --viz-3: #199e70;
+  --viz-4: #a07de0;
+  --viz-5: #d160a0;
+  --viz-6: #c29a35;
   --viz-grid: #38342c;
 }
 
@@ -208,6 +214,16 @@ td.cell-reading { cursor: pointer; }
 }
 .modal-backdrop.top-layer { z-index: 60; }
 .icon-actions { display: inline-flex; gap: 0.3rem; }
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  vertical-align: -2px;
+}
+.modal button.option .swatch { margin-right: 0.45rem; }
 button.icon-only { display: inline-flex; align-items: center; justify-content: center; padding: 0.3rem 0.45rem; }
 button.icon-only .msym { width: 16px; height: 16px; }
 .modal-heading {

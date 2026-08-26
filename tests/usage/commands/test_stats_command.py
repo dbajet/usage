@@ -108,9 +108,9 @@ def test_series(require_house: MagicMock, house_consumption: MagicMock) -> None:
 
     user = helper_user()
     meters = [
-        {"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh"},
-        {"id": 3, "kind": "water", "label": "", "unit": "m3"},
-        {"id": 4, "kind": "gas", "label": "GDF", "unit": "m3"},
+        {"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh", "color": ""},
+        {"id": 3, "kind": "water", "label": "", "unit": "m3", "color": "#189aa8"},
+        {"id": 4, "kind": "gas", "label": "GDF", "unit": "m3", "color": ""},
     ]
     consumption = {
         1: {24312: 254.0, 24311: 206.0},
@@ -126,6 +126,7 @@ def test_series(require_house: MagicMock, house_consumption: MagicMock) -> None:
                 "label": "EDF",
                 "kind": "electricity",
                 "unit": "kWh",
+                "color": "",
                 "points": [
                     {"month": "2025-12", "value": 206.0},
                     {"month": "2026-01", "value": 254.0},
@@ -136,6 +137,7 @@ def test_series(require_house: MagicMock, house_consumption: MagicMock) -> None:
                 "label": "water",
                 "kind": "water",
                 "unit": "m3",
+                "color": "#189aa8",
                 "points": [{"month": "2026-01", "value": 7.0}],
             },
         ],
@@ -168,14 +170,14 @@ def test__house_consumption(register_consumption: MagicMock) -> None:
         {"meter_id": 1, "read_on": "2026-02-15", "register_id": 22, "value": 291},
     ]
     database.fetch_all.side_effect = [meter_rows, register_rows, reading_rows]
-    database.decrypt_rows.side_effect = [[{"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh"}]]
+    database.decrypt_rows.side_effect = [[{"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh", "color": ""}]]
     register_consumption.side_effect = [
         {24312: 0.0, 24313: 0.0},
         {24312: 0.0, 24313: 133.0},
     ]
     result = tested._house_consumption(helper_user(), 3)
     expected = (
-        [{"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh"}],
+        [{"id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh", "color": ""}],
         {1: {24312: 0.0, 24313: 133.0}},
     )
     assert result == expected
@@ -187,7 +189,8 @@ def test__house_consumption(register_consumption: MagicMock) -> None:
     exp_calls = [
         call.fetch_all(
             """
-                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit
+                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit,
+                       COALESCE(meter_orders.color, '') AS color
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s

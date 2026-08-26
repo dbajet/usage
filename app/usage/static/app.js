@@ -15,7 +15,20 @@ let state = {
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const VIZ_COLORS = ["var(--viz-1)", "var(--viz-2)", "var(--viz-3)"];
+const VIZ_COLORS = ["var(--viz-1)", "var(--viz-2)", "var(--viz-3)", "var(--viz-4)", "var(--viz-5)", "var(--viz-6)"];
+// The choices offered in the per-meter colour picker.
+const METER_COLORS = [
+  { label: "Blue", value: "#2a78d6" },
+  { label: "Orange", value: "#eb6834" },
+  { label: "Green", value: "#1baf7a" },
+  { label: "Purple", value: "#8f62d9" },
+  { label: "Magenta", value: "#c2478f" },
+  { label: "Gold", value: "#a07b1f" },
+  { label: "Red", value: "#d64550" },
+  { label: "Teal", value: "#189aa8" },
+  { label: "Brown", value: "#a06a3c" },
+  { label: "Gray", value: "#6b7280" },
+];
 
 function esc(value) {
   return String(value)
@@ -90,7 +103,7 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
     part("fields").innerHTML = options.length
       ? options.map((option) => `
           <button class="ghost option${option.active ? " active" : ""}" type="button" data-modal-option="${esc(String(option.value))}">
-            ${esc(option.label)}
+            ${option.color ? `<span class="swatch" style="background:${esc(option.color)}"></span>` : ""}${esc(option.label)}
           </button>`).join("")
       : fields.map((field) => {
           if (field.type === "heading") {
@@ -806,7 +819,7 @@ function renderStats(tables, series) {
   if (prefs.graphs && prefs.merged) {
     const allSeries = filtered.series.series.map((item, index) => ({
       ...item,
-      color: VIZ_COLORS[index % VIZ_COLORS.length],
+      color: item.color || VIZ_COLORS[index % VIZ_COLORS.length],
     }));
     const visibleSeries = allSeries.filter((item) => !state.hiddenMeters.has(item.meter_id));
     html += `
@@ -1187,6 +1200,9 @@ function renderMeters() {
           `${esc(register.label || "register")} (start ${register.initial_value})${register.active ? "" : " — inactive"}`).join(" · ")}</span>
       </span>
       <span class="icon-actions">
+        <button class="ghost compact icon-only" data-color-meter="${meter.id}" type="button" title="Choose the colour">
+          <span class="swatch" style="background:${esc(meter.color || "var(--muted)")}"></span>
+        </button>
         <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="-1" type="button"
           title="Move up"${index === 0 ? " disabled" : ""}>${ICON_UP}</button>
         <button class="ghost compact icon-only" data-move-meter="${meter.id}" data-move-delta="1" type="button"
@@ -1204,6 +1220,22 @@ function renderMeters() {
     [ids[index], ids[target]] = [ids[target], ids[index]];
     try {
       await api("/api/me/meter-order", { method: "POST", body: JSON.stringify({ house_id: state.houseId, meter_ids: ids }) });
+      await loadMeters();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-color-meter]").forEach((button) => button.addEventListener("click", async () => {
+    // The colour is personal, like the order: it follows this user everywhere.
+    const meter = state.meters.find((item) => item.id === Number(button.dataset.colorMeter));
+    const choice = await openModal({
+      title: `Colour of ${meter.label || meter.kind}`,
+      options: [
+        { value: "", label: "Default", active: !meter.color },
+        ...METER_COLORS.map((color) => ({ ...color, color: color.value, active: meter.color === color.value })),
+      ],
+    });
+    if (choice === null) return;
+    try {
+      await api("/api/me/meter-color", { method: "POST", body: JSON.stringify({ meter_id: meter.id, color: choice.value }) });
       await loadMeters();
     } catch (error) { showAppError(error); }
   }));

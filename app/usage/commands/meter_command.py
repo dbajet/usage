@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from usage.constants.constants import Constants
@@ -32,7 +33,8 @@ class MeterCommand:
             self._database.fetch_all(
                 """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
-                       meters.unit, meters.position, meters.active
+                       meters.unit, meters.position, meters.active,
+                       COALESCE(meter_orders.color, '') AS color
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s
@@ -177,6 +179,22 @@ class MeterCommand:
                     (user.user_id, meter_id, position),
                 )
         return {"message": "Meter order saved."}
+
+    def set_color(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        """Store this user's own colour for a meter; empty goes back to the default."""
+        meter_id = int(data.get("meter_id") or 0)
+        color = str(data.get("color") or "").strip().lower()
+        if color and not re.fullmatch(r"#[0-9a-f]{6}", color):
+            raise AppException(400, "The colour must be like #2a78d6, or empty for the default.")
+        self._require_meter(user, meter_id)
+        self._database.execute(
+            """
+            INSERT INTO meter_orders(user_id, meter_id, position, color) VALUES (%s, %s, NULL, %s)
+            ON CONFLICT (user_id, meter_id) DO UPDATE SET color = EXCLUDED.color
+            """,
+            (user.user_id, meter_id, color),
+        )
+        return {"message": "Meter colour saved."}
 
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
         # Everyone, admins included, only sees the houses they are linked to.

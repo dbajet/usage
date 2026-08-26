@@ -54,6 +54,7 @@ class StatsCommand:
                     "label": meter["label"] or str(meter["kind"]),
                     "kind": str(meter["kind"]),
                     "unit": str(meter["unit"]),
+                    "color": str(meter["color"] or ""),
                     "points": [
                         {"month": self._month_key(month), "value": round(months[month], 2)}
                         for month in sorted(months)
@@ -66,7 +67,8 @@ class StatsCommand:
         meters = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit
+                SELECT meters.id, meters.kind, meters.label_sealed AS label, meters.unit,
+                       COALESCE(meter_orders.color, '') AS color
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s

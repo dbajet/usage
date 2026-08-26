@@ -78,7 +78,8 @@ def test_list_meters(require_house: MagicMock) -> None:
         call.fetch_all(
             """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
-                       meters.unit, meters.position, meters.active
+                       meters.unit, meters.position, meters.active,
+                       COALESCE(meter_orders.color, '') AS color
                 FROM meters
                 LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                 WHERE meters.house_id = %s
@@ -138,6 +139,47 @@ def test_set_order(require_house: MagicMock) -> None:
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()
+
+
+@patch.object(MeterCommand, "_require_meter")
+def test_set_color(require_meter: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_meter.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+
+    # an invalid colour
+    with pytest.raises(AppException) as exc_info:
+        tested.set_color(user, {"meter_id": 9, "color": "blue"})
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The colour must be like #2a78d6, or empty for the default."
+    assert require_meter.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # a colour, and back to the default
+    exp_upsert = """
+            INSERT INTO meter_orders(user_id, meter_id, position, color) VALUES (%s, %s, NULL, %s)
+            ON CONFLICT (user_id, meter_id) DO UPDATE SET color = EXCLUDED.color
+            """
+    tests = [
+        (" #2A78D6 ", "#2a78d6"),
+        ("", ""),
+    ]
+    for color, stored in tests:
+        require_meter.side_effect = [{"id": 9, "house_id": 3}]
+        database.execute.side_effect = [0]
+        result = tested.set_color(user, {"meter_id": 9, "color": color})
+        expected = {"message": "Meter colour saved."}
+        assert result == expected, f"---> {color}"
+        assert require_meter.mock_calls == [call(user, 9)]
+        exp_calls = [call.execute(exp_upsert, (7, 9, stored))]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 @patch.object(MeterCommand, "_require_house")

@@ -12,6 +12,7 @@ from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
 from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
+from usage.handlers.meter_color_request import MeterColorRequest
 from usage.handlers.meter_order_request import MeterOrderRequest
 from usage.handlers.meter_request import MeterRequest
 from usage.handlers.meter_update_request import MeterUpdateRequest
@@ -175,6 +176,7 @@ def test__register() -> None:
         ("/api/houses/{house_id}", ("DELETE",)),
         ("/api/houses/{house_id}", ("PUT",)),
         ("/api/me", ("GET",)),
+        ("/api/me/meter-color", ("POST",)),
         ("/api/me/meter-order", ("POST",)),
         ("/api/me/reminders", ("GET",)),
         ("/api/me/reminders", ("POST",)),
@@ -311,6 +313,32 @@ def test__set_reminder() -> None:
     assert admin_command.mock_calls == []
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.set_reminder(user, {"house_id": 3, "enabled": True})]
+    assert stats_command.mock_calls == []
+    reset_mocks()
+
+
+def test__set_meter_color() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    meter_command.set_color.side_effect = [{"message": "Meter colour saved."}]
+    result = tested._set_meter_color(MeterColorRequest(meter_id=9, color="#2a78d6"), "the-session")
+    expected = ApiMessage(message="Meter colour saved.")
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == [call.set_color(user, {"meter_id": 9, "color": "#2a78d6"})]
+    assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
     reset_mocks()
 
