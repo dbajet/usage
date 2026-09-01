@@ -567,6 +567,10 @@ function fmtThousand(value) {
   return Number(value).toLocaleString("en-US");
 }
 
+function fmtRounded(value) {
+  return Math.round(Number(value)).toLocaleString("en-US");
+}
+
 function renderReadings(data) {
   const readings = data.readings || [];
   if (!readings.length) {
@@ -592,7 +596,8 @@ function renderReadings(data) {
     const cells = meters.map((meter) => {
       const reading = byKey.get(`${month}|${meter.id}`);
       if (!reading) return "<td></td>";
-      const text = reading.values.map((value) => fmtThousand(value.value)).join(" / ");
+      // The cells stay whole numbers; the exact value lives in the tooltip and the edit dialog.
+      const text = reading.values.map((value) => fmtRounded(value.value)).join(" / ");
       const tip = reading.values.map((value) => `${value.label || "counter"}: ${fmtThousand(value.value)}`).join(" · ");
       return `<td class="cell-reading" data-edit-reading="${reading.id}" title="${esc(`${tip} · ${reading.source} · click to edit`)}">${text}</td>`;
     }).join("");
