@@ -89,7 +89,7 @@ def test__loop(tick: MagicMock, mock_time: MagicMock, mock_logging: MagicMock) -
     with pytest.raises(KeyboardInterrupt):
         tested._loop()
     assert tick.mock_calls == [call(), call()]
-    assert mock_time.mock_calls == [call.sleep(3600), call.sleep(3600)]
+    assert mock_time.mock_calls == [call.sleep(300), call.sleep(300)]
     assert mock_logging.mock_calls == [call.getLogger("usage")]
     assert logger.mock_calls == [call.warning("[REMINDER] tick failed: %s", error)]
     reset_mocks()
@@ -97,10 +97,14 @@ def test__loop(tick: MagicMock, mock_time: MagicMock, mock_logging: MagicMock) -
 
 @patch("usage.commands.reminder_command.logging")
 @patch("usage.commands.reminder_command.datetime", wraps=datetime)
-def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
+@patch.object(ReminderCommand, "_local_time")
+@patch.object(ReminderCommand, "_is_due")
+def test_tick(is_due: MagicMock, local_time: MagicMock, mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
     logger = MagicMock()
 
     def reset_mocks() -> None:
+        is_due.reset_mock()
+        local_time.reset_mock()
         mock_datetime.reset_mock()
         mock_logging.reset_mock()
         logger.reset_mock()
@@ -114,6 +118,9 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
         database.reset_mock()
         email_sender.reset_mock()
 
+    now = datetime(2026, 9, 1, 8, 0, 0, tzinfo=UTC)
+    house_rows = [{"id": 1, "timezone": "Europe/Paris"}, {"id": 2, "timezone": "America/Los_Angeles"}]
+    exp_houses_fetch = call.fetch_all("SELECT id, timezone FROM houses ORDER BY id")
     exp_materialize = call.execute(
         """
             INSERT INTO reminders(user_id, house_id)
@@ -123,83 +130,84 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
     )
     exp_fetch = call.fetch_all(
         """
-            SELECT reminders.id, users.email_sealed AS email, houses.name_sealed AS house
-            FROM reminders
-            JOIN users ON users.id = reminders.user_id
-            JOIN houses ON houses.id = reminders.house_id
-            WHERE reminders.enabled AND (reminders.sent_on IS NULL OR reminders.sent_on < %s)
-            ORDER BY reminders.id
-            """,
-        ("2026-09-01",),
+                SELECT reminders.id, users.email_sealed AS email, houses.name_sealed AS house
+                FROM reminders
+                JOIN users ON users.id = reminders.user_id
+                JOIN houses ON houses.id = reminders.house_id
+                WHERE reminders.house_id = %s AND reminders.enabled
+                  AND (reminders.sent_on IS NULL OR reminders.sent_on < %s)
+                ORDER BY reminders.id
+                """,
+        (1, "2026-09-01"),
     )
 
-    # not the first of the month: nothing happens
-    mock_datetime.now.side_effect = [datetime(2026, 8, 23, 12, 0, 0, tzinfo=UTC)]
+    # no house has reached 06:15 on the first: nothing happens
+    mock_datetime.now.side_effect = [now]
+    database.fetch_all.side_effect = [house_rows]
+    is_due.side_effect = [False, False]
     result = tested.tick()
     assert result is None
+    assert is_due.mock_calls == [call(now, "Europe/Paris"), call(now, "America/Los_Angeles")]
+    assert local_time.mock_calls == []
     assert mock_datetime.mock_calls == [call.now(UTC)]
     assert mock_logging.mock_calls == []
-    assert database.mock_calls == []
+    assert database.mock_calls == [exp_houses_fetch]
     assert email_sender.mock_calls == []
     reset_all()
 
-    # first of the month: one reminder claimed and emailed, one already
-    # claimed by the other colour, one whose email fails and is logged
-    mock_datetime.now.side_effect = [datetime(2026, 9, 1, 8, 0, 0, tzinfo=UTC)]
-    sealed_rows = [
+    # the first house is past 06:15 local on the first: one reminder claimed
+    # and emailed, one already claimed by the other colour, one whose email
+    # fails and is logged; the second house is not due yet
+    mock_datetime.now.side_effect = [now]
+    database.fetch_all.side_effect = [house_rows, [
         {"id": 7, "email": "sealedJane", "house": "sealedFremur"},
         {"id": 8, "email": "sealedJohn", "house": "sealedFremur"},
-        {"id": 9, "email": "sealedMary", "house": "sealedDougmar"},
-    ]
-    database.fetch_all.side_effect = [sealed_rows]
+        {"id": 9, "email": "sealedMary", "house": "sealedFremur"},
+    ]]
+    is_due.side_effect = [True, False]
+    local_time.side_effect = [datetime(2026, 9, 1, 10, 0, 0)]
     database.decrypt_rows.side_effect = [
         [
             {"id": 7, "email": "jane@example.com", "house": "Fremur"},
             {"id": 8, "email": "john@example.com", "house": "Fremur"},
-            {"id": 9, "email": "mary@example.com", "house": "Dougmar"},
+            {"id": 9, "email": "mary@example.com", "house": "Fremur"},
         ],
     ]
-    database.execute.side_effect = [0, 7, 0, 9]
+    database.execute.side_effect = [0, 0, 8, 9]
     email_sender.send.side_effect = [True, False]
     mock_logging.getLogger.side_effect = [logger]
     result = tested.tick()
     assert result is None
+    assert is_due.mock_calls == [call(now, "Europe/Paris"), call(now, "America/Los_Angeles")]
+    assert local_time.mock_calls == [call(now, "Europe/Paris")]
     assert mock_datetime.mock_calls == [call.now(UTC)]
     assert mock_logging.mock_calls == [call.getLogger("usage")]
     assert logger.mock_calls == [call.warning("[REMINDER] email failed for reminder %s", 9)]
+    exp_claim = """
+                    UPDATE reminders SET sent_on = %s
+                    WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
+                    RETURNING id
+                    """
     exp_calls = [
+        exp_houses_fetch,
         exp_materialize,
         exp_fetch,
-        call.decrypt_rows(sealed_rows, ("email", "house")),
-        call.execute(
-            """
-                UPDATE reminders SET sent_on = %s
-                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
-                RETURNING id
-                """,
-            ("2026-09-01", 7, "2026-09-01"),
+        call.decrypt_rows(
+            [
+                {"id": 7, "email": "sealedJane", "house": "sealedFremur"},
+                {"id": 8, "email": "sealedJohn", "house": "sealedFremur"},
+                {"id": 9, "email": "sealedMary", "house": "sealedFremur"},
+            ],
+            ("email", "house"),
         ),
-        call.execute(
-            """
-                UPDATE reminders SET sent_on = %s
-                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
-                RETURNING id
-                """,
-            ("2026-09-01", 8, "2026-09-01"),
-        ),
-        call.execute(
-            """
-                UPDATE reminders SET sent_on = %s
-                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
-                RETURNING id
-                """,
-            ("2026-09-01", 9, "2026-09-01"),
-        ),
+        call.execute(exp_claim, ("2026-09-01", 7, "2026-09-01")),
+        call.execute(exp_claim, ("2026-09-01", 8, "2026-09-01")),
+        call.execute(exp_claim, ("2026-09-01", 9, "2026-09-01")),
     ]
     assert database.mock_calls == exp_calls
     exp_calls = [
         call.send(
-            "jane@example.com",
+            "john@example.com",
             "Usage: time to record the readings of Fremur for August 2026",
             [
                 "Hello,",
@@ -213,11 +221,11 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
         ),
         call.send(
             "mary@example.com",
-            "Usage: time to record the readings of Dougmar for August 2026",
+            "Usage: time to record the readings of Fremur for August 2026",
             [
                 "Hello,",
                 "",
-                "A new month has started - a good moment to record the meter readings of Dougmar for August 2026:",
+                "A new month has started - a good moment to record the meter readings of Fremur for August 2026:",
                 "https://usage.example.com",
                 "",
                 "You receive this monthly reminder for this house;",
@@ -227,3 +235,42 @@ def test_tick(mock_datetime: MagicMock, mock_logging: MagicMock) -> None:
     ]
     assert email_sender.mock_calls == exp_calls
     reset_all()
+
+
+def test__local_time() -> None:
+    tested = ReminderCommand
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
+    tests = [
+        ("Europe/Paris", "2026-09-01T14:00:00+02:00"),
+        ("America/Los_Angeles", "2026-09-01T05:00:00-07:00"),
+        # an unknown zone falls back to UTC
+        ("Mars/Olympus", "2026-09-01T12:00:00+00:00"),
+        ("", "2026-09-01T12:00:00+00:00"),
+    ]
+    for timezone, expected in tests:
+        result = tested._local_time(now, timezone).isoformat()
+        assert result == expected, f"---> {timezone}"
+
+
+def test__is_due() -> None:
+    tested = ReminderCommand
+    tests = [
+        # 06:15 in Paris (UTC+2 in September) is 04:15 UTC
+        (datetime(2026, 9, 1, 4, 15, 0, tzinfo=UTC), "Europe/Paris", True),
+        (datetime(2026, 9, 1, 4, 14, 0, tzinfo=UTC), "Europe/Paris", False),
+        # 06:15 in Los Angeles (UTC-7 in September) is 13:15 UTC
+        (datetime(2026, 9, 1, 13, 15, 0, tzinfo=UTC), "America/Los_Angeles", True),
+        (datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC), "America/Los_Angeles", False),
+        # still the previous month in Los Angeles at midnight UTC
+        (datetime(2026, 9, 1, 0, 30, 0, tzinfo=UTC), "America/Los_Angeles", False),
+        # the reminder stays due for the rest of the first day
+        (datetime(2026, 9, 1, 21, 45, 0, tzinfo=UTC), "Europe/Paris", True),
+        # not the first of the month
+        (datetime(2026, 9, 2, 8, 0, 0, tzinfo=UTC), "Europe/Paris", False),
+        # an unknown zone falls back to UTC
+        (datetime(2026, 9, 1, 6, 15, 0, tzinfo=UTC), "Mars/Olympus", True),
+        (datetime(2026, 9, 1, 6, 14, 0, tzinfo=UTC), "Mars/Olympus", False),
+    ]
+    for now, timezone, expected in tests:
+        result = tested._is_due(now, timezone)
+        assert result is expected, f"---> {now} {timezone}"

@@ -815,7 +815,7 @@ def test__create_house() -> None:
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
-    assert admin_command.mock_calls == [call.create_house(user, {"name": "Fremur"})]
+    assert admin_command.mock_calls == [call.create_house(user, {"name": "Fremur", "timezone": ""})]
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
@@ -836,12 +836,12 @@ def test__update_house() -> None:
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.update_house.side_effect = [{"message": "House updated."}]
-    result = tested._update_house(3, HouseRequest(name="Fremur"), "the-session")
+    result = tested._update_house(3, HouseRequest(name="Fremur", timezone="Europe/Paris"), "the-session")
     expected = ApiMessage(message="House updated.")
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
-    assert admin_command.mock_calls == [call.update_house(user, 3, {"name": "Fremur"})]
+    assert admin_command.mock_calls == [call.update_house(user, 3, {"name": "Fremur", "timezone": "Europe/Paris"})]
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []

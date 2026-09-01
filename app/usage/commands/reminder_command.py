@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from usage.constants.constants import Constants
 from usage.libraries.database import Database
@@ -13,13 +14,14 @@ from usage.structures.settings import Settings
 
 
 class ReminderCommand:
-    """Sends the monthly reminder email on the first day of the month.
+    """Sends the monthly reminder email on the first day of the month, from
+    06:15 in each house's own time zone.
 
     Reminders are per user and house, enabled by default for every house the
     user is linked to (a user can opt out per house in Settings > Account).
-    A background thread checks every hour; each reminder is claimed atomically
-    (sent_on) before sending, so restarts and the brief blue/green overlap
-    never produce duplicates.
+    A background thread checks every few minutes; each reminder is claimed
+    atomically (sent_on) before sending, so restarts and the brief blue/green
+    overlap never produce duplicates.
     """
 
     def __init__(self, database: Database, settings: Settings, email_sender: EmailSender) -> None:
@@ -40,12 +42,14 @@ class ReminderCommand:
             time.sleep(Constants.reminder_check_seconds)
 
     def tick(self) -> None:
-        today = datetime.now(UTC).date()
-        if today.day != 1:
+        now = datetime.now(UTC)
+        houses = [
+            house
+            for house in self._database.fetch_all("SELECT id, timezone FROM houses ORDER BY id")
+            if self._is_due(now, str(house["timezone"]))
+        ]
+        if not houses:
             return
-        month_start = today.isoformat()
-        previous = today - timedelta(days=1)
-        month_label = f"{previous.strftime('%B')} {previous.year}"
         # Reminders default to on: every user/house link gets a row.
         self._database.execute(
             """
@@ -54,28 +58,46 @@ class ReminderCommand:
             ON CONFLICT (user_id, house_id) DO NOTHING
             """,
         )
-        rows = self._database.fetch_all(
-            """
-            SELECT reminders.id, users.email_sealed AS email, houses.name_sealed AS house
-            FROM reminders
-            JOIN users ON users.id = reminders.user_id
-            JOIN houses ON houses.id = reminders.house_id
-            WHERE reminders.enabled AND (reminders.sent_on IS NULL OR reminders.sent_on < %s)
-            ORDER BY reminders.id
-            """,
-            (month_start,),
-        )
-        for row in self._database.decrypt_rows(rows, ("email", "house")):
-            claimed = self._database.execute(
+        for house in houses:
+            today = self._local_time(now, str(house["timezone"])).date()
+            month_start = today.isoformat()
+            previous = today - timedelta(days=1)
+            month_label = f"{previous.strftime('%B')} {previous.year}"
+            rows = self._database.fetch_all(
                 """
-                UPDATE reminders SET sent_on = %s
-                WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
-                RETURNING id
+                SELECT reminders.id, users.email_sealed AS email, houses.name_sealed AS house
+                FROM reminders
+                JOIN users ON users.id = reminders.user_id
+                JOIN houses ON houses.id = reminders.house_id
+                WHERE reminders.house_id = %s AND reminders.enabled
+                  AND (reminders.sent_on IS NULL OR reminders.sent_on < %s)
+                ORDER BY reminders.id
                 """,
-                (month_start, int(row["id"]), month_start),
+                (int(house["id"]), month_start),
             )
-            if not claimed:
-                continue
-            subject, body_lines = EmailTexts.reminder(month_label, str(row["house"]), self._settings.base_url or "")
-            if not self._email_sender.send(str(row["email"]), subject, body_lines):
-                logging.getLogger("usage").warning("[REMINDER] email failed for reminder %s", int(row["id"]))
+            for row in self._database.decrypt_rows(rows, ("email", "house")):
+                claimed = self._database.execute(
+                    """
+                    UPDATE reminders SET sent_on = %s
+                    WHERE id = %s AND (sent_on IS NULL OR sent_on < %s)
+                    RETURNING id
+                    """,
+                    (month_start, int(row["id"]), month_start),
+                )
+                if not claimed:
+                    continue
+                subject, body_lines = EmailTexts.reminder(month_label, str(row["house"]), self._settings.base_url or "")
+                if not self._email_sender.send(str(row["email"]), subject, body_lines):
+                    logging.getLogger("usage").warning("[REMINDER] email failed for reminder %s", int(row["id"]))
+
+    @classmethod
+    def _local_time(cls, now: datetime, timezone: str) -> datetime:
+        try:
+            return now.astimezone(ZoneInfo(timezone))
+        except (KeyError, ValueError):
+            return now
+
+    @classmethod
+    def _is_due(cls, now: datetime, timezone: str) -> bool:
+        local = cls._local_time(now, timezone)
+        return local.day == 1 and (local.hour, local.minute) >= (Constants.reminder_hour, Constants.reminder_minute)

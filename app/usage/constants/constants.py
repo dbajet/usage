@@ -30,7 +30,9 @@ class _Constants:
     anthropic_beta_fallbacks: str = "server-side-fallback-2026-07-01"
     meter_reader_timeout_seconds: int = 120
     meter_reader_max_tokens: int = 4096
-    reminder_check_seconds: int = 3600
+    reminder_check_seconds: int = 300
+    reminder_hour: int = 6
+    reminder_minute: int = 15
     email_test_suffixes: tuple[str, ...] = (
         "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
         ".test", ".invalid", ".example", ".localhost",

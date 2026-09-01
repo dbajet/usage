@@ -33,6 +33,8 @@ def test_class() -> None:
         "meter_reader_timeout_seconds",
         "meter_reader_max_tokens",
         "reminder_check_seconds",
+        "reminder_hour",
+        "reminder_minute",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -219,7 +221,21 @@ def test_meter_reader_max_tokens() -> None:
 def test_reminder_check_seconds() -> None:
     tested = Constants
     result = tested.reminder_check_seconds
-    expected = 3600
+    expected = 300
+    assert result == expected
+
+
+def test_reminder_hour() -> None:
+    tested = Constants
+    result = tested.reminder_hour
+    expected = 6
+    assert result == expected
+
+
+def test_reminder_minute() -> None:
+    tested = Constants
+    result = tested.reminder_minute
+    expected = 15
     assert result == expected
 
 

@@ -307,10 +307,20 @@ def test_update_house(require_admin: MagicMock) -> None:
     assert database.mock_calls == []
     reset_mocks()
 
+    # unknown time zone
+    for timezone in ("", "Mars/Olympus"):
+        with pytest.raises(AppException) as exc_info:
+            tested.update_house(user, 3, {"name": "Fremur", "timezone": timezone})
+        assert exc_info.value.status_code == 400, f"---> {timezone}"
+        assert exc_info.value.message == "Unknown time zone.", f"---> {timezone}"
+        assert require_admin.mock_calls == [call(user)]
+        assert database.mock_calls == []
+        reset_mocks()
+
     # unknown house
     database.fetch_one.side_effect = [None]
     with pytest.raises(AppException) as exc_info:
-        tested.update_house(user, 3, {"name": "Fremur"})
+        tested.update_house(user, 3, {"name": "Fremur", "timezone": "Europe/Paris"})
     assert exc_info.value.status_code == 404
     assert exc_info.value.message == "The house was not found."
     assert require_admin.mock_calls == [call(user)]
@@ -322,14 +332,17 @@ def test_update_house(require_admin: MagicMock) -> None:
     database.fetch_one.side_effect = [{"id": 3}]
     database.encrypt.side_effect = ["sealedName"]
     database.execute.side_effect = [0]
-    result = tested.update_house(user, 3, {"name": " Fremur "})
+    result = tested.update_house(user, 3, {"name": " Fremur ", "timezone": "America/Los_Angeles"})
     expected = {"message": "House updated."}
     assert result == expected
     assert require_admin.mock_calls == [call(user)]
     exp_calls = [
         call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
         call.encrypt("Fremur"),
-        call.execute("UPDATE houses SET name_sealed = %s WHERE id = %s", ("sealedName", 3)),
+        call.execute(
+            "UPDATE houses SET name_sealed = %s, timezone = %s WHERE id = %s",
+            ("sealedName", "America/Los_Angeles", 3),
+        ),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()
@@ -440,14 +453,14 @@ def test__houses() -> None:
     def reset_mocks() -> None:
         database.reset_mock()
 
-    rows = [{"id": 3, "name": "sealedName"}]
+    rows = [{"id": 3, "name": "sealedName", "timezone": "Europe/Paris"}]
     database.fetch_all.side_effect = [rows]
-    database.decrypt_rows.side_effect = [[{"id": 3, "name": "Fremur"}]]
+    database.decrypt_rows.side_effect = [[{"id": 3, "name": "Fremur", "timezone": "Europe/Paris"}]]
     result = tested._houses()
-    expected = [{"id": 3, "name": "Fremur"}]
+    expected = [{"id": 3, "name": "Fremur", "timezone": "Europe/Paris"}]
     assert result == expected
     exp_calls = [
-        call.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
+        call.fetch_all("SELECT id, name_sealed AS name, timezone FROM houses ORDER BY id"),
         call.decrypt_rows(rows, ("name",)),
     ]
     assert database.mock_calls == exp_calls

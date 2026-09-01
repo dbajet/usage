@@ -115,6 +115,10 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
           if (field.type === "checkbox") {
             return `<label class="check"><input type="checkbox" data-modal-field="${esc(field.name)}"${field.value ? " checked" : ""}> ${esc(field.label)}</label>`;
           }
+          if (field.type === "select") {
+            return `<label>${esc(field.label)}<select data-modal-field="${esc(field.name)}">${(field.options || []).map((option) =>
+              `<option value="${esc(option)}"${option === field.value ? " selected" : ""}>${esc(option)}</option>`).join("")}</select></label>`;
+          }
           const step = field.type === "number" ? ' step="any"' : "";
           return `<label>${esc(field.label)}<input type="${esc(field.type || "text")}"${step} data-modal-field="${esc(field.name)}" value="${esc(field.value ?? "")}"></label>`;
         }).join("");
@@ -481,11 +485,17 @@ function previousMonthValue(value) {
   return shifted;
 }
 
+function defaultReadingMonth() {
+  // Early in the month a reading is usually last month's; from the 25th it is this month's.
+  const current = currentMonthValue();
+  return new Date().getDate() >= 25 ? current : previousMonthValue(current);
+}
+
 function openReadingModal() {
   const meters = houseMeters();
   if (!meters.length) { showAppError(new Error("Add a meter first (Settings, Meters).")); return; }
   renderReadingForm();
-  $("#reading-month").value = currentMonthValue();
+  $("#reading-month").value = defaultReadingMonth();
   $("#reading-photo").value = "";
   $("#reading-modal").hidden = false;
 }
@@ -864,6 +874,8 @@ function renderStats(tables, series) {
 function clearTableHover(table) {
   table.querySelectorAll(".hl-col").forEach((cell) => cell.classList.remove("hl-col"));
   table.querySelectorAll(".hl-row").forEach((row) => row.classList.remove("hl-row"));
+  const holder = table.closest(".card")?.querySelector(".viz-holder");
+  if (holder && holder.clearMark) holder.clearMark();
 }
 
 function wireTableHover(rootSelector) {
@@ -876,7 +888,13 @@ function wireTableHover(rootSelector) {
         const target = row.cells[cell.cellIndex];
         if (target) target.classList.add("hl-col");
       });
-      cell.closest("tr").classList.add("hl-row");
+      const row = cell.closest("tr");
+      row.classList.add("hl-row");
+      // A month cell rings the matching point on the card's graph.
+      const holder = table.closest(".card")?.querySelector(".viz-holder");
+      if (holder && holder.markMonth && cell.tagName === "TD" && cell.cellIndex >= 1 && cell.cellIndex <= 12) {
+        holder.markMonth(`${row.cells[0].textContent.trim()}-${String(cell.cellIndex).padStart(2, "0")}`);
+      }
     });
     table.addEventListener("mouseleave", () => clearTableHover(table));
   });
@@ -1043,6 +1061,17 @@ function wireChartHover(rootSelector) {
       if (!values.length) return "";
       return `<strong>${esc(monthLabel(month))}</strong> · ${esc(values.join(" · "))}`;
     };
+    // The table of the same card can mark a month on this graph.
+    holder.markMonth = (month) => {
+      dots.innerHTML = "";
+      if (config.months.indexOf(month) < 0) { hover.setAttribute("hidden", ""); return; }
+      hover.removeAttribute("hidden");
+      addDots(month);
+    };
+    holder.clearMark = () => {
+      hover.setAttribute("hidden", "");
+      dots.innerHTML = "";
+    };
     svg.addEventListener("mousemove", (event) => {
       const rect = svg.getBoundingClientRect();
       const x = ((event.clientX - rect.left) * 720) / rect.width;
@@ -1136,23 +1165,35 @@ function houseName(houseId) {
   return house ? house.name : `#${houseId}`;
 }
 
+function timezoneOptions() {
+  try { return Intl.supportedValuesOf("timeZone"); } catch (_) { return ["Europe/Paris", "America/Los_Angeles", "UTC"]; }
+}
+
 function renderHouses() {
   $("#house-list").innerHTML = (state.admin.houses || []).map((house) => `
     <div class="mini-row">
-      <span><strong>${esc(house.name)}</strong></span>
+      <span><strong>${esc(house.name)}</strong> <span class="meta">· ${esc(house.timezone || "")}</span></span>
       <span>
-        <button class="ghost compact" data-rename-house="${house.id}" type="button">Rename</button>
+        <button class="ghost compact" data-rename-house="${house.id}" type="button">Edit</button>
         <button class="ghost compact danger" data-delete-house="${house.id}" type="button">Delete</button>
       </span>
     </div>`).join("") || '<p class="meta">No house yet.</p>';
   $$("[data-rename-house]").forEach((button) => button.addEventListener("click", async () => {
+    const house = (state.admin.houses || []).find((item) => item.id === Number(button.dataset.renameHouse));
     const answers = await openModal({
-      title: "Rename house",
-      fields: [{ name: "name", label: "House name", value: houseName(Number(button.dataset.renameHouse)) }],
+      title: `Edit house · ${house.name}`,
+      fields: [
+        { name: "name", label: "House name", value: house.name },
+        // The reminder email goes out at 06:15 in the house's own time zone.
+        { name: "timezone", label: "Time zone", type: "select", value: house.timezone, options: timezoneOptions() },
+      ],
     });
     if (answers === null || !answers.name.trim()) return;
     try {
-      await api(`/api/houses/${button.dataset.renameHouse}`, { method: "PUT", body: JSON.stringify({ name: answers.name.trim() }) });
+      await api(`/api/houses/${house.id}`, { method: "PUT", body: JSON.stringify({
+        name: answers.name.trim(),
+        timezone: answers.timezone,
+      }) });
       await loadAdmin();
     } catch (error) { showAppError(error); }
   }));

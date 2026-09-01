@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from usage.libraries.database import Database
 from usage.structures.app_exception import AppException
@@ -96,12 +97,17 @@ class AdminCommand:
         name = str(data.get("name") or "").strip()
         if not name:
             raise AppException(400, "Enter a house name.")
+        timezone = str(data.get("timezone") or "").strip()
+        try:
+            ZoneInfo(timezone)
+        except (KeyError, ValueError):
+            raise AppException(400, "Unknown time zone.") from None
         row = self._database.fetch_one("SELECT id FROM houses WHERE id = %s", (house_id,))
         if row is None:
             raise AppException(404, "The house was not found.")
         self._database.execute(
-            "UPDATE houses SET name_sealed = %s WHERE id = %s",
-            (self._database.encrypt(name), house_id),
+            "UPDATE houses SET name_sealed = %s, timezone = %s WHERE id = %s",
+            (self._database.encrypt(name), timezone, house_id),
         )
         return {"message": "House updated."}
 
@@ -135,7 +141,7 @@ class AdminCommand:
 
     def _houses(self) -> list[dict[str, Any]]:
         return self._database.decrypt_rows(
-            self._database.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
+            self._database.fetch_all("SELECT id, name_sealed AS name, timezone FROM houses ORDER BY id"),
             ("name",),
         )
 
