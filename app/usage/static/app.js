@@ -891,8 +891,8 @@ function statsTable(kind) {
   const rows = kind.years.map((year) => `
     <tr>
       <td>${year.year}</td>
-      ${year.months.map((month) => `<td>${month === null ? "" : fmtValue(month)}</td>`).join("")}
-      <td class="total">${fmtValue(year.total)}</td>
+      ${year.months.map((month) => `<td>${month === null ? "" : fmtRounded(month)}</td>`).join("")}
+      <td class="total">${fmtRounded(year.total)}</td>
     </tr>`).join("");
   return `<table><thead>${header}</thead><tbody>${rows}</tbody></table>`;
 }
