@@ -10,4 +10,5 @@ class MeterRequest(BaseModel):
     kind: str
     label: str = ""
     unit: str = ""
+    monthly: bool = False
     registers: list[RegisterInput] = []

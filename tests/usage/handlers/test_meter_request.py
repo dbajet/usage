@@ -15,7 +15,7 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = MeterRequest
     result = list(tested.model_fields.keys())
-    expected = ["house_id", "kind", "label", "unit", "registers"]
+    expected = ["house_id", "kind", "label", "unit", "monthly", "registers"]
     assert result == expected
 
 
@@ -25,6 +25,7 @@ def test___init__() -> None:
         kind="electricity",
         label="EDF",
         unit="kWh",
+        monthly=True,
         registers=[RegisterInput(label="HC", initial_value=100.0), RegisterInput(label="HP", initial_value=200.0)],
     )
     result = tested.model_dump()
@@ -33,6 +34,7 @@ def test___init__() -> None:
         "kind": "electricity",
         "label": "EDF",
         "unit": "kWh",
+        "monthly": True,
         "registers": [
             {"label": "HC", "initial_value": 100.0},
             {"label": "HP", "initial_value": 200.0},
@@ -42,5 +44,5 @@ def test___init__() -> None:
 
     tested = MeterRequest(house_id=3, kind="water")
     result = tested.model_dump()
-    expected = {"house_id": 3, "kind": "water", "label": "", "unit": "", "registers": []}
+    expected = {"house_id": 3, "kind": "water", "label": "", "unit": "", "monthly": False, "registers": []}
     assert result == expected

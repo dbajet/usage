@@ -947,6 +947,7 @@ def test__create_meter() -> None:
         kind="electricity",
         label="EDF",
         unit="kWh",
+        monthly=True,
         registers=[RegisterInput(label="HC", initial_value=100.0)],
     )
     result = tested._create_meter(body, "the-session")
@@ -962,6 +963,7 @@ def test__create_meter() -> None:
                 "kind": "electricity",
                 "label": "EDF",
                 "unit": "kWh",
+                "monthly": True,
                 "registers": [{"label": "HC", "initial_value": 100.0}],
             },
         ),
@@ -987,13 +989,13 @@ def test__update_meter() -> None:
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.update_meter.side_effect = [{"message": "Meter updated."}]
-    body = MeterUpdateRequest(label="EDF", unit="kWh", active=False)
+    body = MeterUpdateRequest(label="EDF", unit="kWh", monthly=True, active=False)
     result = tested._update_meter(9, body, "the-session")
     expected = ApiMessage(message="Meter updated.")
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
-    exp_calls = [call.update_meter(user, 9, {"label": "EDF", "unit": "kWh", "active": False})]
+    exp_calls = [call.update_meter(user, 9, {"label": "EDF", "unit": "kWh", "monthly": True, "active": False})]
     assert admin_command.mock_calls == []
     assert meter_command.mock_calls == exp_calls
     assert reading_command.mock_calls == []

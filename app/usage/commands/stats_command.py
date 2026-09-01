@@ -14,6 +14,8 @@ class StatsCommand:
     counter readings, attributed to the month of the later reading. When
     months were skipped, the difference is spread evenly over the unmeasured
     months. The register's initial value is the baseline of its first reading.
+    Monthly meters need no special case: they store a running total, so the
+    differences give back exactly the consumptions that were entered.
     """
 
     def __init__(self, database: Database) -> None:

@@ -40,12 +40,12 @@ def test_list_meters(require_house: MagicMock) -> None:
 
     user = helper_user()
     register_rows = [{"id": 21, "meter_id": 9, "label": "sealedHC", "initial_value": 100, "position": 0, "active": True}]
-    meter_rows = [{"id": 9, "house_id": 3, "kind": "electricity", "label": "sealedEDF", "unit": "kWh", "position": 0, "active": True}]
+    meter_rows = [{"id": 9, "house_id": 3, "kind": "electricity", "label": "sealedEDF", "unit": "kWh", "monthly": False, "position": 0, "active": True}]
     require_house.side_effect = [None]
     database.fetch_all.side_effect = [register_rows, meter_rows]
     database.decrypt_rows.side_effect = [
         [{"id": 21, "meter_id": 9, "label": "HC", "initial_value": 100, "position": 0, "active": True}],
-        [{"id": 9, "house_id": 3, "kind": "electricity", "label": "EDF", "unit": "kWh", "position": 0, "active": True}],
+        [{"id": 9, "house_id": 3, "kind": "electricity", "label": "EDF", "unit": "kWh", "monthly": False, "position": 0, "active": True}],
     ]
     result = tested.list_meters(user, 3)
     expected = {
@@ -56,6 +56,7 @@ def test_list_meters(require_house: MagicMock) -> None:
                 "kind": "electricity",
                 "label": "EDF",
                 "unit": "kWh",
+                "monthly": False,
                 "position": 0,
                 "active": True,
                 "registers": [{"id": 21, "label": "HC", "initial_value": 100.0, "position": 0, "active": True}],
@@ -78,7 +79,7 @@ def test_list_meters(require_house: MagicMock) -> None:
         call.fetch_all(
             """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
-                       meters.unit, meters.position, meters.active,
+                       meters.unit, meters.monthly, meters.position, meters.active,
                        COALESCE(meter_orders.color, '') AS color,
                        COALESCE(meter_orders.axis, '') AS axis
                 FROM meters
@@ -237,11 +238,11 @@ def test_create_meter(require_house: MagicMock) -> None:
     user = helper_user()
     exp_meter_insert = call.execute(
         """
-                INSERT INTO meters(house_id, kind, label_sealed, unit)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO meters(house_id, kind, label_sealed, unit, monthly)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-        (3, "electricity", "sealedLabel", "kWh"),
+        (3, "electricity", "sealedLabel", "kWh", True),
     )
     exp_register_insert_one = call.execute(
         """
@@ -288,6 +289,7 @@ def test_create_meter(require_house: MagicMock) -> None:
             "kind": "electricity",
             "label": " EDF ",
             "unit": " kWh ",
+            "monthly": True,
             "registers": [
                 {"label": " HC ", "initial_value": 100.0},
                 {"label": " HP ", "initial_value": 200.0},
@@ -325,15 +327,15 @@ def test_update_meter(require_meter: MagicMock) -> None:
     require_meter.side_effect = [{"id": 9, "house_id": 3}]
     database.encrypt.side_effect = ["sealedLabel"]
     database.execute.side_effect = [0]
-    result = tested.update_meter(user, 9, {"label": " EDF ", "unit": " kWh ", "active": True})
+    result = tested.update_meter(user, 9, {"label": " EDF ", "unit": " kWh ", "monthly": True, "active": True})
     expected = {"message": "Meter updated."}
     assert result == expected
     assert require_meter.mock_calls == [call(user, 9)]
     exp_calls = [
         call.encrypt("EDF"),
         call.execute(
-            "UPDATE meters SET label_sealed = %s, unit = %s, active = %s WHERE id = %s",
-            ("sealedLabel", "kWh", True, 9),
+            "UPDATE meters SET label_sealed = %s, unit = %s, monthly = %s, active = %s WHERE id = %s",
+            ("sealedLabel", "kWh", True, True, 9),
         ),
     ]
     assert database.mock_calls == exp_calls

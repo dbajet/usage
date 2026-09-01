@@ -46,13 +46,13 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
 
     user = helper_user()
     house_rows = [{"id": 1, "name": "sealedFremur"}, {"id": 2, "name": "sealedDougmar"}]
-    meter_rows = [{"id": 9, "house_id": 1, "kind": "electricity", "label": "sealedEDF", "unit": "kWh"}]
+    meter_rows = [{"id": 9, "house_id": 1, "kind": "electricity", "label": "sealedEDF", "unit": "kWh", "monthly": False}]
     register_rows = [{"id": 21, "meter_id": 9, "label": "sealedHC", "position": 0}]
     visible_house_ids.side_effect = [[1]]
     database.fetch_all.side_effect = [house_rows, meter_rows, register_rows]
     database.decrypt_rows.side_effect = [
         [{"id": 1, "name": "Fremur"}, {"id": 2, "name": "Dougmar"}],
-        [{"id": 9, "house_id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh"}],
+        [{"id": 9, "house_id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh", "monthly": False}],
         [{"id": 21, "meter_id": 9, "label": "HC", "position": 0}],
     ]
     result = tested.dashboard(user)
@@ -65,6 +65,7 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
                 "kind": "electricity",
                 "label": "EDF",
                 "unit": "kWh",
+                "monthly": False,
                 "registers": [{"id": 21, "label": "HC"}],
             },
         ],
@@ -76,7 +77,7 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
         call.decrypt_rows(house_rows, ("name",)),
         call.fetch_all(
             """
-                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit
+                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit, meters.monthly
                     FROM meters
                     LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                     WHERE meters.active
@@ -238,10 +239,16 @@ def test_list_readings(require_house: MagicMock) -> None:
     reset_mocks()
 
 
+@patch.object(ReadingCommand, "_accumulated_values")
 @patch.object(ReadingCommand, "_register_values")
 @patch.object(ReadingCommand, "_valid_date")
 @patch.object(ReadingCommand, "_require_meter")
-def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, register_values: MagicMock) -> None:
+def test_create_reading(
+    require_meter: MagicMock,
+    valid_date: MagicMock,
+    register_values: MagicMock,
+    accumulated_values: MagicMock,
+) -> None:
     tested = helper_instance()
     database = tested._database
     meter_reader = tested._meter_reader
@@ -250,6 +257,7 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
         require_meter.reset_mock()
         valid_date.reset_mock()
         register_values.reset_mock()
+        accumulated_values.reset_mock()
         database.reset_mock()
         meter_reader.reset_mock()
 
@@ -263,7 +271,7 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
     exp_duplicate_call = call.fetch_one("SELECT id FROM readings WHERE meter_id = %s AND read_on = %s", (9, "2026-01-15"))
 
     # unknown source
-    require_meter.side_effect = [{"id": 9, "house_id": 1}]
+    require_meter.side_effect = [{"id": 9, "house_id": 1, "monthly": False}]
     valid_date.side_effect = ["2026-01-15"]
     with pytest.raises(AppException) as exc_info:
         tested.create_reading(user, data | {"source": "guess"})
@@ -272,12 +280,13 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
     assert require_meter.mock_calls == [call(user, 9)]
     assert valid_date.mock_calls == [call("2026-01-15")]
     assert register_values.mock_calls == []
+    assert accumulated_values.mock_calls == []
     assert database.mock_calls == []
     assert meter_reader.mock_calls == []
     reset_mocks()
 
     # duplicate date
-    require_meter.side_effect = [{"id": 9, "house_id": 1}]
+    require_meter.side_effect = [{"id": 9, "house_id": 1, "monthly": False}]
     valid_date.side_effect = ["2026-01-15"]
     register_values.side_effect = [[(21, 17273.0)]]
     database.fetch_one.side_effect = [{"id": 30}]
@@ -288,12 +297,13 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
     assert require_meter.mock_calls == [call(user, 9)]
     assert valid_date.mock_calls == [call("2026-01-15")]
     assert register_values.mock_calls == [call(9, [{"register_id": 21, "value": 17273.0}])]
+    assert accumulated_values.mock_calls == []
     assert database.mock_calls == [exp_duplicate_call]
     assert meter_reader.mock_calls == []
     reset_mocks()
 
-    # happy path
-    require_meter.side_effect = [{"id": 9, "house_id": 1}]
+    # happy path on a counter meter: the value is stored as entered
+    require_meter.side_effect = [{"id": 9, "house_id": 1, "monthly": False}]
     valid_date.side_effect = ["2026-01-15"]
     register_values.side_effect = [[(21, 17273.0)]]
     database.fetch_one.side_effect = [None]
@@ -304,6 +314,7 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
     assert require_meter.mock_calls == [call(user, 9)]
     assert valid_date.mock_calls == [call("2026-01-15")]
     assert register_values.mock_calls == [call(9, [{"register_id": 21, "value": 17273.0}])]
+    assert accumulated_values.mock_calls == []
     exp_calls = [
         exp_duplicate_call,
         call.transaction(),
@@ -315,6 +326,38 @@ def test_create_reading(require_meter: MagicMock, valid_date: MagicMock, registe
         call.execute(
             "INSERT INTO reading_values(reading_id, register_id, value) VALUES (%s, %s, %s)",
             (31, 21, 17273.0),
+        ),
+        call.transaction().__exit__(None, None, None),
+    ]
+    assert database.mock_calls == exp_calls
+    assert meter_reader.mock_calls == []
+    reset_mocks()
+
+    # happy path on a monthly meter: the consumption is added to the previous total
+    require_meter.side_effect = [{"id": 9, "house_id": 1, "monthly": True}]
+    valid_date.side_effect = ["2026-01-15"]
+    register_values.side_effect = [[(21, 45.0)]]
+    accumulated_values.side_effect = [[(21, 17318.0)]]
+    database.fetch_one.side_effect = [None]
+    database.execute.side_effect = [31, 41]
+    result = tested.create_reading(user, data | {"values": [{"register_id": 21, "value": 45.0}]})
+    expected = {"id": 31}
+    assert result == expected
+    assert require_meter.mock_calls == [call(user, 9)]
+    assert valid_date.mock_calls == [call("2026-01-15")]
+    assert register_values.mock_calls == [call(9, [{"register_id": 21, "value": 45.0}])]
+    assert accumulated_values.mock_calls == [call("2026-01-15", [(21, 45.0)])]
+    exp_calls = [
+        exp_duplicate_call,
+        call.transaction(),
+        call.transaction().__enter__(),
+        call.execute(
+            "INSERT INTO readings(meter_id, read_on, source, created_by) VALUES (%s, %s, %s, %s) RETURNING id",
+            (9, "2026-01-15", "photo", 7),
+        ),
+        call.execute(
+            "INSERT INTO reading_values(reading_id, register_id, value) VALUES (%s, %s, %s)",
+            (31, 21, 17318.0),
         ),
         call.transaction().__exit__(None, None, None),
     ]
@@ -650,7 +693,7 @@ def test__require_meter(visible_house_ids: MagicMock) -> None:
         database.reset_mock()
 
     user = helper_user()
-    exp_fetch = call.fetch_one("SELECT id, house_id FROM meters WHERE id = %s", (9,))
+    exp_fetch = call.fetch_one("SELECT id, house_id, monthly FROM meters WHERE id = %s", (9,))
 
     # unknown meter
     database.fetch_one.side_effect = [None]
@@ -663,7 +706,7 @@ def test__require_meter(visible_house_ids: MagicMock) -> None:
     reset_mocks()
 
     # no access
-    database.fetch_one.side_effect = [{"id": 9, "house_id": 1}]
+    database.fetch_one.side_effect = [{"id": 9, "house_id": 1, "monthly": False}]
     visible_house_ids.side_effect = [[2]]
     with pytest.raises(AppException) as exc_info:
         tested._require_meter(user, 9)
@@ -674,10 +717,10 @@ def test__require_meter(visible_house_ids: MagicMock) -> None:
     reset_mocks()
 
     # happy path
-    database.fetch_one.side_effect = [{"id": 9, "house_id": 1}]
+    database.fetch_one.side_effect = [{"id": 9, "house_id": 1, "monthly": False}]
     visible_house_ids.side_effect = [[1]]
     result = tested._require_meter(user, 9)
-    expected = {"id": 9, "house_id": 1}
+    expected = {"id": 9, "house_id": 1, "monthly": False}
     assert result == expected
     assert visible_house_ids.mock_calls == [call(user)]
     assert database.mock_calls == [exp_fetch]
@@ -795,6 +838,49 @@ def test__register_values(active_registers: MagicMock) -> None:
     assert result == expected
     assert active_registers.mock_calls == [call(9)]
     assert database.mock_calls == []
+    reset_mocks()
+
+
+def test__accumulated_values() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    exp_previous_call = call.fetch_one(
+        """
+                SELECT reading_values.value FROM reading_values
+                JOIN readings ON readings.id = reading_values.reading_id
+                WHERE reading_values.register_id = %s AND readings.read_on < %s
+                ORDER BY readings.read_on DESC LIMIT 1
+                """,
+        (21, "2026-09-15"),
+    )
+    exp_initial_call = call.fetch_one("SELECT initial_value AS value FROM registers WHERE id = %s", (21,))
+
+    # a previous reading exists: the consumption is added to it
+    database.fetch_one.side_effect = [{"value": 42269.0}]
+    result = tested._accumulated_values("2026-09-15", [(21, 45.0)])
+    expected = [(21, 42314.0)]
+    assert result == expected
+    assert database.mock_calls == [exp_previous_call]
+    reset_mocks()
+
+    # no previous reading: the register's initial value is the baseline
+    database.fetch_one.side_effect = [None, {"value": 42000.0}]
+    result = tested._accumulated_values("2026-09-15", [(21, 45.0)])
+    expected = [(21, 42045.0)]
+    assert result == expected
+    assert database.mock_calls == [exp_previous_call, exp_initial_call]
+    reset_mocks()
+
+    # no register either: the consumption stands alone
+    database.fetch_one.side_effect = [None, None]
+    result = tested._accumulated_values("2026-09-15", [(21, 45.0)])
+    expected = [(21, 45.0)]
+    assert result == expected
+    assert database.mock_calls == [exp_previous_call, exp_initial_call]
     reset_mocks()
 
 

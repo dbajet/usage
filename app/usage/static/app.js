@@ -392,7 +392,7 @@ function renderValueInputs() {
   $("#reading-values").innerHTML = (meter ? meter.registers : []).map((register) => `
     <div class="value-row">
       <input type="number" step="any" data-register-value="${register.id}"
-        placeholder="${esc(register.label || "Counter")}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>
+        placeholder="${esc(register.label || (meter.monthly ? "Consumption of the month" : "Counter"))}${meter.unit ? ` (${esc(meter.unit)})` : ""}" required>
       <button class="ghost icon-only mobile-only" data-photo-camera="${register.id}" type="button"
         title="Take a photo of ${esc(register.label || "the counter")}">${ICON_CAMERA}</button>
       <button class="ghost icon-only" data-photo-file="${register.id}" type="button"
@@ -1223,10 +1223,10 @@ function renderMeters() {
     <div class="mini-row wrap-row${meter.active ? "" : " inactive"}">
       <span>
         <strong>${esc(meter.label || meter.kind)}</strong> · ${esc(meter.kind)}
-        ${meter.unit ? ` · ${esc(meter.unit)}` : ""}${meter.active ? "" : ' <span class="badge">inactive</span>'}
+        ${meter.unit ? ` · ${esc(meter.unit)}` : ""}${meter.monthly ? ' <span class="badge">monthly value</span>' : ""}${meter.active ? "" : ' <span class="badge">inactive</span>'}
         <br>
         <span class="meta">${meter.registers.map((register) =>
-          `${esc(register.label || "register")} (start ${register.initial_value})${register.active ? "" : " — inactive"}`).join(" · ")}</span>
+          `${esc(register.label || "register")}${meter.monthly ? "" : ` (start ${register.initial_value})`}${register.active ? "" : " — inactive"}`).join(" · ")}</span>
       </span>
       <span class="icon-actions">
         <button class="ghost compact icon-only" data-color-meter="${meter.id}" type="button" title="Choose the colour">
@@ -1303,7 +1303,7 @@ function registerRowsMarkup(meter) {
   // stacked modal, and the last row adds one.
   return meter.registers.map((register) => `
     <div class="mini-row${register.active ? "" : " inactive"}">
-      <span>${esc(register.label || "register")} (start ${register.initial_value})${register.active ? "" : " — inactive"}</span>
+      <span>${esc(register.label || "register")}${meter.monthly ? "" : ` (start ${register.initial_value})`}${register.active ? "" : " — inactive"}</span>
       <span class="icon-actions">
         <button class="ghost compact icon-only" data-modal-edit-register="${register.id}" type="button" title="Edit the register">${ICON_EDIT}</button>
         <button class="ghost compact icon-only danger" data-modal-delete-register="${register.id}" type="button" title="Delete the register">${ICON_DELETE}</button>
@@ -1386,6 +1386,7 @@ async function editMeter(meterId) {
     fields: [
       { name: "label", label: "Label", value: meter.label },
       { name: "unit", label: "Unit", value: meter.unit },
+      { name: "monthly", label: "Monthly value (each entry is the consumption of the month, not a counter)", type: "checkbox", value: meter.monthly },
       { name: "active", label: "Active", type: "checkbox", value: meter.active },
       { type: "heading", label: "Registers" },
       { type: "html", html: `<div id="modal-registers">${registerRowsMarkup(meter)}</div>` },
@@ -1398,6 +1399,7 @@ async function editMeter(meterId) {
     await api(`/api/meters/${meterId}`, { method: "PUT", body: JSON.stringify({
       label: answers.label,
       unit: answers.unit,
+      monthly: answers.monthly,
       active: answers.active,
     }) });
     await loadMeters();
@@ -1439,10 +1441,13 @@ async function addMeter(event) {
       kind: $("#meter-kind").value,
       label: $("#meter-label").value.trim(),
       unit: $("#meter-unit").value.trim(),
+      monthly: $("#meter-monthly").checked,
       registers,
     }) });
     $("#meter-label").value = "";
     $("#meter-unit").value = "";
+    $("#meter-monthly").checked = false;
+    $("#meter-register-row").hidden = false;
     $("#register-one-label").value = "";
     $("#register-one-initial").value = "";
     await loadMeters();
@@ -1471,6 +1476,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#house-form").addEventListener("submit", addHouse);
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);
+  // A monthly meter has no counter: the start-value row would only mislead.
+  $("#meter-monthly").addEventListener("change", () => {
+    $("#meter-register-row").hidden = $("#meter-monthly").checked;
+  });
   $("#house-btn").addEventListener("click", chooseHouse);
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));

@@ -14,17 +14,17 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = MeterUpdateRequest
     result = list(tested.model_fields.keys())
-    expected = ['label', 'unit', 'active']
+    expected = ['label', 'unit', 'monthly', 'active']
     assert result == expected
 
 
 def test___init__() -> None:
-    tested = MeterUpdateRequest(label="EDF", unit="kWh", active=False)
+    tested = MeterUpdateRequest(label="EDF", unit="kWh", monthly=True, active=False)
     result = tested.model_dump()
-    expected = {"label": "EDF", "unit": "kWh", "active": False}
+    expected = {"label": "EDF", "unit": "kWh", "monthly": True, "active": False}
     assert result == expected
 
     tested = MeterUpdateRequest()
     result = tested.model_dump()
-    expected = {"label": "", "unit": "", "active": True}
+    expected = {"label": "", "unit": "", "monthly": False, "active": True}
     assert result == expected

@@ -157,6 +157,7 @@ class Database:
                 kind TEXT NOT NULL,
                 label_sealed TEXT NOT NULL,
                 unit TEXT NOT NULL DEFAULT '',
+                monthly BOOLEAN NOT NULL DEFAULT false,
                 position INTEGER NOT NULL DEFAULT 0,
                 active BOOLEAN NOT NULL DEFAULT true,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -263,10 +264,13 @@ class Database:
             (4, "per user meter order"),
             (5, "per user meter colors"),
             (6, "merged graph axis per user"),
+            (7, "monthly value meters"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 7:
+                    connection.execute("ALTER TABLE meters ADD COLUMN IF NOT EXISTS monthly BOOLEAN NOT NULL DEFAULT false")
                 if version == 6:
                     connection.execute("ALTER TABLE meter_orders ADD COLUMN IF NOT EXISTS axis TEXT NOT NULL DEFAULT ''")
                 if version == 5:

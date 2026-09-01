@@ -32,7 +32,7 @@ class ReadingCommand:
             for meter in self._database.decrypt_rows(
                 self._database.fetch_all(
                     """
-                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit
+                    SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label, meters.unit, meters.monthly
                     FROM meters
                     LEFT JOIN meter_orders ON meter_orders.meter_id = meters.id AND meter_orders.user_id = %s
                     WHERE meters.active
@@ -127,12 +127,14 @@ class ReadingCommand:
 
     def create_reading(self, user: SessionUser, data: dict[str, Any]) -> dict[str, Any]:
         meter_id = int(data.get("meter_id") or 0)
-        self._require_meter(user, meter_id)
+        meter = self._require_meter(user, meter_id)
         read_on = self._valid_date(str(data.get("read_on") or ""))
         source = str(data.get("source") or Constants.source_manual)
         if source not in (Constants.source_manual, Constants.source_photo):
             raise AppException(400, "Unknown reading source.")
         values = self._register_values(meter_id, list(data.get("values") or []))
+        if bool(meter["monthly"]):
+            values = self._accumulated_values(read_on, values)
         existing = self._database.fetch_one(
             "SELECT id FROM readings WHERE meter_id = %s AND read_on = %s",
             (meter_id, read_on),
@@ -243,7 +245,7 @@ class ReadingCommand:
             raise AppException(403, "You do not have access to this house.")
 
     def _require_meter(self, user: SessionUser, meter_id: int) -> dict[str, Any]:
-        result = self._database.fetch_one("SELECT id, house_id FROM meters WHERE id = %s", (meter_id,))
+        result = self._database.fetch_one("SELECT id, house_id, monthly FROM meters WHERE id = %s", (meter_id,))
         if result is None:
             raise AppException(404, "The meter was not found.")
         if int(result["house_id"]) not in self._visible_house_ids(user):
@@ -273,6 +275,27 @@ class ReadingCommand:
             ),
             ("label",),
         )
+
+    def _accumulated_values(self, read_on: str, values: list[tuple[int, float]]) -> list[tuple[int, float]]:
+        """A monthly meter keeps a running total: the entered consumption is
+        added to the previous reading (or the register's initial value), so the
+        stored values behave like a counter everywhere else."""
+        result: list[tuple[int, float]] = []
+        for register_id, value in values:
+            row = self._database.fetch_one(
+                """
+                SELECT reading_values.value FROM reading_values
+                JOIN readings ON readings.id = reading_values.reading_id
+                WHERE reading_values.register_id = %s AND readings.read_on < %s
+                ORDER BY readings.read_on DESC LIMIT 1
+                """,
+                (register_id, read_on),
+            )
+            if row is None:
+                row = self._database.fetch_one("SELECT initial_value AS value FROM registers WHERE id = %s", (register_id,))
+            previous = float(row["value"]) if row is not None else 0.0
+            result.append((register_id, previous + value))
+        return result
 
     def _register_values(self, meter_id: int, values: list[dict[str, Any]]) -> list[tuple[int, float]]:
         registers = self._active_registers(meter_id)

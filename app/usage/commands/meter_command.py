@@ -33,7 +33,7 @@ class MeterCommand:
             self._database.fetch_all(
                 """
                 SELECT meters.id, meters.house_id, meters.kind, meters.label_sealed AS label,
-                       meters.unit, meters.position, meters.active,
+                       meters.unit, meters.monthly, meters.position, meters.active,
                        COALESCE(meter_orders.color, '') AS color,
                        COALESCE(meter_orders.axis, '') AS axis
                 FROM meters
@@ -71,8 +71,8 @@ class MeterCommand:
         with self._database.transaction():
             meter_id = self._database.execute(
                 """
-                INSERT INTO meters(house_id, kind, label_sealed, unit)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO meters(house_id, kind, label_sealed, unit, monthly)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -80,6 +80,7 @@ class MeterCommand:
                     kind,
                     self._database.encrypt(str(data.get("label") or "").strip()),
                     str(data.get("unit") or "").strip(),
+                    bool(data.get("monthly")),
                 ),
             )
             for position, register in enumerate(registers):
@@ -100,10 +101,11 @@ class MeterCommand:
     def update_meter(self, user: SessionUser, meter_id: int, data: dict[str, Any]) -> dict[str, str]:
         self._require_meter(user, meter_id)
         self._database.execute(
-            "UPDATE meters SET label_sealed = %s, unit = %s, active = %s WHERE id = %s",
+            "UPDATE meters SET label_sealed = %s, unit = %s, monthly = %s, active = %s WHERE id = %s",
             (
                 self._database.encrypt(str(data.get("label") or "").strip()),
                 str(data.get("unit") or "").strip(),
+                bool(data.get("monthly")),
                 bool(data.get("active")),
                 meter_id,
             ),

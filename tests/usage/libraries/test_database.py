@@ -581,6 +581,7 @@ def test__create_schema() -> None:
                 kind TEXT NOT NULL,
                 label_sealed TEXT NOT NULL,
                 unit TEXT NOT NULL DEFAULT '',
+                monthly BOOLEAN NOT NULL DEFAULT false,
                 position INTEGER NOT NULL DEFAULT 0,
                 active BOOLEAN NOT NULL DEFAULT true,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -706,7 +707,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None, None, None, None, None, None]
+    connection.execute.return_value.fetchone.side_effect = [None, None, None, None, None, None, None]
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -752,12 +753,19 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (6, "merged graph axis per user"),
         ),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (7,)),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE meters ADD COLUMN IF NOT EXISTS monthly BOOLEAN NOT NULL DEFAULT false"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (7, "monthly value meters"),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 6
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 7
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -772,6 +780,8 @@ def test__migrate() -> None:
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (5,)),
         call.execute().fetchone(),
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (6,)),
+        call.execute().fetchone(),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (7,)),
         call.execute().fetchone(),
     ]
     assert connection.mock_calls == exp_calls

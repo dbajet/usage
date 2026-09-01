@@ -152,7 +152,9 @@
                 <input id="meter-label" placeholder="Label (e.g. EDF)">
                 <input id="meter-unit" placeholder="Unit (kWh, m3, km)">
               </div>
-              <div class="inline-form">
+              <label class="switch"><input id="meter-monthly" type="checkbox"><span class="slider"></span>
+                Monthly value: there is no counter, each entry is the consumption of the month</label>
+              <div class="inline-form" id="meter-register-row">
                 <input id="register-one-label" placeholder="Register label (optional)">
                 <input id="register-one-initial" type="number" step="any" placeholder="Start value of the counter">
               </div>
