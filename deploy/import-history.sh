@@ -1,7 +1,7 @@
 #!/bin/bash
 # Imports the historical spreadsheet exports into the running app container.
-# The CSV files are untracked (personal data stays out of git) but rsync
-# carries them to /opt/usage, so this runs the same locally and in production.
+# The CSV files are untracked (personal data stays out of git); copy them to
+# /opt/usage by hand (scp) and this runs the same locally and in production.
 # The import refuses to run twice: a house that already exists is left alone.
 set -euo pipefail
 cd "$(dirname "$0")/.."

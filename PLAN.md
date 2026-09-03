@@ -142,8 +142,9 @@ one-way imports, NamedTuples over dicts, mypy strict, `result` naming, sync hand
   backup service only — the app containers never receive backup-bucket keys. Volumes: `usage_db`,
   `usage_backups` (no images volume — photos are never stored). Ports 8063/8064 chosen to avoid family_net's 8053/8054
   on the same server — verify they are free during first deploy.
-- `deploy/deploy-from-local.sh`: rsync (excluding `.git`, `.env`, `__pycache__`) to
-  `ubuntu@45.85.249.159:/opt/usage/`, then run server-side script with `APP_VERSION` from git date.
+- `deploy/deploy-from-local.sh`: checks the local branch is pushed, then runs the server-side
+  script over ssh on `ubuntu@45.85.249.159`; the server pulls the branch into its `/opt/usage`
+  clone, so production always runs the last pushed commit.
 - `deploy/deploy-prod.sh`: family_net's colour switch verbatim, adapted names/ports — build idle
   colour, start with `--no-deps`, poll `/healthz`, `sed` the nginx upstream in
   `/etc/nginx/sites-available/usage.edgy.world`, reload, stop old colour, prune images.

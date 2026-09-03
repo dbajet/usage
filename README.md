@@ -64,9 +64,9 @@ averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band.
 ## Historical data
 
 The spreadsheet exports (`fremur_edf_gdf_eau.csv`, `dougmar_edf_gdf_eau.csv`)
-are untracked — personal data stays out of git — but the deploy rsync carries
-them to `/opt/usage`. Import them once into the running stack (locally or on
-the server) with:
+are untracked — personal data stays out of git — so copy them to `/opt/usage`
+by hand (`scp`) before importing on the server. Import them once into the
+running stack (locally or on the server) with:
 
 ```bash
 bash deploy/import-history.sh
@@ -86,10 +86,13 @@ Production: `ubuntu@45.85.249.159`, `/opt/usage`, blue on 127.0.0.1:8063, green 
 The production `.env` lives only on the server.
 
 ```bash
-bash deploy/deploy-from-local.sh
+git push                            # production deploys the last pushed commit
+bash deploy/deploy-from-local.sh    # runs the server deploy over ssh
 ```
 
-The deploy builds the idle colour, waits for `/healthz`, points nginx at it, then
+The server-side `deploy/deploy-prod.sh` runs from the git clone in `/opt/usage`
+and pulls the current branch first (nothing is copied from your machine). The
+deploy builds the idle colour, waits for `/healthz`, points nginx at it, then
 stops the old colour. Migrations run at startup and must stay additive (both
 colours briefly share the database).
 
