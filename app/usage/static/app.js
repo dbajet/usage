@@ -72,6 +72,9 @@ async function api(path, options = {}) {
       try { message = (await response.json()).detail || message; } catch (_) {}
       throw new Error(message);
     }
+    // Anything that writes can change the houses, meters or sensors the
+    // dashboard carries: its cache goes, so the next reader refetches.
+    if ((options.method || "GET").toUpperCase() !== "GET") invalidateDashboard();
     if (response.status === 204) return {};
     return await response.json();
   } finally { endButtonBusy(busyButton); }
@@ -200,12 +203,14 @@ function showView(name) {
 }
 
 async function chooseHouseView() {
-  // After the house changes, a view or tab the new house cannot show falls back.
+  // After the house changes, a view or tab the new house cannot show falls
+  // back. Returns the view to open, so the caller loads it exactly once.
   await ensureDashboard();
-  if (currentView() === "sensors" && !houseHasSensors()) { showView("stats"); return; }
+  if (currentView() === "sensors" && !houseHasSensors()) return "stats";
   if (currentView() === "settings" && storedItem("usage-settings-tab", "meters") === "sensors" && !houseHasSensors()) {
     showSettingsTab("meters");
   }
+  return currentView();
 }
 
 async function load() {
@@ -348,8 +353,33 @@ async function loadPasskeys() {
   } catch (error) { showAppError(error); }
 }
 
+// Opening a view wakes several loaders at once and each wants the dashboard:
+// they share one request, and a result a few seconds old is reused rather
+// than fetched again. Any write invalidates it, so nothing goes stale.
+const DASHBOARD_FRESH_MS = 5000;
+let dashboardCache = { at: 0, request: null };
+
+function invalidateDashboard() {
+  dashboardCache = { at: 0, request: null };
+}
+
+function fetchDashboard() {
+  if (state.dashboard && Date.now() - dashboardCache.at <= DASHBOARD_FRESH_MS) {
+    return Promise.resolve(state.dashboard);
+  }
+  if (!dashboardCache.request) {
+    const request = api("/api/dashboard");
+    dashboardCache.request = request;
+    request.then(
+      () => { dashboardCache.at = Date.now(); dashboardCache.request = null; },
+      () => { dashboardCache.request = null; },
+    );
+  }
+  return dashboardCache.request;
+}
+
 async function ensureDashboard() {
-  state.dashboard = await api("/api/dashboard");
+  state.dashboard = await fetchDashboard();
   const houses = state.dashboard.houses || [];
   if (!state.houseId) state.houseId = Number(storedItem("usage-house", "0"));
   if (!houses.some((house) => house.id === state.houseId)) {
@@ -389,8 +419,7 @@ async function chooseHouse() {
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
   state.hiddenSensors = new Set();
-  await chooseHouseView();
-  showView(currentView());
+  showView(await chooseHouseView());
 }
 
 async function loadEntries() {
@@ -2101,8 +2130,9 @@ async function editMeter(meterId) {
 async function addHouse(event) {
   event.preventDefault();
   try {
-    await api("/api/houses", { method: "POST", body: JSON.stringify({ name: $("#house-name").value.trim() }) });
-    $("#house-name").value = "";
+    // The header's house label owns #house-name: this is the add-house field.
+    await api("/api/houses", { method: "POST", body: JSON.stringify({ name: $("#new-house-name").value.trim() }) });
+    $("#new-house-name").value = "";
     await loadAdmin();
   } catch (error) { showAppError(error); }
 }
