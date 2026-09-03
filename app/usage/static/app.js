@@ -1176,6 +1176,7 @@ function wireChartHover(rootSelector) {
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
 const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
+const ICON_REFRESH = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/></svg>';
 const ICON_CHEVRON_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
 const LONG_PRESS_MS = 500;
 
@@ -1388,7 +1389,9 @@ function renderSensors() {
       <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
       <span class="range-tabs">
         <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
-        <button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period"${state.sensorOffset ? "" : " disabled"}>${ICON_CHEVRON_RIGHT}</button>
+        ${state.sensorOffset
+          ? `<button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period">${ICON_CHEVRON_RIGHT}</button>`
+          : `<button id="sensor-refresh" class="ghost compact icon-button" type="button" title="Refresh the readings" aria-label="Refresh the readings">${ICON_REFRESH}</button>`}
       </span>
     </div>
     <div class="card graph-card">
@@ -1401,11 +1404,25 @@ function renderSensors() {
     </div>`;
   wireSensorChartHover("#sensor-content");
   $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(true); });
-  $("#sensor-later").addEventListener("click", () => {
-    if (!state.sensorOffset) return;
-    state.sensorOffset -= 1;
-    loadSensors(true);
-  });
+  // On the current period there is nothing later to show: the arrow makes way
+  // for a refresh, which reloads the readings and the tiles without touching
+  // the range, the overlay, the unit or the sensors on show. Only the window's
+  // own end moves, since it always finishes now.
+  const later = $("#sensor-later");
+  if (later) {
+    later.addEventListener("click", () => {
+      if (!state.sensorOffset) return;
+      state.sensorOffset -= 1;
+      loadSensors(true);
+    });
+  }
+  const refresh = $("#sensor-refresh");
+  if (refresh) {
+    refresh.addEventListener("click", () => {
+      showSensorsLoading();
+      loadSensors();
+    });
+  }
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
     const solo = () => {
