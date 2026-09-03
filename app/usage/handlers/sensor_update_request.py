@@ -6,4 +6,5 @@ from pydantic import BaseModel
 class SensorUpdateRequest(BaseModel):
     name: str = ""
     unit: str = ""
+    color: str = ""
     active: bool = True

@@ -173,15 +173,15 @@ def test_list_sensors(require_house: MagicMock) -> None:
     user = helper_user()
     latest = [{"sensor_id": 9, "measured_at": datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC), "value": Decimal("84.90")}]
     sensor_rows = [
-        {"id": 9, "entity_id": "sealedGarage", "name": "sealedGarageName", "unit": "°F", "position": 0, "active": True},
-        {"id": 10, "entity_id": "sealedFreezer", "name": "sealedFreezerName", "unit": "°F", "position": 1, "active": False},
+        {"id": 9, "entity_id": "sealedGarage", "name": "sealedGarageName", "unit": "°F", "color": "#2a78d6", "position": 0, "active": True},
+        {"id": 10, "entity_id": "sealedFreezer", "name": "sealedFreezerName", "unit": "°F", "color": "", "position": 1, "active": False},
     ]
     require_house.side_effect = [None]
     database.fetch_all.side_effect = [latest, sensor_rows]
     database.decrypt_rows.side_effect = [
         [
-            {"id": 9, "entity_id": "sensor.garage_temperature", "name": "Garage", "unit": "°F", "position": 0, "active": True},
-            {"id": 10, "entity_id": "sensor.freezer_temperature", "name": "Freezer", "unit": "°F", "position": 1, "active": False},
+            {"id": 9, "entity_id": "sensor.garage_temperature", "name": "Garage", "unit": "°F", "color": "#2a78d6", "position": 0, "active": True},
+            {"id": 10, "entity_id": "sensor.freezer_temperature", "name": "Freezer", "unit": "°F", "color": "", "position": 1, "active": False},
         ],
     ]
     result = tested.list_sensors(user, 3)
@@ -192,6 +192,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "entity_id": "sensor.garage_temperature",
                 "name": "Garage",
                 "unit": "°F",
+                "color": "#2a78d6",
                 "position": 0,
                 "active": True,
                 "last_value": 84.9,
@@ -202,6 +203,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "entity_id": "sensor.freezer_temperature",
                 "name": "Freezer",
                 "unit": "°F",
+                "color": "",
                 "position": 1,
                 "active": False,
                 "last_value": None,
@@ -223,7 +225,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
         ),
         call.fetch_all(
             """
-                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, position, active
+                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
             (3,),
@@ -255,23 +257,35 @@ def test_update_sensor(require_sensor: MagicMock) -> None:
     assert database.mock_calls == []
     reset_mocks()
 
-    # happy path
+    # the colour must be a hex triplet
     require_sensor.side_effect = [{"id": 9, "house_id": 3}]
-    database.encrypt.side_effect = ["sealedGarage"]
-    database.execute.side_effect = [0]
-    result = tested.update_sensor(user, 9, {"name": " Garage ", "unit": " °C ", "active": False})
-    expected = {"message": "Sensor updated."}
-    assert result == expected
+    with pytest.raises(AppException) as exc_info:
+        tested.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "color": "blue", "active": True})
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The colour must be like #2a78d6, or empty for the default."
     assert require_sensor.mock_calls == [call(user, 9)]
-    exp_calls = [
-        call.encrypt("Garage"),
-        call.execute(
-            "UPDATE sensors SET name_sealed = %s, unit = %s, active = %s WHERE id = %s",
-            ("sealedGarage", "°C", False, 9),
-        ),
-    ]
-    assert database.mock_calls == exp_calls
+    assert database.mock_calls == []
     reset_mocks()
+
+    # happy paths: a colour, or the default
+    tests = [(" #2A78D6 ", "#2a78d6"), ("", "")]
+    for color, exp_color in tests:
+        require_sensor.side_effect = [{"id": 9, "house_id": 3}]
+        database.encrypt.side_effect = ["sealedGarage"]
+        database.execute.side_effect = [0]
+        result = tested.update_sensor(user, 9, {"name": " Garage ", "unit": " °C ", "color": color, "active": False})
+        expected = {"message": "Sensor updated."}
+        assert result == expected
+        assert require_sensor.mock_calls == [call(user, 9)]
+        exp_calls = [
+            call.encrypt("Garage"),
+            call.execute(
+                "UPDATE sensors SET name_sealed = %s, unit = %s, color = %s, active = %s WHERE id = %s",
+                ("sealedGarage", "°C", exp_color, False, 9),
+            ),
+        ]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 @patch.object(SensorCommand, "_require_house")

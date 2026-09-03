@@ -32,6 +32,8 @@ const METER_COLORS = [
   { label: "Teal", value: "#189aa8" },
   { label: "Brown", value: "#a06a3c" },
   { label: "Gray", value: "#6b7280" },
+  { label: "Forest", value: "#3d8f3d" },
+  { label: "Amber", value: "#c98a1a" },
 ];
 
 function esc(value) {
@@ -95,7 +97,7 @@ function showAppError(error) {
   setTimeout(() => { target.hidden = true; }, 6000);
 }
 
-function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false, top = false }) {
+function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false, top = false, compact = false }) {
   return new Promise((resolve) => {
     // Two layers: the base modal, and one that can stack on top of it.
     const part = (name) => $(top ? `#modal2-${name}` : `#modal-${name}`);
@@ -104,9 +106,10 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
     const messageTarget = part("message");
     messageTarget.textContent = message;
     messageTarget.hidden = !message;
+    part("fields").classList.toggle("compact-options", compact && options.length > 0);
     part("fields").innerHTML = options.length
       ? options.map((option) => `
-          <button class="ghost option${option.active ? " active" : ""}" type="button" data-modal-option="${esc(String(option.value))}">
+          <button class="ghost option${option.active ? " active" : ""}${option.wide ? " wide" : ""}" type="button" data-modal-option="${esc(String(option.value))}">
             ${option.color ? `<span class="swatch" style="background:${esc(option.color)}"></span>` : ""}${esc(option.label)}
           </button>`).join("")
       : fields.map((field) => {
@@ -1142,6 +1145,8 @@ function wireChartHover(rootSelector) {
 // ---------- Sensors (Home Assistant thermometers) ----------
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
+const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
+const ICON_CHEVRON_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
 const LONG_PRESS_MS = 500;
 
 function fmtAgo(iso) {
@@ -1165,6 +1170,28 @@ function fmtInstant(time, days) {
   if (days >= 365) return `${day}, ${date.getFullYear()}`;
   const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   return `${day}, ${clock}`;
+}
+
+async function chooseColor(title, current) {
+  // Named colours, the default, or any colour from the browser's own dialog.
+  // Returns the hex value ("" for the default), or null when cancelled.
+  const choice = await openModal({
+    title,
+    compact: true,
+    options: [
+      { value: "", label: "Default", active: !current, wide: true },
+      ...METER_COLORS.map((color) => ({ ...color, color: color.value, active: current === color.value })),
+      { value: "__custom", label: "Pick your own…", active: Boolean(current) && !METER_COLORS.some((color) => color.value === current), wide: true },
+    ],
+  });
+  if (choice === null) return null;
+  if (choice.value !== "__custom") return choice.value;
+  const answers = await openModal({
+    title,
+    submitLabel: "Use",
+    fields: [{ name: "color", label: "Colour", type: "color", value: current || "#2a78d6" }],
+  });
+  return answers === null ? null : String(answers.color || "").toLowerCase();
 }
 
 function wantsCelsius() {
@@ -1227,9 +1254,15 @@ function fmtPeriodEdge(time, days) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
+// Twelve distinct defaults, so a dozen thermometers never share a colour:
+// the six theme-aware series colours, then the picker's other six.
+const SENSOR_DEFAULT_COLORS = [...VIZ_COLORS, ...METER_COLORS.slice(6).map((color) => color.value)];
+
 function sensorColors(sensors) {
-  // One colour per active sensor, in the house's order: tiles, lines and legend agree.
-  return new Map(sensors.filter((sensor) => sensor.active).map((sensor, index) => [sensor.id, VIZ_COLORS[index % VIZ_COLORS.length]]));
+  // A sensor's own colour, else a default from its rank among the active ones:
+  // tiles, lines and legend agree.
+  return new Map(sensors.filter((sensor) => sensor.active).map((sensor, index) =>
+    [sensor.id, sensor.color || SENSOR_DEFAULT_COLORS[index % SENSOR_DEFAULT_COLORS.length]]));
 }
 
 async function loadSensors() {
@@ -1286,24 +1319,35 @@ function renderSensors() {
   const tMax = data.until ? Date.parse(data.until) : Date.now();
   const tMin = tMax - data.days * 86400000;
   const allSeries = splitPrevious(displaySeries(data.series || []), data.days, tMax)
-    .map((item) => ({ ...item, color: colors.get(item.sensor_id) || VIZ_COLORS[0] }));
+    .map((item) => ({ ...item, color: colors.get(item.sensor_id) || SENSOR_DEFAULT_COLORS[0] }));
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
   const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
   const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
   const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}. Click the legend to hide a sensor.`;
-  $("#sensor-later").disabled = !state.sensorOffset;
   $("#sensor-content").innerHTML = `
     <div class="card">
       <h3>Now</h3>
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
     </div>
+    <div class="period-bar">
+      <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
+      <span class="range-tabs">
+        <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
+        <button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period"${state.sensorOffset ? "" : " disabled"}>${ICON_CHEVRON_RIGHT}</button>
+      </span>
+    </div>
     <div class="card">
-      <h3 title="${esc(hint)}">${esc(rangeLabel)}${data.previous ? ' <span class="meta">· dotted: previous</span>' : ""}</h3>
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
       ${sensorLegendMarkup(allSeries)}
     </div>`;
   wireSensorChartHover("#sensor-content");
+  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
+  $("#sensor-later").addEventListener("click", () => {
+    if (!state.sensorOffset) return;
+    state.sensorOffset -= 1;
+    loadSensors();
+  });
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
     const solo = () => {
@@ -1591,6 +1635,9 @@ function renderSensorSettings() {
         <span class="meta">${esc(sensor.entity_id)}${sensor.last_value === null ? "" : ` · ${fmtTemp(sensor.last_value)} ${esc(sensor.unit)} ${esc(fmtAgo(sensor.last_at))}`}</span>
       </span>
       <span class="icon-actions">
+        <button class="ghost compact icon-only" data-color-sensor="${sensor.id}" type="button" title="Choose the colour">
+          <span class="swatch" style="background:${esc(sensor.color || "var(--muted)")}"></span>
+        </button>
         <button class="ghost compact icon-only" data-move-sensor="${sensor.id}" data-move-delta="-1" type="button"
           title="Move up"${index === 0 ? " disabled" : ""}>${ICON_UP}</button>
         <button class="ghost compact icon-only" data-move-sensor="${sensor.id}" data-move-delta="1" type="button"
@@ -1612,6 +1659,21 @@ function renderSensorSettings() {
       await loadSensorSettings();
     } catch (error) { showAppError(error); }
   }));
+  $$("[data-color-sensor]").forEach((button) => button.addEventListener("click", async () => {
+    // The colour is the house's, like the order: everyone sees the same lines.
+    const sensor = state.sensors.find((item) => item.id === Number(button.dataset.colorSensor));
+    const color = await chooseColor(`Colour of ${sensor.name}`, sensor.color);
+    if (color === null) return;
+    try {
+      await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
+        name: sensor.name,
+        unit: sensor.unit,
+        color,
+        active: sensor.active,
+      }) });
+      await loadSensorSettings();
+    } catch (error) { showAppError(error); }
+  }));
   $$("[data-edit-sensor]").forEach((button) => button.addEventListener("click", async () => {
     const sensor = state.sensors.find((item) => item.id === Number(button.dataset.editSensor));
     const answers = await openModal({
@@ -1628,6 +1690,7 @@ function renderSensorSettings() {
       await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
         name: answers.name,
         unit: answers.unit,
+        color: sensor.color,
         active: answers.active,
       }) });
       await loadSensorSettings();
@@ -1640,6 +1703,7 @@ function renderSensorSettings() {
       await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
         name: sensor.name,
         unit: sensor.unit,
+        color: sensor.color,
         active: !sensor.active,
       }) });
       await loadSensorSettings();
@@ -1875,16 +1939,10 @@ function renderMeters() {
   $$("[data-color-meter]").forEach((button) => button.addEventListener("click", async () => {
     // The colour is personal, like the order: it follows this user everywhere.
     const meter = state.meters.find((item) => item.id === Number(button.dataset.colorMeter));
-    const choice = await openModal({
-      title: `Colour of ${meter.label || meter.kind}`,
-      options: [
-        { value: "", label: "Default", active: !meter.color },
-        ...METER_COLORS.map((color) => ({ ...color, color: color.value, active: meter.color === color.value })),
-      ],
-    });
-    if (choice === null) return;
+    const color = await chooseColor(`Colour of ${meter.label || meter.kind}`, meter.color);
+    if (color === null) return;
     try {
-      await api("/api/me/meter-color", { method: "POST", body: JSON.stringify({ meter_id: meter.id, color: choice.value }) });
+      await api("/api/me/meter-color", { method: "POST", body: JSON.stringify({ meter_id: meter.id, color }) });
       await loadMeters();
     } catch (error) { showAppError(error); }
   }));
@@ -2102,12 +2160,6 @@ addEventListener("DOMContentLoaded", () => {
     state.sensorOffset = 0;
     loadSensors();
   }));
-  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
-  $("#sensor-later").addEventListener("click", () => {
-    if (!state.sensorOffset) return;
-    state.sensorOffset -= 1;
-    loadSensors();
-  });
   $("#sensor-celsius").addEventListener("change", () => {
     storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
     renderSensors();

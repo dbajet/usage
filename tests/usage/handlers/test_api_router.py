@@ -1706,7 +1706,7 @@ def test__update_sensor() -> None:
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.update_sensor.side_effect = [{"message": "Sensor updated."}]
-    result = tested._update_sensor(9, SensorUpdateRequest(name="Garage", unit="°F", active=True), "the-session")
+    result = tested._update_sensor(9, SensorUpdateRequest(name="Garage", unit="°F", color="", active=True), "the-session")
     expected = ApiMessage(message="Sensor updated.")
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
@@ -1715,7 +1715,7 @@ def test__update_sensor() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
-    assert sensor_command.mock_calls == [call.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "active": True})]
+    assert sensor_command.mock_calls == [call.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "color": "", "active": True})]
     reset_mocks()
 
 

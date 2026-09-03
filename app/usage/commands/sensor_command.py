@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -80,7 +81,7 @@ class SensorCommand:
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, position, active
+                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
                 (house_id,),
@@ -96,6 +97,7 @@ class SensorCommand:
                     "entity_id": str(sensor["entity_id"]),
                     "name": str(sensor["name"]),
                     "unit": str(sensor["unit"]),
+                    "color": str(sensor["color"] or ""),
                     "position": int(sensor["position"]),
                     "active": bool(sensor["active"]),
                     "last_value": float(last["value"]) if last is not None else None,
@@ -109,11 +111,15 @@ class SensorCommand:
         name = str(data.get("name") or "").strip()
         if not name:
             raise AppException(400, "Enter a sensor name.")
+        color = str(data.get("color") or "").strip().lower()
+        if color and not re.fullmatch(r"#[0-9a-f]{6}", color):
+            raise AppException(400, "The colour must be like #2a78d6, or empty for the default.")
         self._database.execute(
-            "UPDATE sensors SET name_sealed = %s, unit = %s, active = %s WHERE id = %s",
+            "UPDATE sensors SET name_sealed = %s, unit = %s, color = %s, active = %s WHERE id = %s",
             (
                 self._database.encrypt(name),
                 str(data.get("unit") or "").strip(),
+                color,
                 bool(data.get("active")),
                 sensor_id,
             ),

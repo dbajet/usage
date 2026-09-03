@@ -256,6 +256,7 @@ class Database:
                 entity_hash TEXT NOT NULL,
                 name_sealed TEXT NOT NULL DEFAULT '',
                 unit TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '',
                 position INTEGER NOT NULL DEFAULT 0,
                 active BOOLEAN NOT NULL DEFAULT true,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -294,10 +295,13 @@ class Database:
             (7, "monthly value meters"),
             (8, "house time zones"),
             (9, "home assistant sensors"),
+            (10, "sensor colors"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 10:
+                    connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT ''")
                 if version == 9:
                     connection.execute("ALTER TABLE houses ADD COLUMN IF NOT EXISTS ingest_token_hash TEXT NOT NULL DEFAULT ''")
                 if version == 8:
