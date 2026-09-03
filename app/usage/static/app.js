@@ -1277,18 +1277,33 @@ async function loadSensors() {
     $("#sensor-previous").checked = wantsPrevious();
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     if (!houseHasSensors()) { showView("stats"); return; }
+    showSensorsLoading();
     const list = await api(`/api/sensors?house_id=${state.houseId}`);
     const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`);
     state.sensors = list.sensors || [];
     state.sensorData = series;
     renderSensors();
-  } catch (error) { showAppError(error); }
+  } catch (error) {
+    $("#sensor-content").classList.remove("loading");
+    showAppError(error);
+  }
+}
+
+function showSensorsLoading() {
+  // A wheel on the graph while the data comes in: over the previous curves
+  // when switching period or range, alone on the first load.
+  const content = $("#sensor-content");
+  if (!content.querySelector(".graph-card")) {
+    content.innerHTML = '<div class="period-bar"><span class="period-label">&nbsp;</span></div><div class="card graph-card empty"></div>';
+  }
+  content.classList.add("loading");
 }
 
 function renderSensors() {
   const sensors = displaySensors(state.sensors || []);
   const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
   if (!sensors.length) {
+    $("#sensor-content").classList.remove("loading");
     $("#sensor-content").innerHTML = `
       <div class="card">
         <p class="meta">No sensor yet. Once Home Assistant pushes readings with this house's sensor token
@@ -1325,11 +1340,8 @@ function renderSensors() {
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
   const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
   const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}. Click the legend to hide a sensor.`;
+  $("#sensor-content").classList.remove("loading");
   $("#sensor-content").innerHTML = `
-    <div class="card">
-      <h3>Now</h3>
-      <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
-    </div>
     <div class="period-bar">
       <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
       <span class="range-tabs">
@@ -1337,10 +1349,14 @@ function renderSensors() {
         <button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period"${state.sensorOffset ? "" : " disabled"}>${ICON_CHEVRON_RIGHT}</button>
       </span>
     </div>
-    <div class="card">
+    <div class="card graph-card">
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
     </div>
-    ${sensorLegendMarkup(allSeries)}`;
+    ${sensorLegendMarkup(allSeries)}
+    <div class="card">
+      <h3>Now</h3>
+      <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
+    </div>`;
   wireSensorChartHover("#sensor-content");
   $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
   $("#sensor-later").addEventListener("click", () => {

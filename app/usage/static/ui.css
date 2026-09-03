@@ -510,8 +510,25 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .sensor-tile.selected { background: var(--accent-soft); border-color: var(--accent); border-left-color: inherit; }
 .sensor-tile.dimmed { opacity: 0.45; }
 .period-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0.25rem 0 0.5rem; }
+/* A wheel over the graph while its data loads. */
+.graph-card { position: relative; }
+.graph-card.empty { min-height: 200px; }
+#sensor-content.loading .graph-card > * { opacity: 0.3; }
+#sensor-content.loading .graph-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 32px;
+  height: 32px;
+  margin: auto;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: busy-spin 0.8s linear infinite;
+}
 /* The sensor legend lives under the graph card, not inside it. */
 .sensor-legend { margin: -0.5rem 0 1rem; padding: 0 0.25rem; }
+.sensor-legend + .card { margin-top: 1rem; }
 html.device-mobile .sensor-legend { gap: 0.15rem 0.6rem; }
 html.device-mobile .sensor-legend .legend-toggle { padding: 0.1rem 0.25rem; font-size: 0.75rem; }
 html.device-mobile .sensor-legend i { width: 10px; }
