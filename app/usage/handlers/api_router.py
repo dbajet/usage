@@ -477,10 +477,11 @@ class ApiRouter:
         house_id: int,
         days: int = 1,
         previous: bool = False,
+        offset: int = 0,
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._sensor_command.series(user, house_id, days, previous)
+        return self._sensor_command.series(user, house_id, days, previous, offset)
 
     def _update_sensor(
         self,

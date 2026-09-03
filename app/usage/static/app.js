@@ -14,6 +14,7 @@ let state = {
   hiddenMeters: new Set(),
   sensors: null,
   sensorDays: 1,
+  sensorOffset: 0,
   hiddenSensors: new Set(),
 };
 
@@ -1161,7 +1162,7 @@ function fmtTemp(value) {
 function fmtInstant(time, days) {
   const date = new Date(time);
   const day = `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
-  if (days >= 365) return day;
+  if (days >= 365) return `${day}, ${date.getFullYear()}`;
   const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   return `${day}, ${clock}`;
 }
@@ -1174,11 +1175,11 @@ function wantsPrevious() {
   return storedItem("usage-sensor-previous", "0") === "1";
 }
 
-function splitPrevious(seriesList, days) {
+function splitPrevious(seriesList, days, tMax) {
   // The server sends two periods in one flat list; the earlier one is
-  // shifted forward by the range so it lines up under the current one.
+  // shifted forward by the range so it lines up under the shown one.
   const span = days * 86400000;
-  const boundary = Date.now() - span;
+  const boundary = tMax - span;
   return seriesList.map((item) => {
     const timed = item.points.map((point) => ({ ...point, time: Date.parse(point.at) }));
     return {
@@ -1218,6 +1219,14 @@ function displaySeries(seriesList) {
   }));
 }
 
+function fmtPeriodEdge(time, days) {
+  // The graph title: a clock for a day, dates for a week or a month, months for a year.
+  const date = new Date(time);
+  if (days <= 1) return fmtInstant(time, days);
+  if (days <= 30) return `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+}
+
 function sensorColors(sensors) {
   // One colour per active sensor, in the house's order: tiles, lines and legend agree.
   return new Map(sensors.filter((sensor) => sensor.active).map((sensor, index) => [sensor.id, VIZ_COLORS[index % VIZ_COLORS.length]]));
@@ -1236,7 +1245,7 @@ async function loadSensors() {
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     if (!houseHasSensors()) { showView("stats"); return; }
     const list = await api(`/api/sensors?house_id=${state.houseId}`);
-    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}`);
+    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`);
     state.sensors = list.sensors || [];
     state.sensorData = series;
     renderSensors();
@@ -1274,20 +1283,24 @@ function renderSensors() {
           <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
         </div>`;
     }).join("");
-  const allSeries = splitPrevious(displaySeries(data.series || []), data.days)
+  const tMax = data.until ? Date.parse(data.until) : Date.now();
+  const tMin = tMax - data.days * 86400000;
+  const allSeries = splitPrevious(displaySeries(data.series || []), data.days, tMax)
     .map((item) => ({ ...item, color: colors.get(item.sensor_id) || VIZ_COLORS[0] }));
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
-  const rangeLabel = { 1: "last 24 hours", 7: "last 7 days", 30: "last 30 days", 365: "last year" }[data.days] || "";
   const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
+  const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
+  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}. Click the legend to hide a sensor.`;
+  $("#sensor-later").disabled = !state.sensorOffset;
   $("#sensor-content").innerHTML = `
     <div class="card">
       <h3>Now</h3>
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
     </div>
     <div class="card">
-      <h3>Trend <span class="meta">(${rangeLabel}, ${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `, dotted: the previous ${previousLabel}` : ""} - click the legend to hide a sensor)</span></h3>
-      ${sensorChartMarkup(visible, data.days, data.bucket_minutes) || '<p class="meta">Not enough readings in this range yet.</p>'}
+      <h3 title="${esc(hint)}">${esc(rangeLabel)}${data.previous ? ' <span class="meta">· dotted: previous</span>' : ""}</h3>
+      ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
       ${sensorLegendMarkup(allSeries)}
     </div>`;
   wireSensorChartHover("#sensor-content");
@@ -1355,7 +1368,7 @@ function sensorLegendMarkup(seriesList) {
       ${seriesList.map((item) => {
         const off = state.hiddenSensors.has(item.sensor_id) ? " off" : "";
         return `<button class="legend-toggle${off}" type="button" data-sensor-toggle="${item.sensor_id}" title="Show or hide this sensor">
-          <i style="background:${item.color}"></i>${esc(item.name)}${item.unit ? ` (${esc(item.unit)})` : ""}</button>`;
+          <i style="background:${item.color}"></i>${esc(item.name)}</button>`;
       }).join("")}
     </div>`;
 }
@@ -1399,8 +1412,7 @@ function sensorStep(rough) {
   return factor * magnitude;
 }
 
-function sensorChartMarkup(seriesList, days, bucketMinutes) {
-  const tMax = Date.now();
+function sensorChartMarkup(seriesList, days, bucketMinutes, tMax) {
   const tMin = tMax - days * 86400000;
   const points = seriesList.flatMap((item) => [...item.points, ...(item.previousPoints || [])]);
   if (points.length < 2) return "";
@@ -2087,8 +2099,15 @@ addEventListener("DOMContentLoaded", () => {
   $("#house-btn").addEventListener("click", chooseHouse);
   $$("[data-sensor-days]").forEach((button) => button.addEventListener("click", () => {
     storeItem("usage-sensor-days", button.dataset.sensorDays);
+    state.sensorOffset = 0;
     loadSensors();
   }));
+  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
+  $("#sensor-later").addEventListener("click", () => {
+    if (!state.sensorOffset) return;
+    state.sensorOffset -= 1;
+    loadSensors();
+  });
   $("#sensor-celsius").addEventListener("change", () => {
     storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
     renderSensors();

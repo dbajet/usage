@@ -335,9 +335,20 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
     # unknown range
     require_house.side_effect = [None]
     with pytest.raises(AppException) as exc_info:
-        tested.series(user, 3, 14, False)
+        tested.series(user, 3, 14, False, 0)
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "The range must be one of 1, 7, 30, 365 days."
+    assert require_house.mock_calls == [call(user, 3)]
+    assert mock_datetime.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # negative offset
+    require_house.side_effect = [None]
+    with pytest.raises(AppException) as exc_info:
+        tested.series(user, 3, 7, False, -1)
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The offset counts periods back from now."
     assert require_house.mock_calls == [call(user, 3)]
     assert mock_datetime.mock_calls == []
     assert database.mock_calls == []
@@ -361,17 +372,23 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
             "high": Decimal("84.90"),
         },
     ]
-    tests = [(False, "2026-08-27T12:00:00+00:00"), (True, "2026-08-20T12:00:00+00:00")]
-    for previous, exp_since in tests:
+    tests = [
+        (False, 0, "2026-08-27T12:00:00+00:00", "2026-09-03T12:00:00+00:00"),
+        (True, 0, "2026-08-20T12:00:00+00:00", "2026-09-03T12:00:00+00:00"),
+        (False, 2, "2026-08-13T12:00:00+00:00", "2026-08-20T12:00:00+00:00"),
+    ]
+    for previous, offset, exp_since, exp_until in tests:
         require_house.side_effect = [None]
         mock_datetime.now.side_effect = [now]
         database.fetch_all.side_effect = [sensor_rows, rows]
         database.decrypt_rows.side_effect = [[{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}]]
-        result = tested.series(user, 3, 7, previous)
+        result = tested.series(user, 3, 7, previous, offset)
         expected = {
             "days": 7,
             "bucket_minutes": 60,
             "previous": previous,
+            "offset": offset,
+            "until": exp_until,
             "series": [
                 {
                     "sensor_id": 9,
@@ -399,11 +416,11 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
                    date_bin(%s, samples.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
                    AVG(samples.value) AS average, MIN(samples.value) AS low, MAX(samples.value) AS high
             FROM samples JOIN sensors ON sensors.id = samples.sensor_id
-            WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s
+            WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s AND samples.measured_at < %s
             GROUP BY samples.sensor_id, bucket
             ORDER BY samples.sensor_id, bucket
             """,
-                (timedelta(minutes=60), 3, exp_since),
+                (timedelta(minutes=60), 3, exp_since, exp_until),
             ),
         ]
         assert database.mock_calls == exp_calls

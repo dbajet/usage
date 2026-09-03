@@ -1677,9 +1677,9 @@ def test__sensor_series() -> None:
         sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
-    sensor_command.series.side_effect = [{"days": 7, "bucket_minutes": 60, "previous": True, "series": []}]
-    result = tested._sensor_series(3, 7, True, "the-session")
-    expected = {"days": 7, "bucket_minutes": 60, "previous": True, "series": []}
+    sensor_command.series.side_effect = [{"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "series": []}]
+    result = tested._sensor_series(3, 7, True, 2, "the-session")
+    expected = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "series": []}
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
@@ -1687,7 +1687,7 @@ def test__sensor_series() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
-    assert sensor_command.mock_calls == [call.series(user, 3, 7, True)]
+    assert sensor_command.mock_calls == [call.series(user, 3, 7, True, 2)]
     reset_mocks()
 
 

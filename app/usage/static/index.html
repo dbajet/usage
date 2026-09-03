@@ -128,10 +128,18 @@
             <label class="switch" title="Overlay the previous day, week, month or year as dotted curves">
               <input id="sensor-previous" type="checkbox"><span class="slider"></span> Previous</label>
             <div class="range-tabs" id="sensor-ranges">
-            <button class="ghost compact" data-sensor-days="1" type="button">Day</button>
-            <button class="ghost compact" data-sensor-days="7" type="button">Week</button>
-            <button class="ghost compact" data-sensor-days="30" type="button">Month</button>
-            <button class="ghost compact" data-sensor-days="365" type="button">Year</button>
+              <button class="ghost compact" data-sensor-days="1" type="button">Day</button>
+              <button class="ghost compact" data-sensor-days="7" type="button">Week</button>
+              <button class="ghost compact" data-sensor-days="30" type="button">Month</button>
+              <button class="ghost compact" data-sensor-days="365" type="button">Year</button>
+            </div>
+            <div class="range-tabs" id="sensor-steps">
+              <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">
+                <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>
+              </button>
+              <button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period">
+                <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>
+              </button>
             </div>
           </div>
         </div>

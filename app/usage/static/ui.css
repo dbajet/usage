@@ -472,6 +472,7 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .sensor-controls { display: flex; align-items: center; gap: 0.9rem; }
 .range-tabs { display: inline-flex; gap: 0.25rem; }
 .range-tabs button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.range-tabs button[disabled] { opacity: 0.35; cursor: default; }
 .sensor-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -549,7 +550,9 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   }
   .app-nav button .msym { width: 20px; height: 20px; }
   .house-name { display: none; }
-  .sensor-controls { gap: 0.5rem; }
+  /* The controls take their own row and wrap; the heading stays on the left. */
+  #view-sensors .view-heading { flex-wrap: wrap; }
+  .sensor-controls { flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem 0.6rem; margin-left: auto; }
   .range-tabs button { padding: 0.3rem 0.45rem; font-size: 0.78rem; }
   .sensor-tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.4rem; }
   /* The build stamp shrinks to an info icon; a tap reveals it in a bubble. */

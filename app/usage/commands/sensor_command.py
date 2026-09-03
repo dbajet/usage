@@ -133,9 +133,10 @@ class SensorCommand:
                 self._database.execute("UPDATE sensors SET position = %s WHERE id = %s", (position, sensor_id))
         return {"message": "Sensor order saved."}
 
-    def series(self, user: SessionUser, house_id: int, days: int, previous: bool) -> dict[str, Any]:
-        """Per active sensor, the samples of the last `days` averaged per time bucket.
+    def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
+        """Per active sensor, the samples of one `days`-long period averaged per time bucket.
 
+        The period ends `offset` periods before now (0: the last `days`).
         With `previous`, the window doubles so the caller can overlay the
         period before (the buckets are day-aligned, so shifting by `days`
         lines them up).
@@ -145,7 +146,10 @@ class SensorCommand:
         if bucket_minutes is None:
             choices = ", ".join(str(range_days) for range_days, _ in Constants.sensor_ranges)
             raise AppException(400, f"The range must be one of {choices} days.")
-        since = datetime.now(UTC) - timedelta(days=days * (2 if previous else 1))
+        if offset < 0:
+            raise AppException(400, "The offset counts periods back from now.")
+        until = datetime.now(UTC) - timedelta(days=days * offset)
+        since = until - timedelta(days=days * (2 if previous else 1))
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
                 "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
@@ -159,11 +163,11 @@ class SensorCommand:
                    date_bin(%s, samples.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
                    AVG(samples.value) AS average, MIN(samples.value) AS low, MAX(samples.value) AS high
             FROM samples JOIN sensors ON sensors.id = samples.sensor_id
-            WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s
+            WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s AND samples.measured_at < %s
             GROUP BY samples.sensor_id, bucket
             ORDER BY samples.sensor_id, bucket
             """,
-            (timedelta(minutes=bucket_minutes), house_id, since.isoformat()),
+            (timedelta(minutes=bucket_minutes), house_id, since.isoformat(), until.isoformat()),
         )
         result: list[dict[str, Any]] = []
         for sensor in sensors:
@@ -187,7 +191,14 @@ class SensorCommand:
                     "points": points,
                 },
             )
-        return {"days": days, "bucket_minutes": bucket_minutes, "previous": previous, "series": result}
+        return {
+            "days": days,
+            "bucket_minutes": bucket_minutes,
+            "previous": previous,
+            "offset": offset,
+            "until": until.isoformat(),
+            "series": result,
+        }
 
     def _find_or_create_sensor(self, house_id: int, sample: SensorSample) -> tuple[int, bool]:
         entity_hash = self._database.blind_index(sample.entity_id)
