@@ -13,6 +13,7 @@ let state = {
   readingSource: "manual",
   hiddenMeters: new Set(),
   sensors: null,
+  sensorsHouseId: 0,
   sensorDays: 1,
   sensorOffset: 0,
   hiddenSensors: new Set(),
@@ -1265,22 +1266,34 @@ function sensorColors(sensors) {
     [sensor.id, sensor.color || SENSOR_DEFAULT_COLORS[index % SENSOR_DEFAULT_COLORS.length]]));
 }
 
-async function loadSensors() {
+async function loadSensors(seriesOnly = false) {
   try {
-    await ensureDashboard();
-    if (!state.houseId) {
-      $("#sensor-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
-      return;
+    // Changing the period, the range or the overlay only moves the graph: the
+    // house and the sensor list are already loaded, so one request goes out
+    // instead of three. Entering the view, or switching house, reloads all.
+    const reuse = seriesOnly && state.sensors !== null && state.sensorsHouseId === state.houseId;
+    if (!reuse) {
+      await ensureDashboard();
+      if (!state.houseId) {
+        $("#sensor-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+        return;
+      }
+      if (!houseHasSensors()) { showView("stats"); return; }
     }
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
     $("#sensor-celsius").checked = wantsCelsius();
     $("#sensor-previous").checked = wantsPrevious();
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
-    if (!houseHasSensors()) { showView("stats"); return; }
     showSensorsLoading();
-    const list = await api(`/api/sensors?house_id=${state.houseId}`);
-    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`);
+    // The list and the series leave together: one round trip, not two.
+    const [list, series] = await Promise.all([
+      reuse
+        ? Promise.resolve({ sensors: state.sensors })
+        : api(`/api/sensors?house_id=${state.houseId}`),
+      api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`),
+    ]);
     state.sensors = list.sensors || [];
+    state.sensorsHouseId = state.houseId;
     state.sensorData = series;
     renderSensors();
   } catch (error) {
@@ -1358,11 +1371,11 @@ function renderSensors() {
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
     </div>`;
   wireSensorChartHover("#sensor-content");
-  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
+  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(true); });
   $("#sensor-later").addEventListener("click", () => {
     if (!state.sensorOffset) return;
     state.sensorOffset -= 1;
-    loadSensors();
+    loadSensors(true);
   });
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
@@ -2174,7 +2187,7 @@ addEventListener("DOMContentLoaded", () => {
   $$("[data-sensor-days]").forEach((button) => button.addEventListener("click", () => {
     storeItem("usage-sensor-days", button.dataset.sensorDays);
     state.sensorOffset = 0;
-    loadSensors();
+    loadSensors(true);
   }));
   $("#sensor-celsius").addEventListener("change", () => {
     storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
@@ -2182,7 +2195,7 @@ addEventListener("DOMContentLoaded", () => {
   });
   $("#sensor-previous").addEventListener("change", () => {
     storeItem("usage-sensor-previous", $("#sensor-previous").checked ? "1" : "0");
-    loadSensors();
+    loadSensors(true);
   });
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));
