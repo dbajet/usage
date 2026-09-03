@@ -402,7 +402,7 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .viz-chart { width: 100%; height: auto; display: block; margin-top: 0.5rem; }
 .viz-chart .grid line { stroke: var(--viz-grid); stroke-width: 1; }
 .viz-chart .axis text { fill: var(--muted); font-size: 11px; }
-.viz-chart .series path { fill: none; stroke-width: 2; }
+.viz-chart .series path { fill: none; stroke-width: 1.4; }
 .viz-chart .series circle.dot { stroke: var(--card); stroke-width: 2; }
 
 .year-range { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
@@ -495,7 +495,9 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .sensor-tile.dimmed { opacity: 0.45; }
 .viz-chart .band { opacity: 0.16; }
 /* A dozen sensor curves share one graph: thinner than the consumption lines. */
-[data-sensor-chart] .viz-chart .series path { stroke-width: 1.2; }
+[data-sensor-chart] .viz-chart .series path { stroke-width: 1; }
+/* The previous period, shifted onto the current one: dotted, no band. */
+.viz-chart .series path.previous { stroke-dasharray: 1.5 3; stroke-linecap: round; opacity: 0.85; }
 .token-box {
   margin: 0.5rem 0;
   padding: 0.5rem 0.65rem;

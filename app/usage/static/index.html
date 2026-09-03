@@ -125,6 +125,8 @@
           <div class="sensor-controls">
             <label class="switch" title="Show the temperatures in Celsius rather than Fahrenheit">
               <input id="sensor-celsius" type="checkbox"><span class="slider"></span> °C</label>
+            <label class="switch" title="Overlay the previous day, week, month or year as dotted curves">
+              <input id="sensor-previous" type="checkbox"><span class="slider"></span> Previous</label>
             <div class="range-tabs" id="sensor-ranges">
             <button class="ghost compact" data-sensor-days="1" type="button">Day</button>
             <button class="ghost compact" data-sensor-days="7" type="button">Week</button>
@@ -307,13 +309,5 @@
   </div>
 
   <script src="/static/app.js?v=__BUILD__"></script>
-  <script>
-    // Installable app: the service worker makes the shell cacheable offline.
-    if ("serviceWorker" in navigator) {
-      addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=__BUILD__", { scope: "/" }).catch(() => {});
-      });
-    }
-  </script>
 </body>
 </html>

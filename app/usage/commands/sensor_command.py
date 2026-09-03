@@ -133,14 +133,19 @@ class SensorCommand:
                 self._database.execute("UPDATE sensors SET position = %s WHERE id = %s", (position, sensor_id))
         return {"message": "Sensor order saved."}
 
-    def series(self, user: SessionUser, house_id: int, days: int) -> dict[str, Any]:
-        """Per active sensor, the samples of the last `days` averaged per time bucket."""
+    def series(self, user: SessionUser, house_id: int, days: int, previous: bool) -> dict[str, Any]:
+        """Per active sensor, the samples of the last `days` averaged per time bucket.
+
+        With `previous`, the window doubles so the caller can overlay the
+        period before (the buckets are day-aligned, so shifting by `days`
+        lines them up).
+        """
         self._require_house(user, house_id)
         bucket_minutes = dict(Constants.sensor_ranges).get(days)
         if bucket_minutes is None:
             choices = ", ".join(str(range_days) for range_days, _ in Constants.sensor_ranges)
             raise AppException(400, f"The range must be one of {choices} days.")
-        since = datetime.now(UTC) - timedelta(days=days)
+        since = datetime.now(UTC) - timedelta(days=days * (2 if previous else 1))
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
                 "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
@@ -182,7 +187,7 @@ class SensorCommand:
                     "points": points,
                 },
             )
-        return {"days": days, "bucket_minutes": bucket_minutes, "series": result}
+        return {"days": days, "bucket_minutes": bucket_minutes, "previous": previous, "series": result}
 
     def _find_or_create_sensor(self, house_id: int, sample: SensorSample) -> tuple[int, bool]:
         entity_hash = self._database.blind_index(sample.entity_id)

@@ -335,7 +335,7 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
     # unknown range
     require_house.side_effect = [None]
     with pytest.raises(AppException) as exc_info:
-        tested.series(user, 3, 14)
+        tested.series(user, 3, 14, False)
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "The range must be one of 1, 7, 30, 365 days."
     assert require_house.mock_calls == [call(user, 3)]
@@ -361,37 +361,40 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
             "high": Decimal("84.90"),
         },
     ]
-    require_house.side_effect = [None]
-    mock_datetime.now.side_effect = [now]
-    database.fetch_all.side_effect = [sensor_rows, rows]
-    database.decrypt_rows.side_effect = [[{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}]]
-    result = tested.series(user, 3, 7)
-    expected = {
-        "days": 7,
-        "bucket_minutes": 60,
-        "series": [
-            {
-                "sensor_id": 9,
-                "name": "Garage",
-                "unit": "°F",
-                "points": [
-                    {"at": "2026-09-02T22:00:00+00:00", "average": 84.46, "low": 83.1, "high": 85.9},
-                    {"at": "2026-09-02T23:00:00+00:00", "average": 84.9, "low": 84.9, "high": 84.9},
-                ],
-            },
-        ],
-    }
-    assert result == expected
-    assert require_house.mock_calls == [call(user, 3)]
-    assert mock_datetime.mock_calls == [call.now(UTC)]
-    exp_calls = [
-        call.fetch_all(
-            "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
-            (3,),
-        ),
-        call.decrypt_rows(sensor_rows, ("name",)),
-        call.fetch_all(
-            """
+    tests = [(False, "2026-08-27T12:00:00+00:00"), (True, "2026-08-20T12:00:00+00:00")]
+    for previous, exp_since in tests:
+        require_house.side_effect = [None]
+        mock_datetime.now.side_effect = [now]
+        database.fetch_all.side_effect = [sensor_rows, rows]
+        database.decrypt_rows.side_effect = [[{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}]]
+        result = tested.series(user, 3, 7, previous)
+        expected = {
+            "days": 7,
+            "bucket_minutes": 60,
+            "previous": previous,
+            "series": [
+                {
+                    "sensor_id": 9,
+                    "name": "Garage",
+                    "unit": "°F",
+                    "points": [
+                        {"at": "2026-09-02T22:00:00+00:00", "average": 84.46, "low": 83.1, "high": 85.9},
+                        {"at": "2026-09-02T23:00:00+00:00", "average": 84.9, "low": 84.9, "high": 84.9},
+                    ],
+                },
+            ],
+        }
+        assert result == expected
+        assert require_house.mock_calls == [call(user, 3)]
+        assert mock_datetime.mock_calls == [call.now(UTC)]
+        exp_calls = [
+            call.fetch_all(
+                "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
+                (3,),
+            ),
+            call.decrypt_rows(sensor_rows, ("name",)),
+            call.fetch_all(
+                """
             SELECT samples.sensor_id,
                    date_bin(%s, samples.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
                    AVG(samples.value) AS average, MIN(samples.value) AS low, MAX(samples.value) AS high
@@ -400,11 +403,11 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
             GROUP BY samples.sensor_id, bucket
             ORDER BY samples.sensor_id, bucket
             """,
-            (timedelta(minutes=60), 3, "2026-08-27T12:00:00+00:00"),
-        ),
-    ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
+                (timedelta(minutes=60), 3, exp_since),
+            ),
+        ]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 def test__find_or_create_sensor() -> None:

@@ -1169,6 +1169,25 @@ function wantsCelsius() {
   return storedItem("usage-temp-unit", "F") === "C";
 }
 
+function wantsPrevious() {
+  return storedItem("usage-sensor-previous", "0") === "1";
+}
+
+function splitPrevious(seriesList, days) {
+  // The server sends two periods in one flat list; the earlier one is
+  // shifted forward by the range so it lines up under the current one.
+  const span = days * 86400000;
+  const boundary = Date.now() - span;
+  return seriesList.map((item) => {
+    const timed = item.points.map((point) => ({ ...point, time: Date.parse(point.at) }));
+    return {
+      ...item,
+      points: timed.filter((point) => point.time >= boundary),
+      previousPoints: timed.filter((point) => point.time < boundary).map((point) => ({ ...point, time: point.time + span })),
+    };
+  });
+}
+
 function displayTemp(value, unit) {
   // A viewer's choice: every temperature shows in Celsius or in Fahrenheit,
   // whatever the thermometer reports. Other units pass through.
@@ -1212,10 +1231,11 @@ async function loadSensors() {
     }
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
     $("#sensor-celsius").checked = wantsCelsius();
+    $("#sensor-previous").checked = wantsPrevious();
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     if (!houseHasSensors()) { showView("stats"); return; }
     const list = await api(`/api/sensors?house_id=${state.houseId}`);
-    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}`);
+    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}`);
     state.sensors = list.sensors || [];
     state.sensorData = series;
     renderSensors();
@@ -1252,9 +1272,11 @@ function renderSensors() {
           <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
         </div>`;
     }).join("");
-  const allSeries = displaySeries(data.series || []).map((item) => ({ ...item, color: colors.get(item.sensor_id) || VIZ_COLORS[0] }));
+  const allSeries = splitPrevious(displaySeries(data.series || []), data.days)
+    .map((item) => ({ ...item, color: colors.get(item.sensor_id) || VIZ_COLORS[0] }));
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
   const rangeLabel = { 1: "last 24 hours", 7: "last 7 days", 30: "last 30 days", 365: "last year" }[data.days] || "";
+  const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
   $("#sensor-content").innerHTML = `
     <div class="card">
@@ -1262,7 +1284,7 @@ function renderSensors() {
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
     </div>
     <div class="card">
-      <h3>Trend <span class="meta">(${rangeLabel}, ${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""} - click the legend to hide a sensor)</span></h3>
+      <h3>Trend <span class="meta">(${rangeLabel}, ${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `, dotted: the previous ${previousLabel}` : ""} - click the legend to hide a sensor)</span></h3>
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes) || '<p class="meta">Not enough readings in this range yet.</p>'}
       ${sensorLegendMarkup(allSeries)}
     </div>`;
@@ -1341,7 +1363,7 @@ function sensorStep(rough) {
 function sensorChartMarkup(seriesList, days, bucketMinutes) {
   const tMax = Date.now();
   const tMin = tMax - days * 86400000;
-  const points = seriesList.flatMap((item) => item.points);
+  const points = seriesList.flatMap((item) => [...item.points, ...(item.previousPoints || [])]);
   if (points.length < 2) return "";
   const width = 720;
   const height = 260;
@@ -1372,16 +1394,19 @@ function sensorChartMarkup(seriesList, days, bucketMinutes) {
     `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
 
   const withBand = bucketMinutes > 10;
+  const lineOf = (timed) => timed.map((point, index) => `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.average).toFixed(1)}`).join(" ");
   const paths = seriesList.map((item) => {
-    const timed = item.points.map((point) => ({ ...point, time: Date.parse(point.at) }));
-    const line = timed.map((point, index) => `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.average).toFixed(1)}`).join(" ");
+    const timed = item.points;
     let band = "";
     if (withBand && timed.length > 1) {
       const upper = timed.map((point) => `${xAt(point.time).toFixed(1)},${yAt(point.high).toFixed(1)}`);
       const lower = timed.slice().reverse().map((point) => `${xAt(point.time).toFixed(1)},${yAt(point.low).toFixed(1)}`);
       band = `<polygon class="band" points="${upper.join(" ")} ${lower.join(" ")}" fill="${item.color}"></polygon>`;
     }
-    return `<g class="series">${band}<path d="${line}" stroke="${item.color}"></path></g>`;
+    const previous = (item.previousPoints || []).length > 1
+      ? `<path class="previous" d="${lineOf(item.previousPoints)}" stroke="${item.color}"></path>`
+      : "";
+    return `<g class="series">${band}${previous}<path d="${lineOf(timed)}" stroke="${item.color}"></path></g>`;
   });
 
   const config = {
@@ -1399,7 +1424,8 @@ function sensorChartMarkup(seriesList, days, bucketMinutes) {
       name: item.name,
       unit: item.unit,
       color: item.color,
-      points: item.points.map((point) => [Date.parse(point.at), point.average, point.low, point.high]),
+      points: item.points.map((point) => [point.time, point.average, point.low, point.high]),
+      previous: (item.previousPoints || []).map((point) => [point.time, point.average, point.low, point.high]),
     })),
   };
   return `
@@ -1425,9 +1451,9 @@ function wireSensorChartHover(rootSelector) {
     const tip = holder.querySelector(".viz-tip");
     const xAt = (time) => config.left + ((time - config.tMin) / (config.tMax - config.tMin)) * config.plotWidth;
     const yAt = (value) => config.top + config.plotHeight - ((value - config.yMin) / (config.yMax - config.yMin)) * config.plotHeight;
-    const nearest = (series, time) => {
+    const nearest = (points, time) => {
       let best = null;
-      series.points.forEach((point) => {
+      points.forEach((point) => {
         if (best === null || Math.abs(point[0] - time) < Math.abs(best[0] - time)) best = point;
       });
       return best && Math.abs(best[0] - time) <= config.bucketMs * 1.5 ? best : null;
@@ -1440,9 +1466,15 @@ function wireSensorChartHover(rootSelector) {
       const rows = [];
       let shown = null;
       config.series.forEach((series) => {
-        const point = nearest(series, time);
-        if (!point) return;
-        if (shown === null) shown = point[0];
+        const point = nearest(series.points, time);
+        const before = nearest(series.previous, time);
+        if (!point && !before) return;
+        if (shown === null) shown = (point || before)[0];
+        const previous = before ? ` · prev ${fmtTemp(before[1])}` : "";
+        if (!point) {
+          rows.push(`${esc(series.name)}: –${previous}`);
+          return;
+        }
         const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         dot.setAttribute("class", "hov-dot");
         dot.setAttribute("cx", xAt(point[0]).toFixed(1));
@@ -1451,7 +1483,7 @@ function wireSensorChartHover(rootSelector) {
         dot.setAttribute("stroke", series.color);
         dots.appendChild(dot);
         const range = point[2] !== point[3] ? ` (${fmtTemp(point[2])} – ${fmtTemp(point[3])})` : "";
-        rows.push(`${esc(series.name)}: ${fmtTemp(point[1])}${series.unit ? ` ${esc(series.unit)}` : ""}${range}`);
+        rows.push(`${esc(series.name)}: ${fmtTemp(point[1])}${series.unit ? ` ${esc(series.unit)}` : ""}${range}${previous}`);
       });
       if (shown === null) {
         hover.setAttribute("hidden", "");
@@ -1981,6 +2013,17 @@ async function logout() {
   location.reload();
 }
 
+function registerServiceWorker() {
+  // Installable app: the service worker makes the shell cacheable offline.
+  // Registered from here rather than an inline script, which the production
+  // Content Security Policy (script-src 'self') blocks.
+  if (!("serviceWorker" in navigator)) return;
+  const build = (document.querySelector('meta[name="app-version"]') || {}).content || "";
+  navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(build)}`, { scope: "/" }).catch(() => {});
+}
+
+addEventListener("load", registerServiceWorker);
+
 addEventListener("DOMContentLoaded", () => {
   $("#request-link-form").addEventListener("submit", requestLink);
   $("#btn-passkey").addEventListener("click", signInWithPasskey);
@@ -2010,6 +2053,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#sensor-celsius").addEventListener("change", () => {
     storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
     renderSensors();
+  });
+  $("#sensor-previous").addEventListener("change", () => {
+    storeItem("usage-sensor-previous", $("#sensor-previous").checked ? "1" : "0");
+    loadSensors();
   });
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));
