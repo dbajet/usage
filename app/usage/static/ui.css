@@ -510,7 +510,26 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .sensor-tile.selected { background: var(--accent-soft); border-color: var(--accent); border-left-color: inherit; }
 .sensor-tile.dimmed { opacity: 0.45; }
 .period-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0.25rem 0 0.5rem; }
+/* The sensor legend lives under the graph card, not inside it. */
+.sensor-legend { margin: -0.5rem 0 1rem; padding: 0 0.25rem; }
+html.device-mobile .sensor-legend { gap: 0.15rem 0.6rem; }
+html.device-mobile .sensor-legend .legend-toggle { padding: 0.1rem 0.25rem; font-size: 0.75rem; }
+html.device-mobile .sensor-legend i { width: 10px; }
 .period-label { font-weight: 600; }
+/* On a phone (the device, not the window width - see theme.js) the tiles are
+   one line each, two per row: the name on the left, the value on the right. */
+html.device-mobile .sensor-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
+html.device-mobile .sensor-tile .tile-when { display: none; }
+html.device-mobile .sensor-tile {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+}
+html.device-mobile .sensor-tile .tile-name { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; }
+html.device-mobile .sensor-tile .tile-value { flex: none; font-size: 0.98rem; white-space: nowrap; }
+html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 .viz-chart .band { opacity: 0.16; }
 /* A dozen sensor curves share one graph: thinner than the consumption lines. */
 [data-sensor-chart] .viz-chart .series path { stroke-width: 1; }
@@ -563,19 +582,6 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   #view-sensors .view-heading { flex-wrap: wrap; }
   .sensor-controls { flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem 0.6rem; margin-left: auto; }
   .range-tabs button { padding: 0.3rem 0.45rem; font-size: 0.78rem; }
-  /* One line per tile, two per row: the name on the left, the value on the right. */
-  .sensor-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
-  .sensor-tile .tile-when { display: none; }
-  .sensor-tile {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.4rem;
-    padding: 0.35rem 0.5rem;
-  }
-  .sensor-tile .tile-name { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; }
-  .sensor-tile .tile-value { flex: none; font-size: 0.98rem; white-space: nowrap; }
-  .sensor-tile .tile-value .meta { font-size: 0.7rem; }
   .range-tabs .long { display: none; }
   .range-tabs .short { display: inline; }
   /* The build stamp shrinks to an info icon; a tap reveals it in a bubble. */

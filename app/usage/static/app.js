@@ -1339,8 +1339,8 @@ function renderSensors() {
     </div>
     <div class="card">
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
-      ${sensorLegendMarkup(allSeries)}
-    </div>`;
+    </div>
+    ${sensorLegendMarkup(allSeries)}`;
   wireSensorChartHover("#sensor-content");
   $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(); });
   $("#sensor-later").addEventListener("click", () => {
@@ -1408,7 +1408,7 @@ function renderSensors() {
 function sensorLegendMarkup(seriesList) {
   if (!seriesList.length) return "";
   return `
-    <div class="viz-legend">
+    <div class="viz-legend sensor-legend">
       ${seriesList.map((item) => {
         const off = state.hiddenSensors.has(item.sensor_id) ? " off" : "";
         return `<button class="legend-toggle${off}" type="button" data-sensor-toggle="${item.sensor_id}" title="Show or hide this sensor">
