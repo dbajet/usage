@@ -75,8 +75,17 @@ if [ -n "${DEPLOY_BRANCH:-}" ] && [ "$DEPLOY_BRANCH" != "$BRANCH" ]; then
     echo "   git -C $(pwd) checkout $DEPLOY_BRANCH"
     exit 1
 fi
-# Fast-forward only: a local commit or edit in the clone stops the deploy here
-# rather than quietly merging, or worse, building something nobody reviewed.
+# Committed code only. A fast-forward alone would not catch an edit made on
+# the server when the branch has nothing new to bring: the merge says "already
+# up to date" and the build takes the edit with it. Ignored files - .env, the
+# CSV exports - do not count as changes.
+if [ -n "$(git status --porcelain)" ]; then
+    echo "❌ The clone has local changes; production builds only what is committed."
+    echo "   git -C $(pwd) status"
+    exit 1
+fi
+# Fast-forward only: a local commit in the clone stops the deploy here rather
+# than quietly merging, or worse, building something nobody reviewed.
 git fetch --quiet origin "$BRANCH"
 if ! git merge --ff-only "origin/$BRANCH"; then
     echo "❌ The clone cannot fast-forward onto origin/$BRANCH."
