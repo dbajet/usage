@@ -90,9 +90,12 @@ git push                            # production deploys the last pushed commit
 bash deploy/deploy-from-local.sh    # runs the server deploy over ssh
 ```
 
-The server-side `deploy/deploy-prod.sh` runs from the git clone in `/opt/usage`
-and pulls the current branch first (nothing is copied from your machine). The
-deploy builds the idle colour, waits for `/healthz`, points nginx at it, then
+Nothing is copied from your machine: the wrapper refuses a detached HEAD or an
+unpushed branch (and asks before deploying anything but `main`), then runs
+`deploy/deploy-prod.sh` in the git clone at `/opt/usage` over ssh. That script
+refuses to run as anyone but the clone's owner, a missing or shallow clone, a
+detached HEAD, a branch other than the one deployed from, and local changes,
+then fast-forwards the branch. The deploy builds the idle colour, waits for `/healthz`, points nginx at it, then
 stops the old colour. Migrations run at startup and must stay additive (both
 colours briefly share the database).
 
