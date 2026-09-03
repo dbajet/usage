@@ -1141,6 +1141,7 @@ function wireChartHover(rootSelector) {
 // ---------- Sensors (Home Assistant thermometers) ----------
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
+const LONG_PRESS_MS = 500;
 
 function fmtAgo(iso) {
   const elapsed = Date.now() - Date.parse(iso);
@@ -1255,18 +1256,19 @@ function renderSensors() {
   }
   const colors = sensorColors(sensors);
   const activeIds = sensors.filter((sensor) => sensor.active).map((sensor) => sensor.id);
-  // A tile is "solo" when it is the only active sensor left visible.
-  const soloId = activeIds.length > 1 && activeIds.filter((id) => !state.hiddenSensors.has(id)).length === 1
-    ? activeIds.find((id) => !state.hiddenSensors.has(id))
-    : null;
+  // Tiles are "selected" while some sensors are hidden: the visible ones.
+  const visibleIds = activeIds.filter((id) => !state.hiddenSensors.has(id));
+  const selecting = visibleIds.length < activeIds.length;
   const tiles = sensors
     .filter((sensor) => sensor.active && sensor.last_value !== null)
     .map((sensor) => {
       const stale = Date.now() - Date.parse(sensor.last_at) > SENSOR_STALE_MS;
-      const classes = ["sensor-tile", stale ? "stale" : "", sensor.id === soloId ? "solo" : "", soloId !== null && sensor.id !== soloId ? "dimmed" : ""];
+      const visible = !state.hiddenSensors.has(sensor.id);
+      const classes = ["sensor-tile", stale ? "stale" : "", selecting && visible ? "selected" : "", selecting && !visible ? "dimmed" : ""];
       return `
         <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" role="button" tabindex="0"
-          style="border-left-color:${colors.get(sensor.id)}" title="${esc(sensor.entity_id)} - click to show only this sensor">
+          style="border-left-color:${colors.get(sensor.id)}"
+          title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it">
           <div class="tile-name">${esc(sensor.name)}</div>
           <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
           <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
@@ -1290,16 +1292,53 @@ function renderSensors() {
     </div>`;
   wireSensorChartHover("#sensor-content");
   $$("[data-sensor-tile]").forEach((tile) => {
+    const sensorId = Number(tile.dataset.sensorTile);
     const solo = () => {
-      // First click: only this sensor on the graph. Second click: everyone back.
-      const sensorId = Number(tile.dataset.sensorTile);
-      state.hiddenSensors = sensorId === soloId
+      // Plain click: only this sensor on the graph; again on the lone one: everyone back.
+      state.hiddenSensors = visibleIds.length === 1 && visibleIds[0] === sensorId
         ? new Set()
         : new Set(activeIds.filter((id) => id !== sensorId));
       renderSensors();
     };
-    tile.addEventListener("click", solo);
-    tile.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); solo(); } });
+    const toggle = () => {
+      // Ctrl/Cmd+click, or a long press on a phone: add or remove this sensor
+      // from the selection. Removing the last one brings everyone back.
+      const hidden = new Set(state.hiddenSensors);
+      if (!selecting) {
+        state.hiddenSensors = new Set(activeIds.filter((id) => id !== sensorId));
+      } else if (hidden.has(sensorId)) {
+        hidden.delete(sensorId);
+        state.hiddenSensors = hidden;
+      } else {
+        hidden.add(sensorId);
+        state.hiddenSensors = activeIds.every((id) => hidden.has(id)) ? new Set() : hidden;
+      }
+      renderSensors();
+    };
+    let pressTimer = null;
+    // Touch events rather than pointer events: Chrome cancels the pointer on
+    // a long hold, but keeps the touch sequence alive. The toggle re-renders
+    // the tiles, so the click the browser fires after the touch lands on a
+    // new element: a shared flag swallows it.
+    tile.addEventListener("touchstart", () => {
+      state.tileLongPressed = false;
+      pressTimer = setTimeout(() => { pressTimer = null; state.tileLongPressed = true; toggle(); }, LONG_PRESS_MS);
+    }, { passive: true });
+    ["touchend", "touchmove", "touchcancel"].forEach((name) => tile.addEventListener(name, () => {
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    }, { passive: true }));
+    tile.addEventListener("contextmenu", (event) => event.preventDefault());
+    tile.addEventListener("click", (event) => {
+      if (state.tileLongPressed) { state.tileLongPressed = false; return; }
+      if (event.ctrlKey || event.metaKey) toggle();
+      else solo();
+    });
+    tile.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (event.ctrlKey || event.metaKey) toggle();
+      else solo();
+    });
   });
   $$("[data-sensor-toggle]").forEach((button) => button.addEventListener("click", () => {
     const sensorId = Number(button.dataset.sensorToggle);

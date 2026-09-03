@@ -488,10 +488,18 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .sensor-tile .tile-value { font-size: 1.25rem; font-weight: 600; line-height: 1.3; }
 .sensor-tile .tile-when { font-size: 0.72rem; color: var(--muted); }
 .sensor-tile.stale .tile-value { color: var(--muted); }
-.sensor-tile { cursor: pointer; transition: opacity 0.15s; }
+.sensor-tile {
+  cursor: pointer;
+  transition: opacity 0.15s;
+  /* A long press selects on touch screens: no text selection, no callout menu. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
 .sensor-tile:hover { background: var(--accent-soft); }
 .sensor-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.sensor-tile.solo { background: var(--accent-soft); border-color: var(--accent); border-left-color: inherit; }
+.sensor-tile.selected { background: var(--accent-soft); border-color: var(--accent); border-left-color: inherit; }
 .sensor-tile.dimmed { opacity: 0.45; }
 .viz-chart .band { opacity: 0.16; }
 /* A dozen sensor curves share one graph: thinner than the consumption lines. */
