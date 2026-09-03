@@ -33,6 +33,10 @@ class _Constants:
     reminder_check_seconds: int = 300
     reminder_hour: int = 6
     reminder_minute: int = 15
+    # Sensor series: (range in days, bucket in minutes) - about 150 points per range.
+    sensor_ranges: tuple[tuple[int, int], ...] = ((1, 10), (7, 60), (30, 360), (365, 1440))
+    ingest_max_samples: int = 1000
+    ingest_token_bytes: int = 32
     email_test_suffixes: tuple[str, ...] = (
         "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
         ".test", ".invalid", ".example", ".localhost",

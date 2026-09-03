@@ -46,6 +46,21 @@ uv run --extra dev mypy .
 uv run --extra dev ruff check .
 ```
 
+## Sensors (Home Assistant)
+
+Thermometers reach the app the other way round from meter readings: Home
+Assistant pushes them. Every ten minutes an automation POSTs the current value
+of each listed entity to `/api/ingest/samples`, authenticated with the house's
+sensor token (Settings, Houses, "Sensor token" - admins only, shown once, only
+its hash is stored). The Home Assistant side is `deploy/home-assistant.yaml`.
+
+Unknown entities become sensors on their own, named by the entity map in that
+file; users rename, reorder or hide them in Settings, Sensors (there is no
+delete: a deleted sensor would only come back on the next push). Samples are keyed by the instant the value
+last changed, so a value re-sent unchanged is not a duplicate. The Sensors view
+shows the latest values and a trend over a day, a week, a month or a year, with
+averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band.
+
 ## Historical data
 
 The spreadsheet exports (`fremur_edf_gdf_eau.csv`, `dougmar_edf_gdf_eau.csv`)

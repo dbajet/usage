@@ -22,7 +22,13 @@ class ReadingCommand:
         houses = [
             house
             for house in self._database.decrypt_rows(
-                self._database.fetch_all("SELECT id, name_sealed AS name FROM houses ORDER BY id"),
+                self._database.fetch_all(
+                    """
+                    SELECT houses.id, houses.name_sealed AS name,
+                           EXISTS (SELECT 1 FROM sensors WHERE sensors.house_id = houses.id) AS has_sensors
+                    FROM houses ORDER BY houses.id
+                    """,
+                ),
                 ("name",),
             )
             if int(house["id"]) in house_ids

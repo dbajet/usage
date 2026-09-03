@@ -12,6 +12,9 @@ let state = {
   entriesPage: 1,
   readingSource: "manual",
   hiddenMeters: new Set(),
+  sensors: null,
+  sensorDays: 1,
+  hiddenSensors: new Set(),
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -182,11 +185,22 @@ function showView(name) {
     showSettingsTab(tab);
     loadPasskeys();
     loadMeters();
+    loadSensorSettings();
     loadReminder();
     if (state.me && state.me.is_admin) loadAdmin();
   }
   if (name === "entries") loadEntries();
   if (name === "stats") loadStats();
+  if (name === "sensors") loadSensors();
+}
+
+async function chooseHouseView() {
+  // After the house changes, a view or tab the new house cannot show falls back.
+  await ensureDashboard();
+  if (currentView() === "sensors" && !houseHasSensors()) { showView("stats"); return; }
+  if (currentView() === "settings" && storedItem("usage-settings-tab", "meters") === "sensors" && !houseHasSensors()) {
+    showSettingsTab("meters");
+  }
 }
 
 async function load() {
@@ -228,7 +242,7 @@ function showApp() {
     })
     .catch(() => {});
   const view = storedItem("usage-view", "stats");
-  showView(["stats", "entries", "settings"].includes(view) ? view : "stats");
+  showView(["stats", "sensors", "entries", "settings"].includes(view) ? view : "stats");
 }
 
 async function requestLink(event) {
@@ -340,6 +354,16 @@ async function ensureDashboard() {
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
   $("#house-btn").hidden = houses.length < 2;
+  // Sensors only show up for a house that has received some: the nav item
+  // and the settings tab stay out of the way elsewhere.
+  const hasSensors = Boolean(current && current.has_sensors);
+  $('[data-nav="sensors"]').hidden = !hasSensors;
+  $('[data-settings-tab="sensors"]').hidden = !hasSensors;
+}
+
+function houseHasSensors() {
+  const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
+  return Boolean(current && current.has_sensors);
 }
 
 function currentView() {
@@ -359,6 +383,8 @@ async function chooseHouse() {
   state.entriesPage = 1;
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
+  state.hiddenSensors = new Set();
+  await chooseHouseView();
   showView(currentView());
 }
 
@@ -1112,10 +1138,455 @@ function wireChartHover(rootSelector) {
   });
 }
 
+// ---------- Sensors (Home Assistant thermometers) ----------
+
+const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
+
+function fmtAgo(iso) {
+  const elapsed = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(elapsed)) return "";
+  const minutes = Math.round(elapsed / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
+}
+
+function fmtTemp(value) {
+  return Number(value).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function fmtInstant(time, days) {
+  const date = new Date(time);
+  const day = `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
+  if (days >= 365) return day;
+  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return `${day}, ${clock}`;
+}
+
+function wantsCelsius() {
+  return storedItem("usage-temp-unit", "F") === "C";
+}
+
+function displayTemp(value, unit) {
+  // A viewer's choice: every temperature shows in Celsius or in Fahrenheit,
+  // whatever the thermometer reports. Other units pass through.
+  if (value === null || value === undefined) return { value, unit };
+  if (wantsCelsius() && unit === "°F") return { value: ((value - 32) * 5) / 9, unit: "°C" };
+  if (!wantsCelsius() && unit === "°C") return { value: (value * 9) / 5 + 32, unit: "°F" };
+  return { value, unit };
+}
+
+function displaySensors(sensors) {
+  return sensors.map((sensor) => {
+    const shown = displayTemp(sensor.last_value, sensor.unit);
+    return { ...sensor, last_value: shown.value, unit: shown.unit };
+  });
+}
+
+function displaySeries(seriesList) {
+  return seriesList.map((item) => ({
+    ...item,
+    unit: displayTemp(0, item.unit).unit,
+    points: item.points.map((point) => ({
+      ...point,
+      average: displayTemp(point.average, item.unit).value,
+      low: displayTemp(point.low, item.unit).value,
+      high: displayTemp(point.high, item.unit).value,
+    })),
+  }));
+}
+
+function sensorColors(sensors) {
+  // One colour per active sensor, in the house's order: tiles, lines and legend agree.
+  return new Map(sensors.filter((sensor) => sensor.active).map((sensor, index) => [sensor.id, VIZ_COLORS[index % VIZ_COLORS.length]]));
+}
+
+async function loadSensors() {
+  try {
+    await ensureDashboard();
+    if (!state.houseId) {
+      $("#sensor-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+      return;
+    }
+    state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
+    $("#sensor-celsius").checked = wantsCelsius();
+    $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
+    if (!houseHasSensors()) { showView("stats"); return; }
+    const list = await api(`/api/sensors?house_id=${state.houseId}`);
+    const series = await api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}`);
+    state.sensors = list.sensors || [];
+    state.sensorData = series;
+    renderSensors();
+  } catch (error) { showAppError(error); }
+}
+
+function renderSensors() {
+  const sensors = displaySensors(state.sensors || []);
+  const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
+  if (!sensors.length) {
+    $("#sensor-content").innerHTML = `
+      <div class="card">
+        <p class="meta">No sensor yet. Once Home Assistant pushes readings with this house's sensor token
+          (Settings, Houses), the thermometers appear here on their own.</p>
+      </div>`;
+    return;
+  }
+  const colors = sensorColors(sensors);
+  const activeIds = sensors.filter((sensor) => sensor.active).map((sensor) => sensor.id);
+  // A tile is "solo" when it is the only active sensor left visible.
+  const soloId = activeIds.length > 1 && activeIds.filter((id) => !state.hiddenSensors.has(id)).length === 1
+    ? activeIds.find((id) => !state.hiddenSensors.has(id))
+    : null;
+  const tiles = sensors
+    .filter((sensor) => sensor.active && sensor.last_value !== null)
+    .map((sensor) => {
+      const stale = Date.now() - Date.parse(sensor.last_at) > SENSOR_STALE_MS;
+      const classes = ["sensor-tile", stale ? "stale" : "", sensor.id === soloId ? "solo" : "", soloId !== null && sensor.id !== soloId ? "dimmed" : ""];
+      return `
+        <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" role="button" tabindex="0"
+          style="border-left-color:${colors.get(sensor.id)}" title="${esc(sensor.entity_id)} - click to show only this sensor">
+          <div class="tile-name">${esc(sensor.name)}</div>
+          <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
+          <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
+        </div>`;
+    }).join("");
+  const allSeries = displaySeries(data.series || []).map((item) => ({ ...item, color: colors.get(item.sensor_id) || VIZ_COLORS[0] }));
+  const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
+  const rangeLabel = { 1: "last 24 hours", 7: "last 7 days", 30: "last 30 days", 365: "last year" }[data.days] || "";
+  const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
+  $("#sensor-content").innerHTML = `
+    <div class="card">
+      <h3>Now</h3>
+      <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
+    </div>
+    <div class="card">
+      <h3>Trend <span class="meta">(${rangeLabel}, ${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""} - click the legend to hide a sensor)</span></h3>
+      ${sensorChartMarkup(visible, data.days, data.bucket_minutes) || '<p class="meta">Not enough readings in this range yet.</p>'}
+      ${sensorLegendMarkup(allSeries)}
+    </div>`;
+  wireSensorChartHover("#sensor-content");
+  $$("[data-sensor-tile]").forEach((tile) => {
+    const solo = () => {
+      // First click: only this sensor on the graph. Second click: everyone back.
+      const sensorId = Number(tile.dataset.sensorTile);
+      state.hiddenSensors = sensorId === soloId
+        ? new Set()
+        : new Set(activeIds.filter((id) => id !== sensorId));
+      renderSensors();
+    };
+    tile.addEventListener("click", solo);
+    tile.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); solo(); } });
+  });
+  $$("[data-sensor-toggle]").forEach((button) => button.addEventListener("click", () => {
+    const sensorId = Number(button.dataset.sensorToggle);
+    if (state.hiddenSensors.has(sensorId)) state.hiddenSensors.delete(sensorId);
+    else state.hiddenSensors.add(sensorId);
+    renderSensors();
+  }));
+}
+
+function sensorLegendMarkup(seriesList) {
+  if (!seriesList.length) return "";
+  return `
+    <div class="viz-legend">
+      ${seriesList.map((item) => {
+        const off = state.hiddenSensors.has(item.sensor_id) ? " off" : "";
+        return `<button class="legend-toggle${off}" type="button" data-sensor-toggle="${item.sensor_id}" title="Show or hide this sensor">
+          <i style="background:${item.color}"></i>${esc(item.name)}${item.unit ? ` (${esc(item.unit)})` : ""}</button>`;
+      }).join("")}
+    </div>`;
+}
+
+function sensorTicks(tMin, tMax, days) {
+  // Ticks on local-time boundaries: hours for a day, midnights for a week or
+  // a month, the first of each month for a year.
+  const ticks = [];
+  const cursor = new Date(tMin);
+  cursor.setSeconds(0, 0);
+  if (days <= 1) {
+    cursor.setMinutes(0);
+    cursor.setHours(Math.ceil(cursor.getHours() / 4) * 4);
+  } else if (days <= 30) {
+    cursor.setHours(0, 0);
+    cursor.setDate(cursor.getDate() + 1);
+  } else {
+    cursor.setHours(0, 0);
+    cursor.setMonth(cursor.getMonth() + 1, 1);
+  }
+  while (cursor.getTime() <= tMax) {
+    const time = cursor.getTime();
+    let label;
+    if (days <= 1) label = `${String(cursor.getHours()).padStart(2, "0")}:00`;
+    else if (days <= 30) label = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getDate()}`;
+    else label = MONTH_NAMES[cursor.getMonth()];
+    if (days <= 30 && days > 7 && cursor.getDate() % 5 !== 0) label = "";
+    if (label) ticks.push({ time, label });
+    if (days <= 1) cursor.setHours(cursor.getHours() + 4);
+    else if (days <= 30) cursor.setDate(cursor.getDate() + 1);
+    else cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return ticks;
+}
+
+function sensorStep(rough) {
+  // A finer ladder than the consumption charts: 20 -> 25 -> 50 rather than 20 -> 50.
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+  const normalized = rough / magnitude;
+  const factor = [1, 2, 2.5, 5, 10].find((candidate) => normalized <= candidate) || 10;
+  return factor * magnitude;
+}
+
+function sensorChartMarkup(seriesList, days, bucketMinutes) {
+  const tMax = Date.now();
+  const tMin = tMax - days * 86400000;
+  const points = seriesList.flatMap((item) => item.points);
+  if (points.length < 2) return "";
+  const width = 720;
+  const height = 260;
+  const left = 44;
+  const right = 16;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  let low = Math.min(...points.map((point) => point.low));
+  let high = Math.max(...points.map((point) => point.high));
+  if (high - low < 2) { low -= 1; high += 1; }
+  // Temperatures are not zero-based: the scale hugs the data, about six divisions.
+  const step = sensorStep((high - low) / 6);
+  const yMin = Math.floor(low / step) * step;
+  const yMax = Math.ceil(high / step) * step;
+  const xAt = (time) => left + ((time - tMin) / (tMax - tMin)) * plotWidth;
+  const yAt = (value) => top + plotHeight - ((value - yMin) / (yMax - yMin)) * plotHeight;
+
+  const gridLines = [];
+  const yLabels = [];
+  for (let value = yMin; value <= yMax + step / 2; value += step) {
+    const y = yAt(value);
+    gridLines.push(`<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
+    yLabels.push(`<text x="${left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${fmtValue(value)}</text>`);
+  }
+  const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
+    `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
+
+  const withBand = bucketMinutes > 10;
+  const paths = seriesList.map((item) => {
+    const timed = item.points.map((point) => ({ ...point, time: Date.parse(point.at) }));
+    const line = timed.map((point, index) => `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.average).toFixed(1)}`).join(" ");
+    let band = "";
+    if (withBand && timed.length > 1) {
+      const upper = timed.map((point) => `${xAt(point.time).toFixed(1)},${yAt(point.high).toFixed(1)}`);
+      const lower = timed.slice().reverse().map((point) => `${xAt(point.time).toFixed(1)},${yAt(point.low).toFixed(1)}`);
+      band = `<polygon class="band" points="${upper.join(" ")} ${lower.join(" ")}" fill="${item.color}"></polygon>`;
+    }
+    return `<g class="series">${band}<path d="${line}" stroke="${item.color}"></path></g>`;
+  });
+
+  const config = {
+    tMin,
+    tMax,
+    days,
+    left,
+    plotWidth,
+    top,
+    plotHeight,
+    yMin,
+    yMax,
+    bucketMs: bucketMinutes * 60000,
+    series: seriesList.map((item) => ({
+      name: item.name,
+      unit: item.unit,
+      color: item.color,
+      points: item.points.map((point) => [Date.parse(point.at), point.average, point.low, point.high]),
+    })),
+  };
+  return `
+    <div class="viz-holder" data-sensor-chart="${esc(JSON.stringify(config))}">
+      <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Sensor trend">
+        <g class="grid">${gridLines.join("")}</g>
+        <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        ${paths.join("")}
+        <g class="viz-hover" hidden>
+          <g class="hov-dots"></g>
+        </g>
+      </svg>
+      <div class="viz-tip" hidden></div>
+    </div>`;
+}
+
+function wireSensorChartHover(rootSelector) {
+  $$(`${rootSelector} [data-sensor-chart]`).forEach((holder) => {
+    const config = JSON.parse(holder.dataset.sensorChart);
+    const svg = holder.querySelector("svg");
+    const hover = svg.querySelector(".viz-hover");
+    const dots = hover.querySelector(".hov-dots");
+    const tip = holder.querySelector(".viz-tip");
+    const xAt = (time) => config.left + ((time - config.tMin) / (config.tMax - config.tMin)) * config.plotWidth;
+    const yAt = (value) => config.top + config.plotHeight - ((value - config.yMin) / (config.yMax - config.yMin)) * config.plotHeight;
+    const nearest = (series, time) => {
+      let best = null;
+      series.points.forEach((point) => {
+        if (best === null || Math.abs(point[0] - time) < Math.abs(best[0] - time)) best = point;
+      });
+      return best && Math.abs(best[0] - time) <= config.bucketMs * 1.5 ? best : null;
+    };
+    svg.addEventListener("mousemove", (event) => {
+      const rect = svg.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) * 720) / rect.width;
+      const time = config.tMin + ((x - config.left) / config.plotWidth) * (config.tMax - config.tMin);
+      dots.innerHTML = "";
+      const rows = [];
+      let shown = null;
+      config.series.forEach((series) => {
+        const point = nearest(series, time);
+        if (!point) return;
+        if (shown === null) shown = point[0];
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("class", "hov-dot");
+        dot.setAttribute("cx", xAt(point[0]).toFixed(1));
+        dot.setAttribute("cy", yAt(point[1]).toFixed(1));
+        dot.setAttribute("r", "4.5");
+        dot.setAttribute("stroke", series.color);
+        dots.appendChild(dot);
+        const range = point[2] !== point[3] ? ` (${fmtTemp(point[2])} – ${fmtTemp(point[3])})` : "";
+        rows.push(`${esc(series.name)}: ${fmtTemp(point[1])}${series.unit ? ` ${esc(series.unit)}` : ""}${range}`);
+      });
+      if (shown === null) {
+        hover.setAttribute("hidden", "");
+        tip.hidden = true;
+        return;
+      }
+      hover.removeAttribute("hidden");
+      tip.innerHTML = [`<strong>${esc(fmtInstant(shown, config.days))}</strong>`, ...rows].join("<br>");
+      tip.hidden = false;
+      const holderRect = holder.getBoundingClientRect();
+      let tipLeft = event.clientX - holderRect.left + 14;
+      if (tipLeft + tip.offsetWidth > holderRect.width - 8) {
+        tipLeft = Math.max(8, event.clientX - holderRect.left - tip.offsetWidth - 14);
+      }
+      tip.style.left = `${tipLeft}px`;
+      tip.style.top = `${event.clientY - holderRect.top + 14}px`;
+    });
+    svg.addEventListener("mouseleave", () => {
+      hover.setAttribute("hidden", "");
+      tip.hidden = true;
+    });
+  });
+}
+
+async function loadSensorSettings() {
+  try {
+    await ensureDashboard();
+    const houses = state.dashboard.houses || [];
+    const current = houses.find((house) => house.id === state.houseId);
+    $("#sensors-house-name").textContent = current ? current.name : "";
+    if (!state.houseId) {
+      state.sensors = [];
+      $("#sensor-list").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
+      return;
+    }
+    if (!houseHasSensors()) {
+      state.sensors = [];
+      if (storedItem("usage-settings-tab", "meters") === "sensors") showSettingsTab("meters");
+      return;
+    }
+    const data = await api(`/api/sensors?house_id=${state.houseId}`);
+    state.sensors = data.sensors || [];
+    renderSensorSettings();
+  } catch (error) { showAppError(error); }
+}
+
+function renderSensorSettings() {
+  const sensors = state.sensors || [];
+  $("#sensor-list").innerHTML = sensors.map((sensor, index) => `
+    <div class="mini-row wrap-row${sensor.active ? "" : " inactive"}">
+      <span>
+        <strong>${esc(sensor.name)}</strong>${sensor.unit ? ` · ${esc(sensor.unit)}` : ""}${sensor.active ? "" : ' <span class="badge">hidden</span>'}
+        <br>
+        <span class="meta">${esc(sensor.entity_id)}${sensor.last_value === null ? "" : ` · ${fmtTemp(sensor.last_value)} ${esc(sensor.unit)} ${esc(fmtAgo(sensor.last_at))}`}</span>
+      </span>
+      <span class="icon-actions">
+        <button class="ghost compact icon-only" data-move-sensor="${sensor.id}" data-move-delta="-1" type="button"
+          title="Move up"${index === 0 ? " disabled" : ""}>${ICON_UP}</button>
+        <button class="ghost compact icon-only" data-move-sensor="${sensor.id}" data-move-delta="1" type="button"
+          title="Move down"${index === sensors.length - 1 ? " disabled" : ""}>${ICON_DOWN}</button>
+        <button class="ghost compact" data-edit-sensor="${sensor.id}" type="button">Edit</button>
+        <button class="ghost compact" data-toggle-sensor="${sensor.id}" type="button"
+          title="${sensor.active ? "Keep collecting, but leave it out of the graphs" : "Show it in the graphs again"}">${sensor.active ? "Hide" : "Show"}</button>
+      </span>
+    </div>`).join("") || '<p class="meta">No sensor yet - they appear once Home Assistant starts pushing readings.</p>';
+  $$("[data-move-sensor]").forEach((button) => button.addEventListener("click", async () => {
+    // The sensor order is shared by the whole house.
+    const ids = state.sensors.map((sensor) => sensor.id);
+    const index = ids.indexOf(Number(button.dataset.moveSensor));
+    const target = index + Number(button.dataset.moveDelta);
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    try {
+      await api("/api/sensors/order", { method: "POST", body: JSON.stringify({ house_id: state.houseId, sensor_ids: ids }) });
+      await loadSensorSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-edit-sensor]").forEach((button) => button.addEventListener("click", async () => {
+    const sensor = state.sensors.find((item) => item.id === Number(button.dataset.editSensor));
+    const answers = await openModal({
+      title: `Edit sensor · ${sensor.name}`,
+      message: sensor.entity_id,
+      fields: [
+        { name: "name", label: "Name", value: sensor.name },
+        { name: "unit", label: "Unit", value: sensor.unit },
+        { name: "active", label: "Shown in the graphs", type: "checkbox", value: sensor.active },
+      ],
+    });
+    if (answers === null) return;
+    try {
+      await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
+        name: answers.name,
+        unit: answers.unit,
+        active: answers.active,
+      }) });
+      await loadSensorSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-toggle-sensor]").forEach((button) => button.addEventListener("click", async () => {
+    // Hidden sensors keep collecting; deleting one would only bring it back on the next push.
+    const sensor = state.sensors.find((item) => item.id === Number(button.dataset.toggleSensor));
+    try {
+      await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
+        name: sensor.name,
+        unit: sensor.unit,
+        active: !sensor.active,
+      }) });
+      await loadSensorSettings();
+    } catch (error) { showAppError(error); }
+  }));
+}
+
+async function issueSensorToken(house) {
+  const warning = house.has_sensor_token
+    ? "This house already has a sensor token. Generating a new one stops the previous one at once: update Home Assistant with the new token."
+    : "The token lets Home Assistant push the thermometers' readings into this house. It is shown once.";
+  if (!await openModal({ title: `Sensor token · ${house.name}`, message: warning, submitLabel: "Generate" })) return;
+  try {
+    const data = await api(`/api/houses/${house.id}/sensor-token`, { method: "POST", body: "{}" });
+    await openModal({
+      title: `Sensor token · ${house.name}`,
+      message: "Copy it now into Home Assistant's secrets.yaml (see deploy/home-assistant.yaml); it will not be shown again.",
+      submitLabel: "Done",
+      fields: [{ type: "html", html: `<div class="token-box">${esc(data.token)}</div>` }],
+    });
+    await loadAdmin();
+  } catch (error) { showAppError(error); }
+}
+
 async function loadAdmin() {
   try {
     state.admin = await api("/api/admin/overview");
-    $$("#settings-tabs button").forEach((button) => { button.hidden = false; });
+    $$("#settings-tabs button").forEach((button) => {
+      if (button.dataset.settingsTab === "houses" || button.dataset.settingsTab === "users") button.hidden = false;
+    });
     renderHouses();
     renderUsers();
   } catch (error) { showAppError(error); }
@@ -1174,10 +1645,15 @@ function renderHouses() {
     <div class="mini-row">
       <span><strong>${esc(house.name)}</strong> <span class="meta">· ${esc(house.timezone || "")}</span></span>
       <span>
+        <button class="ghost compact" data-token-house="${house.id}" type="button"
+          title="${house.has_sensor_token ? "Replace the Home Assistant sensor token" : "Create the Home Assistant sensor token"}">
+          Sensor token${house.has_sensor_token ? ' <span class="badge">set</span>' : ""}</button>
         <button class="ghost compact" data-rename-house="${house.id}" type="button">Edit</button>
         <button class="ghost compact danger" data-delete-house="${house.id}" type="button">Delete</button>
       </span>
     </div>`).join("") || '<p class="meta">No house yet.</p>';
+  $$("[data-token-house]").forEach((button) => button.addEventListener("click", () =>
+    issueSensorToken((state.admin.houses || []).find((item) => item.id === Number(button.dataset.tokenHouse)))));
   $$("[data-rename-house]").forEach((button) => button.addEventListener("click", async () => {
     const house = (state.admin.houses || []).find((item) => item.id === Number(button.dataset.renameHouse));
     const answers = await openModal({
@@ -1527,6 +2003,14 @@ addEventListener("DOMContentLoaded", () => {
     $("#meter-register-row").hidden = $("#meter-monthly").checked;
   });
   $("#house-btn").addEventListener("click", chooseHouse);
+  $$("[data-sensor-days]").forEach((button) => button.addEventListener("click", () => {
+    storeItem("usage-sensor-days", button.dataset.sensorDays);
+    loadSensors();
+  }));
+  $("#sensor-celsius").addEventListener("change", () => {
+    storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
+    renderSensors();
+  });
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));
   $("#stats-show-tables").addEventListener("change", saveStatsPrefs);

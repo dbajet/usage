@@ -12,6 +12,7 @@ from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
 from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
+from usage.handlers.ingest_request import IngestRequest
 from usage.handlers.meter_axis_request import MeterAxisRequest
 from usage.handlers.meter_color_request import MeterColorRequest
 from usage.handlers.meter_order_request import MeterOrderRequest
@@ -27,6 +28,9 @@ from usage.handlers.register_input import RegisterInput
 from usage.handlers.register_request import RegisterRequest
 from usage.handlers.reminder_request import ReminderRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
+from usage.handlers.sample_input import SampleInput
+from usage.handlers.sensor_order_request import SensorOrderRequest
+from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
@@ -57,7 +61,9 @@ def helper_user() -> SessionUser:
     return SessionUser(user_id=7, email="jane@example.com", name="Jane Doe", is_admin=False)
 
 
-def helper_instance(settings: Settings | None = None) -> tuple[ApiRouter, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
+def helper_instance(
+    settings: Settings | None = None,
+) -> tuple[ApiRouter, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
     if settings is None:
         settings = helper_settings()
     auth_command = MagicMock()
@@ -66,6 +72,7 @@ def helper_instance(settings: Settings | None = None) -> tuple[ApiRouter, MagicM
     meter_command = MagicMock()
     reading_command = MagicMock()
     stats_command = MagicMock()
+    sensor_command = MagicMock()
     with (
         patch("usage.handlers.api_router.EmailSender") as email_sender_class,
         patch("usage.handlers.api_router.MeterReader") as meter_reader_class,
@@ -75,6 +82,7 @@ def helper_instance(settings: Settings | None = None) -> tuple[ApiRouter, MagicM
         patch("usage.handlers.api_router.MeterCommand") as meter_command_class,
         patch("usage.handlers.api_router.ReadingCommand") as reading_command_class,
         patch("usage.handlers.api_router.StatsCommand") as stats_command_class,
+        patch("usage.handlers.api_router.SensorCommand") as sensor_command_class,
     ):
         email_sender_class.side_effect = [MagicMock()]
         meter_reader_class.side_effect = [MagicMock()]
@@ -84,8 +92,9 @@ def helper_instance(settings: Settings | None = None) -> tuple[ApiRouter, MagicM
         meter_command_class.side_effect = [meter_command]
         reading_command_class.side_effect = [reading_command]
         stats_command_class.side_effect = [stats_command]
+        sensor_command_class.side_effect = [sensor_command]
         tested = ApiRouter(MagicMock(), settings)
-    return tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command
+    return tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command
 
 
 def helper_request(hostname: str = "usage.example") -> SimpleNamespace:
@@ -103,6 +112,7 @@ def test___init__() -> None:
     meter_command = MagicMock()
     reading_command = MagicMock()
     stats_command = MagicMock()
+    sensor_command = MagicMock()
     with (
         patch("usage.handlers.api_router.EmailSender") as email_sender_class,
         patch("usage.handlers.api_router.MeterReader") as meter_reader_class,
@@ -112,6 +122,7 @@ def test___init__() -> None:
         patch("usage.handlers.api_router.MeterCommand") as meter_command_class,
         patch("usage.handlers.api_router.ReadingCommand") as reading_command_class,
         patch("usage.handlers.api_router.StatsCommand") as stats_command_class,
+        patch("usage.handlers.api_router.SensorCommand") as sensor_command_class,
     ):
         email_sender_class.side_effect = [email_sender]
         meter_reader_class.side_effect = [meter_reader]
@@ -121,6 +132,7 @@ def test___init__() -> None:
         meter_command_class.side_effect = [meter_command]
         reading_command_class.side_effect = [reading_command]
         stats_command_class.side_effect = [stats_command]
+        sensor_command_class.side_effect = [sensor_command]
         tested = ApiRouter(database, settings)
     assert tested._database is database
     assert tested._settings is settings
@@ -131,6 +143,7 @@ def test___init__() -> None:
     assert tested._meter_command is meter_command
     assert tested._reading_command is reading_command
     assert tested._stats_command is stats_command
+    assert tested._sensor_command is sensor_command
     assert email_sender_class.mock_calls == [call(settings)]
     assert meter_reader_class.mock_calls == [call(settings)]
     assert auth_command_class.mock_calls == [call(database, settings, email_sender)]
@@ -139,6 +152,7 @@ def test___init__() -> None:
     assert meter_command_class.mock_calls == [call(database)]
     assert reading_command_class.mock_calls == [call(database, meter_reader)]
     assert stats_command_class.mock_calls == [call(database)]
+    assert sensor_command_class.mock_calls == [call(database)]
     assert database.mock_calls == []
     assert email_sender.mock_calls == []
     assert meter_reader.mock_calls == []
@@ -148,10 +162,11 @@ def test___init__() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
 
 
 def test_router() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     result = tested.router
     assert result is tested._router
     assert auth_command.mock_calls == []
@@ -160,10 +175,11 @@ def test_router() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
 
 
 def test__register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     result = sorted((route.path, tuple(sorted(route.methods))) for route in tested.router.routes)
     expected = [
         ("/api/admin/overview", ("GET",)),
@@ -176,6 +192,8 @@ def test__register() -> None:
         ("/api/houses", ("POST",)),
         ("/api/houses/{house_id}", ("DELETE",)),
         ("/api/houses/{house_id}", ("PUT",)),
+        ("/api/houses/{house_id}/sensor-token", ("POST",)),
+        ("/api/ingest/samples", ("POST",)),
         ("/api/me", ("GET",)),
         ("/api/me/meter-axis", ("POST",)),
         ("/api/me/meter-color", ("POST",)),
@@ -198,6 +216,10 @@ def test__register() -> None:
         ("/api/readings/{reading_id}", ("PUT",)),
         ("/api/registers/{register_id}", ("DELETE",)),
         ("/api/registers/{register_id}", ("PUT",)),
+        ("/api/sensors", ("GET",)),
+        ("/api/sensors/order", ("POST",)),
+        ("/api/sensors/series", ("GET",)),
+        ("/api/sensors/{sensor_id}", ("PUT",)),
         ("/api/session", ("GET",)),
         ("/api/stats/series", ("GET",)),
         ("/api/stats/tables", ("GET",)),
@@ -214,10 +236,11 @@ def test__register() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
 
 
 def test__version() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
 
     # environment values
     with patch.dict("os.environ", {"APP_VERSION": "1.2.3", "BUILD_TIME": "2026-08-18T00:00:00Z"}, clear=False):
@@ -237,10 +260,11 @@ def test__version() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
 
 
 def test__session() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -250,6 +274,7 @@ def test__session() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     tests = [
         (user, True),
@@ -266,11 +291,12 @@ def test__session() -> None:
         assert meter_command.mock_calls == []
         assert reading_command.mock_calls == []
         assert stats_command.mock_calls == []
+        assert sensor_command.mock_calls == []
         reset_mocks()
 
 
 def test__me() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -279,6 +305,7 @@ def test__me() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [helper_user()]
     result = tested._me("the-session")
@@ -290,11 +317,12 @@ def test__me() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_reminder() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -304,6 +332,7 @@ def test__set_reminder() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.set_reminder.side_effect = [{"message": "Monthly reminder enabled for this house."}]
@@ -316,11 +345,12 @@ def test__set_reminder() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.set_reminder(user, {"house_id": 3, "enabled": True})]
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_axis() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -330,6 +360,7 @@ def test__set_meter_axis() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_axis.side_effect = [{"message": "Meter axis saved."}]
@@ -342,11 +373,12 @@ def test__set_meter_axis() -> None:
     assert meter_command.mock_calls == [call.set_axis(user, {"meter_id": 9, "axis": "right"})]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_color() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -356,6 +388,7 @@ def test__set_meter_color() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_color.side_effect = [{"message": "Meter colour saved."}]
@@ -368,11 +401,12 @@ def test__set_meter_color() -> None:
     assert meter_command.mock_calls == [call.set_color(user, {"meter_id": 9, "color": "#2a78d6"})]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_order() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -382,6 +416,7 @@ def test__set_meter_order() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_order.side_effect = [{"message": "Meter order saved."}]
@@ -394,11 +429,12 @@ def test__set_meter_order() -> None:
     assert meter_command.mock_calls == [call.set_order(user, {"house_id": 3, "meter_ids": [9, 7, 8]})]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__reminder_states() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -408,6 +444,7 @@ def test__reminder_states() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.reminder_states.side_effect = [{"disabled_house_ids": [3]}]
@@ -420,12 +457,13 @@ def test__reminder_states() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.reminder_states(user)]
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__request_link() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
-    tested_prod, auth_command_prod, passkey_command_prod, admin_command_prod, meter_command_prod, reading_command_prod, stats_command_prod = helper_instance(helper_settings(dev_auth_links=False))
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    tested_prod, auth_command_prod, passkey_command_prod, admin_command_prod, meter_command_prod, reading_command_prod, stats_command_prod, sensor_command_prod = helper_instance(helper_settings(dev_auth_links=False))
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -434,12 +472,14 @@ def test__request_link() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         auth_command_prod.reset_mock()
         passkey_command_prod.reset_mock()
         admin_command_prod.reset_mock()
         meter_command_prod.reset_mock()
         reading_command_prod.reset_mock()
         stats_command_prod.reset_mock()
+        sensor_command_prod.reset_mock()
 
     body = AuthLinkRequest(email="jane@example.com")
 
@@ -457,6 +497,7 @@ def test__request_link() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
     # dev links disabled: the link stays private
@@ -470,11 +511,12 @@ def test__request_link() -> None:
     assert meter_command_prod.mock_calls == []
     assert reading_command_prod.mock_calls == []
     assert stats_command_prod.mock_calls == []
+    assert sensor_command_prod.mock_calls == []
     reset_mocks()
 
 
 def test__verify_link() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -484,6 +526,7 @@ def test__verify_link() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     auth_command.verify_link.side_effect = ["the-session-token"]
@@ -496,6 +539,7 @@ def test__verify_link() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_session",
@@ -511,7 +555,7 @@ def test__verify_link() -> None:
 
 
 def test__logout() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -521,6 +565,7 @@ def test__logout() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     # with a session cookie
@@ -534,6 +579,7 @@ def test__logout() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_session")]
     reset_mocks()
 
@@ -547,12 +593,13 @@ def test__logout() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_session")]
     reset_mocks()
 
 
 def test__passkey_registration_options() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
     response = MagicMock()
 
@@ -563,6 +610,7 @@ def test__passkey_registration_options() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
@@ -576,6 +624,7 @@ def test__passkey_registration_options() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_webauthn",
@@ -591,7 +640,7 @@ def test__passkey_registration_options() -> None:
 
 
 def test__register_passkey() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
     response = MagicMock()
 
@@ -602,6 +651,7 @@ def test__register_passkey() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
@@ -632,12 +682,13 @@ def test__register_passkey() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_webauthn")]
     reset_mocks()
 
 
 def test__list_passkeys() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -647,6 +698,7 @@ def test__list_passkeys() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     passkey_command.list_passkeys.side_effect = [[{"id": 1, "created_at": "2026-08-01", "last_used_at": None}]]
@@ -659,11 +711,12 @@ def test__list_passkeys() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_passkey() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -673,6 +726,7 @@ def test__delete_passkey() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     passkey_command.delete_passkey.side_effect = [{"message": "Passkey removed."}]
@@ -685,11 +739,12 @@ def test__delete_passkey() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__admin_overview() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -699,6 +754,7 @@ def test__admin_overview() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.overview.side_effect = [{"users": [], "houses": [], "meters": []}]
@@ -711,11 +767,12 @@ def test__admin_overview() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -725,6 +782,7 @@ def test__create_user() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.create_user.side_effect = [{"id": 12}]
@@ -739,11 +797,12 @@ def test__create_user() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -753,6 +812,7 @@ def test__update_user() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.update_user.side_effect = [{"message": "User updated."}]
@@ -767,11 +827,12 @@ def test__update_user() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -781,6 +842,7 @@ def test__delete_user() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.delete_user.side_effect = [{"message": "User deleted."}]
@@ -793,11 +855,12 @@ def test__delete_user() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -807,6 +870,7 @@ def test__create_house() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.create_house.side_effect = [{"id": 3}]
@@ -819,11 +883,12 @@ def test__create_house() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -833,6 +898,7 @@ def test__update_house() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.update_house.side_effect = [{"message": "House updated."}]
@@ -845,11 +911,12 @@ def test__update_house() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -859,6 +926,7 @@ def test__delete_house() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.delete_house.side_effect = [{"message": "House deleted."}]
@@ -871,11 +939,12 @@ def test__delete_house() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_user_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -885,6 +954,7 @@ def test__set_user_house() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.set_user_house.side_effect = [{"message": "User linked to the house."}]
@@ -899,11 +969,12 @@ def test__set_user_house() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__list_meters() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -913,6 +984,7 @@ def test__list_meters() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.list_meters.side_effect = [{"meters": []}]
@@ -925,11 +997,12 @@ def test__list_meters() -> None:
     assert meter_command.mock_calls == [call.list_meters(user, 3)]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -939,6 +1012,7 @@ def test__create_meter() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.create_meter.side_effect = [{"id": 9}]
@@ -972,11 +1046,12 @@ def test__create_meter() -> None:
     assert meter_command.mock_calls == exp_calls
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -986,6 +1061,7 @@ def test__update_meter() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.update_meter.side_effect = [{"message": "Meter updated."}]
@@ -1000,11 +1076,12 @@ def test__update_meter() -> None:
     assert meter_command.mock_calls == exp_calls
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1014,6 +1091,7 @@ def test__delete_meter() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.delete_meter.side_effect = [{"message": "Meter deleted, along with its readings."}]
@@ -1026,11 +1104,12 @@ def test__delete_meter() -> None:
     assert meter_command.mock_calls == [call.delete_meter(user, 9)]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1040,6 +1119,7 @@ def test__create_register() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.create_register.side_effect = [{"id": 22}]
@@ -1054,11 +1134,12 @@ def test__create_register() -> None:
     assert meter_command.mock_calls == exp_calls
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1068,6 +1149,7 @@ def test__update_register() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.update_register.side_effect = [{"message": "Register updated."}]
@@ -1082,11 +1164,12 @@ def test__update_register() -> None:
     assert meter_command.mock_calls == exp_calls
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1096,6 +1179,7 @@ def test__delete_register() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.delete_register.side_effect = [{"message": "Register deleted."}]
@@ -1108,11 +1192,12 @@ def test__delete_register() -> None:
     assert meter_command.mock_calls == [call.delete_register(user, 22)]
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__dashboard() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1122,6 +1207,7 @@ def test__dashboard() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.dashboard.side_effect = [{"houses": [], "meters": []}]
@@ -1134,11 +1220,12 @@ def test__dashboard() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.dashboard(user)]
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__list_readings() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1148,6 +1235,7 @@ def test__list_readings() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.list_readings.side_effect = [{"readings": [], "total": 0, "page": 1, "pages": 1}]
@@ -1160,11 +1248,12 @@ def test__list_readings() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.list_readings(user, 3, 2)]
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1174,6 +1263,7 @@ def test__create_reading() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.create_reading.side_effect = [{"id": 31}]
@@ -1203,11 +1293,12 @@ def test__create_reading() -> None:
     ]
     assert reading_command.mock_calls == exp_calls
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__extract_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1217,6 +1308,7 @@ def test__extract_reading() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.extract.side_effect = [{"values": [{"register_id": 21, "label": "HC", "value": 17273.0}]}]
@@ -1233,11 +1325,12 @@ def test__extract_reading() -> None:
     ]
     assert reading_command.mock_calls == exp_calls
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1247,6 +1340,7 @@ def test__update_reading() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.update_reading.side_effect = [{"message": "Reading updated."}]
@@ -1263,11 +1357,12 @@ def test__update_reading() -> None:
     ]
     assert reading_command.mock_calls == exp_calls
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1277,6 +1372,7 @@ def test__delete_reading() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.delete_reading.side_effect = [{"message": "Reading deleted."}]
@@ -1289,11 +1385,12 @@ def test__delete_reading() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == [call.delete_reading(user, 31)]
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__stats_tables() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1303,6 +1400,7 @@ def test__stats_tables() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     stats_command.tables.side_effect = [{"kinds": []}]
@@ -1315,11 +1413,12 @@ def test__stats_tables() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == [call.tables(user, 3)]
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__stats_series() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1329,6 +1428,7 @@ def test__stats_series() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     stats_command.series.side_effect = [{"series": []}]
@@ -1341,11 +1441,12 @@ def test__stats_series() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == [call.series(user, 3)]
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__passkey_auth_options() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1355,6 +1456,7 @@ def test__passkey_auth_options() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     passkey_command.authentication_options.side_effect = [({"challenge": "the-challenge"}, "the-challenge-token")]
@@ -1367,6 +1469,7 @@ def test__passkey_auth_options() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_webauthn",
@@ -1382,7 +1485,7 @@ def test__passkey_auth_options() -> None:
 
 
 def test__passkey_auth_verify() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1392,6 +1495,7 @@ def test__passkey_auth_verify() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     passkey_command.verify_authentication.side_effect = ["the-session-token"]
@@ -1422,6 +1526,7 @@ def test__passkey_auth_verify() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     exp_calls = [
         call.delete_cookie("usage_webauthn"),
         call.set_cookie(
@@ -1437,8 +1542,185 @@ def test__passkey_auth_verify() -> None:
     reset_mocks()
 
 
+def test__ingest_samples() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    body = IngestRequest(samples=[SampleInput(entity_id="sensor.garage_temperature", value=84.9, name="Garage", unit="°F")])
+    sensor_command.ingest.side_effect = [{"accepted": 1, "created": 0}]
+    result = tested._ingest_samples(body, "Bearer the-token")
+    expected = {"accepted": 1, "created": 0}
+    assert result == expected
+    assert auth_command.mock_calls == []
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    exp_calls = [
+        call.ingest(
+            "Bearer the-token",
+            {
+                "samples": [
+                    {"entity_id": "sensor.garage_temperature", "value": 84.9, "name": "Garage", "unit": "°F", "measured_at": ""},
+                ],
+            },
+        ),
+    ]
+    assert sensor_command.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__issue_sensor_token() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.issue_token.side_effect = [{"token": "the-token"}]
+    result = tested._issue_sensor_token(3, "the-session")
+    expected = {"token": "the-token"}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.issue_token(user, 3)]
+    reset_mocks()
+
+
+def test__list_sensors() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.list_sensors.side_effect = [{"sensors": []}]
+    result = tested._list_sensors(3, "the-session")
+    expected = {"sensors": []}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.list_sensors(user, 3)]
+    reset_mocks()
+
+
+def test__set_sensor_order() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.set_order.side_effect = [{"message": "Sensor order saved."}]
+    result = tested._set_sensor_order(SensorOrderRequest(house_id=3, sensor_ids=[9, 7]), "the-session")
+    expected = ApiMessage(message="Sensor order saved.")
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.set_order(user, {"house_id": 3, "sensor_ids": [9, 7]})]
+    reset_mocks()
+
+
+def test__sensor_series() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.series.side_effect = [{"days": 7, "bucket_minutes": 60, "series": []}]
+    result = tested._sensor_series(3, 7, "the-session")
+    expected = {"days": 7, "bucket_minutes": 60, "series": []}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.series(user, 3, 7)]
+    reset_mocks()
+
+
+def test__update_sensor() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.update_sensor.side_effect = [{"message": "Sensor updated."}]
+    result = tested._update_sensor(9, SensorUpdateRequest(name="Garage", unit="°F", active=True), "the-session")
+    expected = ApiMessage(message="Sensor updated.")
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "active": True})]
+    reset_mocks()
+
+
 def test__rp_id() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     tests = [
         ("usage.example", "usage.example"),
         (None, "localhost"),
@@ -1452,10 +1734,11 @@ def test__rp_id() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
 
 
 def test__set_session_cookie() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1465,6 +1748,7 @@ def test__set_session_cookie() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     result = tested._set_session_cookie(response, "the-session-token")
@@ -1486,11 +1770,12 @@ def test__set_session_cookie() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_challenge_cookie() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1500,6 +1785,7 @@ def test__set_challenge_cookie() -> None:
         meter_command.reset_mock()
         reading_command.reset_mock()
         stats_command.reset_mock()
+        sensor_command.reset_mock()
         response.reset_mock()
 
     result = tested._set_challenge_cookie(response, "the-challenge-token")
@@ -1521,4 +1807,5 @@ def test__set_challenge_cookie() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
     reset_mocks()

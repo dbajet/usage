@@ -1,0 +1,62 @@
+# Home Assistant side of the sensor feed: every ten minutes, POST the current
+# value of each thermometer to usage.edgy.world, authenticated with the house's
+# sensor token (Settings, Houses, "Sensor token" - admins only).
+#
+# 1. secrets.yaml:      usage_sensor_auth: "Bearer <the token>"
+# 2. configuration.yaml: merge the `rest_command:` and `automation:` blocks
+#    below (or `!include` them), adjust the entity map, then restart.
+#
+# Unknown entities become sensors in the app on their own, with the name given
+# in the `entities` map below (rename or reorder them later in Settings,
+# Sensors). Three rooms have both a SwitchBot and a Govee thermometer, hence
+# the vendor in those names.
+# A sample is keyed by the instant the value last changed (`last_changed`), so
+# an unchanged value re-sent ten minutes later is not a duplicate.
+
+rest_command:
+  usage_sensor_samples:
+    url: "https://usage.edgy.world/api/ingest/samples"
+    method: post
+    timeout: 30
+    content_type: "application/json"
+    headers:
+      authorization: !secret usage_sensor_auth
+    payload: >-
+      {% set entities = {
+        'sensor.switchbot_grenier_temperature': 'Grenier (SwitchBot)',
+        'sensor.switchbot_freezer_temperature': 'Freezer',
+        'sensor.switchbot_fridge_temperature': 'Fridge',
+        'sensor.switchbot_router_temperature': 'Router (SwitchBot)',
+        'sensor.switchbot_garage_temperature': 'Garage (SwitchBot)',
+        'sensor.switchbot_dehors_temperature': 'Dehors',
+        'sensor.h5100_3e52_temperature': 'Street Bedroom',
+        'sensor.h5100_5b62_temperature': 'Garage (Govee)',
+        'sensor.h5100_2517_temperature': 'Living Room',
+        'sensor.h5100_3363_temperature': 'Router (Govee)',
+        'sensor.h5100_7468_temperature': 'Grenier (Govee)',
+        'sensor.govee_garden_bedroom_temperature': 'Garden Bedroom',
+      } %}
+      {% set ns = namespace(samples=[]) %}
+      {% for entity_id, name in entities.items() %}
+        {% set entry = states[entity_id] %}
+        {% if entry is not none and is_number(entry.state) %}
+          {% set ns.samples = ns.samples + [{
+            "entity_id": entity_id,
+            "name": name,
+            "unit": entry.attributes.unit_of_measurement | default(""),
+            "value": entry.state | float,
+            "measured_at": entry.last_changed.isoformat(),
+          }] %}
+        {% endif %}
+      {% endfor %}
+      {{ {"samples": ns.samples} | to_json }}
+
+automation:
+  - alias: "Usage: push the thermometers"
+    id: usage_push_thermometers
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+    actions:
+      - action: rest_command.usage_sensor_samples

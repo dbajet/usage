@@ -460,7 +460,9 @@ def test__houses() -> None:
     expected = [{"id": 3, "name": "Fremur", "timezone": "Europe/Paris"}]
     assert result == expected
     exp_calls = [
-        call.fetch_all("SELECT id, name_sealed AS name, timezone FROM houses ORDER BY id"),
+        call.fetch_all(
+            "SELECT id, name_sealed AS name, timezone, (ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
+        ),
         call.decrypt_rows(rows, ("name",)),
     ]
     assert database.mock_calls == exp_calls

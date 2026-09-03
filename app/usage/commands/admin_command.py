@@ -141,7 +141,9 @@ class AdminCommand:
 
     def _houses(self) -> list[dict[str, Any]]:
         return self._database.decrypt_rows(
-            self._database.fetch_all("SELECT id, name_sealed AS name, timezone FROM houses ORDER BY id"),
+            self._database.fetch_all(
+                "SELECT id, name_sealed AS name, timezone, (ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
+            ),
             ("name",),
         )
 

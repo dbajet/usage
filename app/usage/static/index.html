@@ -59,6 +59,10 @@
           <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M120-120v-80l80-80v160h-80Zm160 0v-240l80-80v320h-80Zm160 0v-320l80 81v239h-80Zm160 0v-239l80-80v319h-80Zm160 0v-400l80-80v480h-80ZM120-327v-113l280-280 160 160 280-280v113L560-447 400-607 120-327Z"/></svg>
           <span>Stats</span>
         </button>
+        <button class="ghost" data-nav="sensors" type="button" title="Sensors">
+          <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-83 0-141.5-58.5T280-280q0-48 21-89.5t59-70.5v-320q0-50 35-85t85-35q50 0 85 35t35 85v320q38 29 59 70.5t21 89.5q0 83-58.5 141.5T480-80Zm0-80q50 0 85-35t35-85q0-29-12.5-54T552-375l-32-24v-361q0-17-11.5-28.5T480-800q-17 0-28.5 11.5T440-760v361l-32 24q-23 17-35.5 42T360-280q0 50 35 85t85 35Zm0-120Z"/></svg>
+          <span>Sensors</span>
+        </button>
         <button class="ghost" data-nav="entries" type="button" title="Entries">
           <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M240-80q-50 0-85-35t-35-85v-120h120v-560l60 60 60-60 60 60 60-60 60 60 60-60 60 60 60-60 60 60 60-60v680q0 50-35 85t-85 35H240Zm480-80q17 0 28.5-11.5T760-200v-560H320v440h360v120q0 17 11.5 28.5T720-160ZM360-600v-80h240v80H360Zm0 120v-80h240v80H360ZM240-160h360v-80H200v40q0 17 11.5 28.5T240-160Z"/></svg>
           <span>Entries</span>
@@ -115,12 +119,33 @@
         <div id="stats-content"></div>
       </section>
 
+      <section id="view-sensors" hidden>
+        <div class="view-heading">
+          <h2>Sensors</h2>
+          <div class="sensor-controls">
+            <label class="switch" title="Show the temperatures in Celsius rather than Fahrenheit">
+              <input id="sensor-celsius" type="checkbox"><span class="slider"></span> °C</label>
+            <div class="range-tabs" id="sensor-ranges">
+            <button class="ghost compact" data-sensor-days="1" type="button">Day</button>
+            <button class="ghost compact" data-sensor-days="7" type="button">Week</button>
+            <button class="ghost compact" data-sensor-days="30" type="button">Month</button>
+            <button class="ghost compact" data-sensor-days="365" type="button">Year</button>
+            </div>
+          </div>
+        </div>
+        <div id="sensor-content"></div>
+      </section>
+
       <section id="view-settings" hidden>
         <h2>Settings</h2>
         <div class="tabs" id="settings-tabs">
           <button class="ghost active" data-settings-tab="meters" type="button" title="Meters">
             <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M418-340q24 24 62 23.5t56-27.5l224-336-336 224q-27 18-28.5 55t22.5 61Zm62-460q59 0 113.5 16.5T696-734l-76 48q-33-17-68.5-25.5T480-720q-133 0-226.5 93.5T160-400q0 42 11.5 83t32.5 77h552q23-38 33.5-79t10.5-85q0-36-8.5-70T766-540l48-76q30 47 47.5 100T880-406q1 57-13 109t-41 99q-11 18-30 28t-40 10H204q-21 0-40-10t-30-28q-26-45-40-95.5T80-400q0-83 31.5-155.5t86-127Q252-737 325-768.5T480-800Zm7 313Z"/></svg>
             <span>Meters</span>
+          </button>
+          <button class="ghost" data-settings-tab="sensors" type="button" title="Sensors">
+            <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-83 0-141.5-58.5T280-280q0-48 21-89.5t59-70.5v-320q0-50 35-85t85-35q50 0 85 35t35 85v320q38 29 59 70.5t21 89.5q0 83-58.5 141.5T480-80Zm0-80q50 0 85-35t35-85q0-29-12.5-54T552-375l-32-24v-361q0-17-11.5-28.5T480-800q-17 0-28.5 11.5T440-760v361l-32 24q-23 17-35.5 42T360-280q0 50 35 85t85 35Zm0-120Z"/></svg>
+            <span>Sensors</span>
           </button>
           <button class="ghost" data-settings-tab="houses" type="button" title="Houses" hidden>
             <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M240-200h120v-240h240v240h120v-360L480-740 240-560v360Zm-80 80v-480l320-240 320 240v480H520v-240h-80v240H160Zm320-350Z"/></svg>
@@ -162,6 +187,16 @@
                 <button class="primary" type="submit">Add meter</button>
               </div>
             </form>
+          </div>
+        </div>
+
+        <div data-settings-panel="sensors" hidden>
+          <div class="card">
+            <h3>Sensors · <span id="sensors-house-name"></span></h3>
+            <p class="meta">Home Assistant pushes the thermometers' readings every few minutes; a new entity appears here
+              on its own. Rename, reorder or hide the sensors - a hidden one keeps collecting but stays out of the graphs.
+              To stop a thermometer for good, remove it from the Home Assistant configuration.</p>
+            <div id="sensor-list"></div>
           </div>
         </div>
 

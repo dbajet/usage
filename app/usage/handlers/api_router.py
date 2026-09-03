@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Request, Response
+from fastapi import APIRouter, Cookie, Header, Request, Response
 
 from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
 from usage.commands.meter_command import MeterCommand
 from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
+from usage.commands.sensor_command import SensorCommand
 from usage.commands.stats_command import StatsCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_message import ApiMessage
@@ -18,6 +19,7 @@ from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
 from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
+from usage.handlers.ingest_request import IngestRequest
 from usage.handlers.meter_axis_request import MeterAxisRequest
 from usage.handlers.meter_color_request import MeterColorRequest
 from usage.handlers.meter_order_request import MeterOrderRequest
@@ -31,6 +33,8 @@ from usage.handlers.reading_update_request import ReadingUpdateRequest
 from usage.handlers.register_request import RegisterRequest
 from usage.handlers.reminder_request import ReminderRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
+from usage.handlers.sensor_order_request import SensorOrderRequest
+from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
@@ -53,6 +57,7 @@ class ApiRouter:
         self._meter_command = MeterCommand(database)
         self._reading_command = ReadingCommand(database, MeterReader(settings))
         self._stats_command = StatsCommand(database)
+        self._sensor_command = SensorCommand(database)
         self._register()
 
     @property
@@ -100,6 +105,12 @@ class ApiRouter:
         self._router.add_api_route("/readings/{reading_id}", self._delete_reading, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/stats/tables", self._stats_tables, methods=["GET"])
         self._router.add_api_route("/stats/series", self._stats_series, methods=["GET"])
+        self._router.add_api_route("/ingest/samples", self._ingest_samples, methods=["POST"])
+        self._router.add_api_route("/houses/{house_id}/sensor-token", self._issue_sensor_token, methods=["POST"])
+        self._router.add_api_route("/sensors", self._list_sensors, methods=["GET"])
+        self._router.add_api_route("/sensors/order", self._set_sensor_order, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/sensors/series", self._sensor_series, methods=["GET"])
+        self._router.add_api_route("/sensors/{sensor_id}", self._update_sensor, methods=["PUT"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
         return {
@@ -431,6 +442,54 @@ class ApiRouter:
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
         return self._stats_command.series(user, house_id)
+
+    def _ingest_samples(self, body: IngestRequest, authorization: str = Header(default="")) -> dict[str, int]:
+        # Home Assistant, not a signed-in user: the bearer token identifies the house.
+        return self._sensor_command.ingest(authorization, body.model_dump())
+
+    def _issue_sensor_token(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, str]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._sensor_command.issue_token(user, house_id)
+
+    def _list_sensors(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._sensor_command.list_sensors(user, house_id)
+
+    def _set_sensor_order(
+        self,
+        body: SensorOrderRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._sensor_command.set_order(user, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _sensor_series(
+        self,
+        house_id: int,
+        days: int = 1,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._sensor_command.series(user, house_id, days)
+
+    def _update_sensor(
+        self,
+        sensor_id: int,
+        body: SensorUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._sensor_command.update_sensor(user, sensor_id, body.model_dump())
+        return ApiMessage(message=message["message"])
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"

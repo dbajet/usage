@@ -35,6 +35,9 @@ def test_class() -> None:
         "reminder_check_seconds",
         "reminder_hour",
         "reminder_minute",
+        "sensor_ranges",
+        "ingest_max_samples",
+        "ingest_token_bytes",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -236,6 +239,27 @@ def test_reminder_minute() -> None:
     tested = Constants
     result = tested.reminder_minute
     expected = 15
+    assert result == expected
+
+
+def test_sensor_ranges() -> None:
+    tested = Constants
+    result = tested.sensor_ranges
+    expected = ((1, 10), (7, 60), (30, 360), (365, 1440))
+    assert result == expected
+
+
+def test_ingest_max_samples() -> None:
+    tested = Constants
+    result = tested.ingest_max_samples
+    expected = 1000
+    assert result == expected
+
+
+def test_ingest_token_bytes() -> None:
+    tested = Constants
+    result = tested.ingest_token_bytes
+    expected = 32
     assert result == expected
 
 
