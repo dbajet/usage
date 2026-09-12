@@ -1320,8 +1320,9 @@ function fmtPeriodEdge(time, days) {
 const SENSOR_DEFAULT_COLORS = [...VIZ_COLORS, ...METER_COLORS.slice(6).map((color) => color.value)];
 
 function batteryMarkup(sensor) {
-  // The charge of the thermometer itself, drawn as a battery filled to its level:
-  // a glance is enough, and the number is there for the exact reading.
+  // The charge of the thermometer itself, drawn as a battery filled to its level
+  // in the corner under the reading: a glance is enough, and the number is there
+  // for the exact charge.
   if (sensor.battery === null || sensor.battery === undefined) return "";
   const level = Math.max(0, Math.min(100, Math.round(sensor.battery)));
   const filled = (level / 100) * 10;
@@ -1416,9 +1417,9 @@ function renderSensors() {
         <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" role="button" tabindex="0"
           style="border-left-color:${colors.get(sensor.id)}"
           title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it">
-          <div class="tile-name"><span class="tile-label">${esc(sensor.name)}</span>${batteryMarkup(sensor)}</div>
+          <div class="tile-name">${esc(sensor.name)}</div>
           <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
-          <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
+          <div class="tile-when"><span class="tile-ago">${esc(fmtAgo(sensor.last_at))}</span>${batteryMarkup(sensor)}</div>
         </div>`;
     }).join("");
   const tMax = data.until ? Date.parse(data.until) : Date.now();
