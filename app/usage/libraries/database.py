@@ -262,6 +262,8 @@ class Database:
                 threshold_min NUMERIC(8,2),
                 threshold_max NUMERIC(8,2),
                 alert_state TEXT NOT NULL DEFAULT '',
+                battery INTEGER,
+                battery_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, entity_hash),
                 CONSTRAINT sensors_threshold_range
@@ -313,10 +315,14 @@ class Database:
             (10, "sensor colors"),
             (11, "sensor alert thresholds and user alerts"),
             (12, "alert range ordered by the table itself"),
+            (13, "thermometer battery charge"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 13:
+                    connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS battery INTEGER")
+                    connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS battery_at TIMESTAMPTZ")
                 if version == 12:
                     # Dropped first: a database created from _create_schema already
                     # carries the constraint, and ADD would fail on the duplicate.

@@ -10,14 +10,16 @@ class SensorSample(NamedTuple):
     unit: str
     value: float
     measured_at: datetime
+    battery: int | None = None
 
-    def to_dict(self) -> dict[str, str | float]:
+    def to_dict(self) -> dict[str, str | float | None]:
         return {
             "entity_id": self.entity_id,
             "name": self.name,
             "unit": self.unit,
             "value": self.value,
             "measured_at": self.measured_at.isoformat(),
+            "battery": self.battery,
         }
 
     @classmethod
@@ -28,4 +30,5 @@ class SensorSample(NamedTuple):
             unit=str(data.get("unit") or ""),
             value=float(data.get("value") or 0.0),
             measured_at=datetime.fromisoformat(str(data.get("measured_at") or "1970-01-01T00:00:00+00:00")),
+            battery=None if data.get("battery") is None else int(data["battery"]),
         )

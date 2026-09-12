@@ -1178,6 +1178,7 @@ function wireChartHover(rootSelector) {
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
 const SENSOR_REFRESH_MS = 5 * 60 * 1000;
+const BATTERY_LOW_PERCENT = 20;
 const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
 const ICON_REFRESH = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/></svg>';
 const ICON_CHEVRON_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
@@ -1318,6 +1319,22 @@ function fmtPeriodEdge(time, days) {
 // the six theme-aware series colours, then the picker's other six.
 const SENSOR_DEFAULT_COLORS = [...VIZ_COLORS, ...METER_COLORS.slice(6).map((color) => color.value)];
 
+function batteryMarkup(sensor) {
+  // The charge of the thermometer itself, drawn as a battery filled to its level:
+  // a glance is enough, and the number is there for the exact reading.
+  if (sensor.battery === null || sensor.battery === undefined) return "";
+  const level = Math.max(0, Math.min(100, Math.round(sensor.battery)));
+  const filled = (level / 100) * 10;
+  const when = sensor.battery_at ? ` · ${fmtAgo(sensor.battery_at)}` : "";
+  return `<span class="tile-battery${level <= BATTERY_LOW_PERCENT ? " low" : ""}"
+    title="Battery ${level}%${esc(when)}" aria-label="Battery ${level} percent">
+    <svg viewBox="0 0 16 9" width="16" height="9" aria-hidden="true">
+      <rect class="shell" x="0.5" y="0.5" width="12" height="8" rx="1.5"></rect>
+      <rect class="cap" x="13.5" y="2.5" width="2" height="4" rx="0.7"></rect>
+      <rect class="level" x="1.5" y="1.5" width="${filled.toFixed(1)}" height="6" rx="0.6"></rect>
+    </svg><span class="tile-battery-text">${level}%</span></span>`;
+}
+
 function sensorColors(sensors) {
   // A sensor's own colour, else a default from its rank among the active ones:
   // tiles, lines and legend agree.
@@ -1399,7 +1416,7 @@ function renderSensors() {
         <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" role="button" tabindex="0"
           style="border-left-color:${colors.get(sensor.id)}"
           title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it">
-          <div class="tile-name">${esc(sensor.name)}</div>
+          <div class="tile-name"><span class="tile-label">${esc(sensor.name)}</span>${batteryMarkup(sensor)}</div>
           <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
           <div class="tile-when">${esc(fmtAgo(sensor.last_at))}</div>
         </div>`;

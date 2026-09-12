@@ -9,3 +9,4 @@ class SampleInput(BaseModel):
     name: str = ""
     unit: str = ""
     measured_at: str = ""
+    battery: float | None = None

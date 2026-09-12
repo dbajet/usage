@@ -40,6 +40,7 @@ def test___init__() -> None:
                 "name": "Garage",
                 "unit": "°F",
                 "measured_at": "2026-09-02T23:16:59+00:00",
+                "battery": None,
             },
         ],
     }

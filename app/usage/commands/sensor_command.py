@@ -28,7 +28,9 @@ class SensorCommand:
     hide sensors in Settings (a hidden sensor keeps collecting, out of the
     graphs - a deleted one would only come back on the next push). A sample
     is keyed by the sensor and the instant its value last changed, so a value
-    re-sent unchanged is a no-op rather than a duplicate.
+    re-sent unchanged is a no-op rather than a duplicate. A push may also carry
+    the charge of the thermometer that took the reading: that belongs to the
+    sensor, not to the reading, so only the last one is kept.
 
     A sensor may carry an alert range (Settings, Sensors): when a push takes it
     out of that range, the users who opted in for the house get one email. The
@@ -62,6 +64,7 @@ class SensorCommand:
                     """,
                     (known[sample.entity_id], sample.measured_at.isoformat(), sample.value),
                 )
+            self._store_batteries(parsed, known)
         # Outside the transaction: the samples are in whatever the mail relay does next.
         self._alert(house_id, parsed, known)
         return {"accepted": len(parsed), "created": created}
@@ -95,7 +98,7 @@ class SensorCommand:
             self._database.fetch_all(
                 """
                 SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
-                       threshold_min, threshold_max
+                       threshold_min, threshold_max, battery, battery_at
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
                 (house_id,),
@@ -118,6 +121,8 @@ class SensorCommand:
                     "last_at": last["measured_at"].isoformat() if last is not None else "",
                     "threshold_min": float(sensor["threshold_min"]) if sensor["threshold_min"] is not None else None,
                     "threshold_max": float(sensor["threshold_max"]) if sensor["threshold_max"] is not None else None,
+                    "battery": int(sensor["battery"]) if sensor["battery"] is not None else None,
+                    "battery_at": sensor["battery_at"].isoformat() if sensor["battery_at"] is not None else "",
                 },
             )
         return {"sensors": result}
@@ -289,6 +294,22 @@ class SensorCommand:
         )
         return sensor_id, True
 
+    def _store_batteries(self, parsed: list[SensorSample], known: dict[str, int]) -> None:
+        """Keep the last charge each thermometer reported; only the current one is shown."""
+        charges: dict[int, SensorSample] = {}
+        for sample in parsed:
+            sensor_id = known.get(sample.entity_id)
+            if sensor_id is None or sample.battery is None:
+                continue
+            known_sample = charges.get(sensor_id)
+            if known_sample is None or sample.measured_at >= known_sample.measured_at:
+                charges[sensor_id] = sample
+        for sensor_id, sample in charges.items():
+            self._database.execute(
+                "UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s",
+                (sample.battery, sample.measured_at.isoformat(), sensor_id),
+            )
+
     def _parse_sample(self, data: dict[str, Any]) -> SensorSample:
         entity_id = str(data.get("entity_id") or "").strip().lower()
         if not entity_id:
@@ -305,7 +326,20 @@ class SensorCommand:
             unit=str(data.get("unit") or "").strip(),
             value=round(value, 2),
             measured_at=self._parse_instant(str(data.get("measured_at") or "")),
+            battery=self._parse_battery(data.get("battery"), entity_id),
         )
+
+    def _parse_battery(self, raw: Any, entity_id: str) -> int | None:
+        """The thermometer's own charge, as a whole percentage; absent for a mains-fed one."""
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            charge = round(float(raw))
+        except (TypeError, ValueError):
+            raise AppException(400, f"The battery of {entity_id} is not a number.") from None
+        if not 0 <= charge <= 100:
+            raise AppException(400, f"The battery of {entity_id} is not a percentage.")
+        return charge
 
     @classmethod
     def _parse_instant(cls, text: str) -> datetime:

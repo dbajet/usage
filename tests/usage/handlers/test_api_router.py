@@ -1573,7 +1573,14 @@ def test__ingest_samples() -> None:
             "Bearer the-token",
             {
                 "samples": [
-                    {"entity_id": "sensor.garage_temperature", "value": 84.9, "name": "Garage", "unit": "°F", "measured_at": ""},
+                    {
+                        "entity_id": "sensor.garage_temperature",
+                        "value": 84.9,
+                        "name": "Garage",
+                        "unit": "°F",
+                        "measured_at": "",
+                        "battery": None,
+                    },
                 ],
             },
         ),

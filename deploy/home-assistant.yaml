@@ -12,6 +12,12 @@
 # the vendor in those names.
 # A sample is keyed by the instant the value last changed (`last_changed`), so
 # an unchanged value re-sent ten minutes later is not a duplicate.
+#
+# Each sample also carries the charge of the thermometer that took it, shown on
+# its tile in the app. The battery entity is not listed: it is the temperature
+# one with `_temperature` replaced by `_battery`, which is how both the SwitchBot
+# and the Govee integrations name them. A thermometer without such an entity, or
+# one reporting `unknown`, simply sends no battery and its tile shows none.
 
 rest_command:
   usage_sensor_samples:
@@ -40,12 +46,14 @@ rest_command:
       {% for entity_id, name in entities.items() %}
         {% set entry = states[entity_id] %}
         {% if entry is not none and is_number(entry.state) %}
+          {% set charge = states[entity_id | replace('_temperature', '_battery')] %}
           {% set ns.samples = ns.samples + [{
             "entity_id": entity_id,
             "name": name,
             "unit": entry.attributes.unit_of_measurement | default(""),
             "value": entry.state | float,
             "measured_at": entry.last_changed.isoformat(),
+            "battery": (charge.state | float | round | int) if (charge is not none and is_number(charge.state)) else none,
           }] %}
         {% endif %}
       {% endfor %}

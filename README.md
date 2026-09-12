@@ -63,6 +63,11 @@ averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band. On
 the last range the view refreshes itself every five minutes; an earlier period
 cannot change, so it does not.
 
+Each push also carries the charge of the thermometer that took the reading -
+the battery entity is derived from the temperature one, `_temperature` replaced
+by `_battery` - and the tile shows it as a small battery filled to its level,
+turning red at 20 % or less. A thermometer with no such entity simply shows none.
+
 A sensor can carry an alert range (Settings, Sensors, Edit): the "Thresholds"
 switch draws those bounds across the graph as dashed lines in the sensor's own
 colour, and a user who turns the house's switch on gets an email when a push

@@ -704,6 +704,8 @@ def test__create_schema() -> None:
                 threshold_min NUMERIC(8,2),
                 threshold_max NUMERIC(8,2),
                 alert_state TEXT NOT NULL DEFAULT '',
+                battery INTEGER,
+                battery_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, entity_hash),
                 CONSTRAINT sensors_threshold_range
@@ -756,7 +758,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 12
+    connection.execute.return_value.fetchone.side_effect = [None] * 13
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -859,12 +861,20 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (12, "alert range ordered by the table itself"),
         ),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (13,)),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS battery INTEGER"),
+        call.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS battery_at TIMESTAMPTZ"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (13, "thermometer battery charge"),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 12
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 13
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -891,6 +901,8 @@ def test__migrate() -> None:
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (11,)),
         call.execute().fetchone(),
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (12,)),
+        call.execute().fetchone(),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (13,)),
         call.execute().fetchone(),
     ]
     assert connection.mock_calls == exp_calls

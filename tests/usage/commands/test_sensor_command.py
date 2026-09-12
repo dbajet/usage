@@ -69,10 +69,17 @@ def test___init__() -> None:
 
 
 @patch.object(SensorCommand, "_alert")
+@patch.object(SensorCommand, "_store_batteries")
 @patch.object(SensorCommand, "_find_or_create_sensor")
 @patch.object(SensorCommand, "_parse_sample")
 @patch.object(SensorCommand, "_house_from_token")
-def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_create_sensor: MagicMock, alert: MagicMock) -> None:
+def test_ingest(
+    house_from_token: MagicMock,
+    parse_sample: MagicMock,
+    find_or_create_sensor: MagicMock,
+    store_batteries: MagicMock,
+    alert: MagicMock,
+) -> None:
     tested = helper_instance()
     database = tested._database
 
@@ -80,6 +87,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
         house_from_token.reset_mock()
         parse_sample.reset_mock()
         find_or_create_sensor.reset_mock()
+        store_batteries.reset_mock()
         alert.reset_mock()
         database.reset_mock()
 
@@ -97,12 +105,14 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     assert house_from_token.mock_calls == [call("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
+    assert store_batteries.mock_calls == []
     assert alert.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
     # empty batch
     house_from_token.side_effect = [3]
+    store_batteries.side_effect = [None]
     alert.side_effect = [None]
     result = tested.ingest("Bearer the-token", {})
     expected = {"accepted": 0, "created": 0}
@@ -110,6 +120,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     assert house_from_token.mock_calls == [call("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
+    assert store_batteries.mock_calls == [call([], {})]
     assert alert.mock_calls == [call(3, [], {})]
     exp_calls = [call.transaction(), call.transaction().__enter__(), call.transaction().__exit__(None, None, None)]
     assert database.mock_calls == exp_calls
@@ -123,6 +134,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     house_from_token.side_effect = [3]
     parse_sample.side_effect = [garage, freezer, garage_later]
     find_or_create_sensor.side_effect = [(9, False), (10, True)]
+    store_batteries.side_effect = [None]
     alert.side_effect = [None]
     database.execute.side_effect = [0, 0, 0]
     result = tested.ingest("Bearer the-token", {"samples": raw})
@@ -132,6 +144,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     assert parse_sample.mock_calls == [call(raw[0]), call(raw[1]), call(raw[2])]
     assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
     exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+    assert store_batteries.mock_calls == [call([garage, freezer, garage_later], exp_known)]
     assert alert.mock_calls == [call(3, [garage, freezer, garage_later], exp_known)]
     exp_calls = [
         call.transaction(),
@@ -224,6 +237,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "active": True,
                 "threshold_min": Decimal("40.00"),
                 "threshold_max": Decimal("85.00"),
+                "battery": 87,
+                "battery_at": datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC),
             },
             {
                 "id": 10,
@@ -235,6 +250,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "active": False,
                 "threshold_min": None,
                 "threshold_max": None,
+                "battery": None,
+                "battery_at": None,
             },
         ],
     ]
@@ -253,6 +270,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "last_at": "2026-09-02T23:16:59+00:00",
                 "threshold_min": 40.0,
                 "threshold_max": 85.0,
+                "battery": 87,
+                "battery_at": "2026-09-02T23:16:59+00:00",
             },
             {
                 "id": 10,
@@ -266,6 +285,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "last_at": "",
                 "threshold_min": None,
                 "threshold_max": None,
+                "battery": None,
+                "battery_at": "",
             },
         ],
     }
@@ -284,7 +305,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
         call.fetch_all(
             """
                 SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
-                       threshold_min, threshold_max
+                       threshold_min, threshold_max, battery, battery_at
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
             (3,),
@@ -641,13 +662,61 @@ def test__find_or_create_sensor() -> None:
         reset_mocks()
 
 
+def test__store_batteries() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    def helper_charged(entity_id: str, battery: int | None, minute: int) -> SensorSample:
+        return SensorSample(
+            entity_id=entity_id,
+            name="Garage",
+            unit="°F",
+            value=84.9,
+            measured_at=datetime(2026, 9, 2, 23, minute, 0, tzinfo=UTC),
+            battery=battery,
+        )
+
+    known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+
+    # nothing carries a charge: nothing is written
+    result = tested._store_batteries([helper_charged("sensor.garage_temperature", None, 10)], known)
+    assert result is None
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # the newest charge of each thermometer wins, whatever order they arrive in,
+    # and a sample of an entity that is not in the push is ignored
+    samples = [
+        helper_charged("sensor.garage_temperature", 90, 20),
+        helper_charged("sensor.garage_temperature", 88, 40),
+        helper_charged("sensor.garage_temperature", 89, 30),
+        helper_charged("sensor.freezer_temperature", 12, 20),
+        helper_charged("sensor.freezer_temperature", None, 50),
+        helper_charged("sensor.unknown_temperature", 77, 20),
+    ]
+    database.execute.side_effect = [0, 0]
+    result = tested._store_batteries(samples, known)
+    assert result is None
+    exp_calls = [
+        call.execute("UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s", (88, "2026-09-02T23:40:00+00:00", 9)),
+        call.execute("UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s", (12, "2026-09-02T23:20:00+00:00", 10)),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
+@patch.object(SensorCommand, "_parse_battery")
 @patch.object(SensorCommand, "_parse_instant")
-def test__parse_sample(parse_instant: MagicMock) -> None:
+def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         parse_instant.reset_mock()
+        parse_battery.reset_mock()
         database.reset_mock()
 
     instant = datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC)
@@ -658,6 +727,7 @@ def test__parse_sample(parse_instant: MagicMock) -> None:
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "Each sample needs an entity_id."
     assert parse_instant.mock_calls == []
+    assert parse_battery.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -668,6 +738,7 @@ def test__parse_sample(parse_instant: MagicMock) -> None:
         assert exc_info.value.status_code == 400
         assert exc_info.value.message == "The value of sensor.garage_temperature is not a number."
         assert parse_instant.mock_calls == []
+        assert parse_battery.mock_calls == []
         assert database.mock_calls == []
         reset_mocks()
 
@@ -680,27 +751,83 @@ def test__parse_sample(parse_instant: MagicMock) -> None:
                 "name": " Garage ",
                 "unit": " °F ",
                 "measured_at": "2026-09-02T23:16:59+00:00",
+                "battery": 87,
             },
             "2026-09-02T23:16:59+00:00",
-            SensorSample(entity_id="sensor.garage_temperature", name="Garage", unit="°F", value=84.92, measured_at=instant),
+            87,
+            SensorSample(
+                entity_id="sensor.garage_temperature",
+                name="Garage",
+                unit="°F",
+                value=84.92,
+                measured_at=instant,
+                battery=87,
+            ),
         ),
         (
             {"entity_id": "sensor.freezer_temperature", "value": 0},
             "",
+            None,
             SensorSample(
                 entity_id="sensor.freezer_temperature",
                 name="sensor.freezer_temperature",
                 unit="",
                 value=0.0,
                 measured_at=instant,
+                battery=None,
             ),
         ),
     ]
-    for data, exp_text, expected in tests:
+    for data, exp_text, charge, expected in tests:
         parse_instant.side_effect = [instant]
+        parse_battery.side_effect = [charge]
         result = tested._parse_sample(data)
         assert result == expected
         assert parse_instant.mock_calls == [call(exp_text)]
+        assert parse_battery.mock_calls == [call(data.get("battery"), expected.entity_id)]
+        assert database.mock_calls == []
+        reset_mocks()
+
+
+def test__parse_battery() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    # a thermometer on mains power sends none; a charge is a whole percentage
+    tests: list[tuple[Any, int | None]] = [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        (87, 87),
+        ("87", 87),
+        (12.6, 13),
+        (0, 0),
+        (100, 100),
+    ]
+    for raw, expected in tests:
+        result = tested._parse_battery(raw, "sensor.garage_temperature")
+        assert result == expected
+        assert database.mock_calls == []
+        reset_mocks()
+
+    # not a number at all
+    for raw in ["full", [1]]:
+        with pytest.raises(AppException) as exc_info:
+            tested._parse_battery(raw, "sensor.garage_temperature")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message == "The battery of sensor.garage_temperature is not a number."
+        assert database.mock_calls == []
+        reset_mocks()
+
+    # a number, but not a percentage
+    for raw in [-1, 101]:
+        with pytest.raises(AppException) as exc_info:
+            tested._parse_battery(raw, "sensor.garage_temperature")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message == "The battery of sensor.garage_temperature is not a percentage."
         assert database.mock_calls == []
         reset_mocks()
 
