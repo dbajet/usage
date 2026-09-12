@@ -705,7 +705,9 @@ def test__create_schema() -> None:
                 threshold_max NUMERIC(8,2),
                 alert_state TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE(house_id, entity_hash)
+                UNIQUE(house_id, entity_hash),
+                CONSTRAINT sensors_threshold_range
+                    CHECK (threshold_min IS NULL OR threshold_max IS NULL OR threshold_min < threshold_max)
             )
             """
         ),
@@ -754,7 +756,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 11
+    connection.execute.return_value.fetchone.side_effect = [None] * 12
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -846,12 +848,23 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (11, "sensor alert thresholds and user alerts"),
         ),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (12,)),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE sensors DROP CONSTRAINT IF EXISTS sensors_threshold_range"),
+        call.execute(
+            "ALTER TABLE sensors ADD CONSTRAINT sensors_threshold_range "
+            "CHECK (threshold_min IS NULL OR threshold_max IS NULL OR threshold_min < threshold_max)",
+        ),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (12, "alert range ordered by the table itself"),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 11
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 12
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -876,6 +889,8 @@ def test__migrate() -> None:
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (10,)),
         call.execute().fetchone(),
         call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (11,)),
+        call.execute().fetchone(),
+        call.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (12,)),
         call.execute().fetchone(),
     ]
     assert connection.mock_calls == exp_calls

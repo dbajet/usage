@@ -263,7 +263,9 @@ class Database:
                 threshold_max NUMERIC(8,2),
                 alert_state TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE(house_id, entity_hash)
+                UNIQUE(house_id, entity_hash),
+                CONSTRAINT sensors_threshold_range
+                    CHECK (threshold_min IS NULL OR threshold_max IS NULL OR threshold_min < threshold_max)
             )
             """,
             """
@@ -310,10 +312,19 @@ class Database:
             (9, "home assistant sensors"),
             (10, "sensor colors"),
             (11, "sensor alert thresholds and user alerts"),
+            (12, "alert range ordered by the table itself"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 12:
+                    # Dropped first: a database created from _create_schema already
+                    # carries the constraint, and ADD would fail on the duplicate.
+                    connection.execute("ALTER TABLE sensors DROP CONSTRAINT IF EXISTS sensors_threshold_range")
+                    connection.execute(
+                        "ALTER TABLE sensors ADD CONSTRAINT sensors_threshold_range "
+                        "CHECK (threshold_min IS NULL OR threshold_max IS NULL OR threshold_min < threshold_max)",
+                    )
                 if version == 11:
                     # The opt-in is per user and house, like the monthly reminder: a
                     # thermometer added later by Home Assistant is covered on its own.

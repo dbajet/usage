@@ -1833,30 +1833,44 @@ function renderSensorSettings() {
   }));
   $$("[data-edit-sensor]").forEach((button) => button.addEventListener("click", async () => {
     const sensor = state.sensors.find((item) => item.id === Number(button.dataset.editSensor));
-    const answers = await openModal({
-      title: `Edit sensor · ${sensor.name}`,
-      message: sensor.entity_id,
-      fields: [
-        { name: "name", label: "Name", value: sensor.name },
-        { name: "unit", label: "Unit", value: sensor.unit },
-        { name: "active", label: "Shown in the graphs", type: "checkbox", value: sensor.active },
-        { type: "heading", label: "Alert range - leave a side empty for no bound" },
-        { name: "threshold_min", label: `Alert below${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_min ?? "" },
-        { name: "threshold_max", label: `Alert above${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_max ?? "" },
-      ],
-    });
-    if (answers === null) return;
-    try {
-      await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
-        ...sensorPayload(sensor),
-        name: answers.name,
-        unit: answers.unit,
-        active: answers.active,
-        threshold_min: answers.threshold_min === "" ? null : Number(answers.threshold_min),
-        threshold_max: answers.threshold_max === "" ? null : Number(answers.threshold_max),
-      }) });
-      await loadSensorSettings();
-    } catch (error) { showAppError(error); }
+    let draft = { ...sensor, threshold_min: sensor.threshold_min ?? "", threshold_max: sensor.threshold_max ?? "" };
+    let complaint = "";
+    // An impossible range brings the dialog back with what was typed in it:
+    // closing it would throw a whole edit away over one of the two numbers.
+    for (;;) {
+      const answers = await openModal({
+        title: `Edit sensor · ${sensor.name}`,
+        message: complaint || sensor.entity_id,
+        fields: [
+          { name: "name", label: "Name", value: draft.name },
+          { name: "unit", label: "Unit", value: draft.unit },
+          { name: "active", label: "Shown in the graphs", type: "checkbox", value: draft.active },
+          { type: "heading", label: "Alert range - leave a side empty for no bound" },
+          { name: "threshold_min", label: `Alert below${draft.unit ? ` (${draft.unit})` : ""}`, type: "number", value: draft.threshold_min },
+          { name: "threshold_max", label: `Alert above${draft.unit ? ` (${draft.unit})` : ""}`, type: "number", value: draft.threshold_max },
+        ],
+      });
+      if (answers === null) return;
+      draft = answers;
+      const minimum = answers.threshold_min === "" ? null : Number(answers.threshold_min);
+      const maximum = answers.threshold_max === "" ? null : Number(answers.threshold_max);
+      if (minimum !== null && maximum !== null && minimum >= maximum) {
+        complaint = "The alert minimum must be lower than the maximum.";
+        continue;
+      }
+      try {
+        await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
+          ...sensorPayload(sensor),
+          name: answers.name,
+          unit: answers.unit,
+          active: answers.active,
+          threshold_min: minimum,
+          threshold_max: maximum,
+        }) });
+        await loadSensorSettings();
+      } catch (error) { showAppError(error); }
+      return;
+    }
   }));
   $$("[data-toggle-sensor]").forEach((button) => button.addEventListener("click", async () => {
     // Hidden sensors keep collecting; deleting one would only bring it back on the next push.
