@@ -33,6 +33,7 @@ from usage.handlers.reading_update_request import ReadingUpdateRequest
 from usage.handlers.register_request import RegisterRequest
 from usage.handlers.reminder_request import ReminderRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
+from usage.handlers.sensor_alert_request import SensorAlertRequest
 from usage.handlers.sensor_order_request import SensorOrderRequest
 from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
@@ -57,7 +58,7 @@ class ApiRouter:
         self._meter_command = MeterCommand(database)
         self._reading_command = ReadingCommand(database, MeterReader(settings))
         self._stats_command = StatsCommand(database)
-        self._sensor_command = SensorCommand(database)
+        self._sensor_command = SensorCommand(database, settings, email_sender)
         self._register()
 
     @property
@@ -110,6 +111,8 @@ class ApiRouter:
         self._router.add_api_route("/sensors", self._list_sensors, methods=["GET"])
         self._router.add_api_route("/sensors/order", self._set_sensor_order, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/sensors/series", self._sensor_series, methods=["GET"])
+        self._router.add_api_route("/sensors/alerts", self._sensor_alerts, methods=["GET"])
+        self._router.add_api_route("/sensors/alerts", self._set_sensor_alerts, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/sensors/{sensor_id}", self._update_sensor, methods=["PUT"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
@@ -491,6 +494,23 @@ class ApiRouter:
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
         message = self._sensor_command.update_sensor(user, sensor_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _sensor_alerts(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, bool]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._sensor_command.alerts(user, house_id)
+
+    def _set_sensor_alerts(
+        self,
+        body: SensorAlertRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._sensor_command.set_alerts(user, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _rp_id(self, request: Request) -> str:

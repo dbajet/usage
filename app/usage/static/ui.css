@@ -552,6 +552,8 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 [data-sensor-chart] .viz-chart .series path { stroke-width: 1; }
 /* The previous period, shifted onto the current one: dotted, no band. */
 .viz-chart .series path.previous { stroke-dasharray: 1.5 3; stroke-linecap: round; opacity: 0.85; }
+/* The alert bounds: a thin line of long dashes, in the colour of its own sensor. */
+.viz-chart .threshold { stroke-width: 1; stroke-dasharray: 12 7; opacity: 0.75; }
 .token-box {
   margin: 0.5rem 0;
   padding: 0.5rem 0.65rem;

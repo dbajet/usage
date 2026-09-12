@@ -17,6 +17,7 @@ let state = {
   sensorDays: 1,
   sensorOffset: 0,
   hiddenSensors: new Set(),
+  sensorAutoRefreshId: null,
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -199,7 +200,8 @@ function showView(name) {
   }
   if (name === "entries") loadEntries();
   if (name === "stats") loadStats();
-  if (name === "sensors") loadSensors();
+  if (name === "sensors") { loadSensors(); startSensorAutoRefresh(); }
+  else { stopSensorAutoRefresh(); }
 }
 
 async function chooseHouseView() {
@@ -1175,6 +1177,7 @@ function wireChartHover(rootSelector) {
 // ---------- Sensors (Home Assistant thermometers) ----------
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
+const SENSOR_REFRESH_MS = 5 * 60 * 1000;
 const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
 const ICON_REFRESH = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/></svg>';
 const ICON_CHEVRON_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
@@ -1231,6 +1234,32 @@ function wantsCelsius() {
 
 function wantsPrevious() {
   return storedItem("usage-sensor-previous", "0") === "1";
+}
+
+function wantsThresholds() {
+  return storedItem("usage-sensor-thresholds", "0") === "1";
+}
+
+function storeThresholds(show) {
+  storeItem("usage-sensor-thresholds", show ? "1" : "0");
+}
+
+function startSensorAutoRefresh() {
+  // The thermometers push every few minutes, so the last range goes stale on its
+  // own: it reloads like the refresh button, readings and tiles together. An
+  // earlier period cannot change - there the arrows, not a timer, move the view.
+  stopSensorAutoRefresh();
+  state.sensorAutoRefreshId = setInterval(() => {
+    if ($("#view-sensors").hidden || state.sensorOffset !== 0) return;
+    loadSensors();
+  }, SENSOR_REFRESH_MS);
+}
+
+function stopSensorAutoRefresh() {
+  if (state.sensorAutoRefreshId) {
+    clearInterval(state.sensorAutoRefreshId);
+    state.sensorAutoRefreshId = null;
+  }
 }
 
 function splitPrevious(seriesList, days, tMax) {
@@ -1313,6 +1342,7 @@ async function loadSensors(seriesOnly = false) {
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
     $("#sensor-celsius").checked = wantsCelsius();
     $("#sensor-previous").checked = wantsPrevious();
+    $("#sensor-thresholds").checked = wantsThresholds();
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     showSensorsLoading();
     // The list and the series leave together: one round trip, not two.
@@ -1378,11 +1408,12 @@ function renderSensors() {
   const tMin = tMax - data.days * 86400000;
   const allSeries = splitPrevious(displaySeries(data.series || []), data.days, tMax)
     .map((item) => ({ ...item, color: colors.get(item.sensor_id) || SENSOR_DEFAULT_COLORS[0] }));
+  const thresholds = sensorThresholds(allSeries);
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
   const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
   const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
-  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}. Click the legend to hide a sensor.`;
+  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click the legend to hide a sensor.`;
   $("#sensor-content").classList.remove("loading");
   $("#sensor-content").innerHTML = `
     <div class="period-bar">
@@ -1395,7 +1426,7 @@ function renderSensors() {
       </span>
     </div>
     <div class="card graph-card">
-      ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
+      ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds.filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id))) || '<p class="meta">No reading in this period.</p>'}
     </div>
     ${sensorLegendMarkup(allSeries)}
     <div class="card">
@@ -1531,7 +1562,29 @@ function sensorStep(rough) {
   return factor * magnitude;
 }
 
-function sensorChartMarkup(seriesList, days, bucketMinutes, tMax) {
+function sensorThresholds(seriesList) {
+  // The alert range is the sensor's, in the thermometer's own unit: it takes the
+  // viewer's unit and the curve's colour, so a line is read against its sensor.
+  if (!wantsThresholds()) return [];
+  const sensors = new Map((state.sensors || []).map((sensor) => [sensor.id, sensor]));
+  return seriesList.flatMap((item) => {
+    const sensor = sensors.get(item.sensor_id);
+    if (!sensor) return [];
+    return [["below", sensor.threshold_min], ["above", sensor.threshold_max]]
+      .filter(([, bound]) => bound !== null && bound !== undefined)
+      .map(([side, bound]) => {
+        const shown = displayTemp(bound, sensor.unit);
+        return {
+          sensor_id: sensor.id,
+          color: item.color,
+          value: shown.value,
+          label: `${sensor.name}: alert ${side} ${fmtTemp(shown.value)}${shown.unit ? ` ${shown.unit}` : ""}`,
+        };
+      });
+  });
+}
+
+function sensorChartMarkup(seriesList, days, bucketMinutes, tMax, thresholds = []) {
   const tMin = tMax - days * 86400000;
   const points = seriesList.flatMap((item) => [...item.points, ...(item.previousPoints || [])]);
   if (points.length < 2) return "";
@@ -1543,8 +1596,8 @@ function sensorChartMarkup(seriesList, days, bucketMinutes, tMax) {
   const bottom = 28;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  let low = Math.min(...points.map((point) => point.low));
-  let high = Math.max(...points.map((point) => point.high));
+  let low = Math.min(...points.map((point) => point.low), ...thresholds.map((threshold) => threshold.value));
+  let high = Math.max(...points.map((point) => point.high), ...thresholds.map((threshold) => threshold.value));
   if (high - low < 2) { low -= 1; high += 1; }
   // Temperatures are not zero-based: the scale hugs the data, about six divisions.
   const step = sensorStep((high - low) / 6);
@@ -1562,6 +1615,12 @@ function sensorChartMarkup(seriesList, days, bucketMinutes, tMax) {
   }
   const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
     `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
+
+  // The alert bounds, inside the scale since it was told to make room for them.
+  const thresholdLines = thresholds.map((threshold) => {
+    const y = yAt(threshold.value).toFixed(1);
+    return `<line class="threshold" x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="${threshold.color}"><title>${esc(threshold.label)}</title></line>`;
+  }).join("");
 
   const withBand = bucketMinutes > 10;
   const lineOf = (timed) => timed.map((point, index) => `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.average).toFixed(1)}`).join(" ");
@@ -1603,6 +1662,7 @@ function sensorChartMarkup(seriesList, days, bucketMinutes, tMax) {
       <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Sensor trend">
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        ${thresholdLines}
         ${paths.join("")}
         <g class="viz-hover" hidden>
           <g class="hov-dots"></g>
@@ -1694,10 +1754,34 @@ async function loadSensorSettings() {
       if (storedItem("usage-settings-tab", "meters") === "sensors") showSettingsTab("meters");
       return;
     }
-    const data = await api(`/api/sensors?house_id=${state.houseId}`);
+    const [data, alerts] = await Promise.all([
+      api(`/api/sensors?house_id=${state.houseId}`),
+      api(`/api/sensors/alerts?house_id=${state.houseId}`),
+    ]);
     state.sensors = data.sensors || [];
+    $("#sensor-alert-toggle").checked = Boolean(alerts.enabled);
     renderSensorSettings();
   } catch (error) { showAppError(error); }
+}
+
+function sensorPayload(sensor) {
+  // Every sensor write sends the whole sensor: a partial one would clear the rest.
+  return {
+    name: sensor.name,
+    unit: sensor.unit,
+    color: sensor.color,
+    active: sensor.active,
+    threshold_min: sensor.threshold_min,
+    threshold_max: sensor.threshold_max,
+  };
+}
+
+function sensorRangeLabel(sensor) {
+  const unit = sensor.unit ? ` ${sensor.unit}` : "";
+  const below = sensor.threshold_min == null ? "" : `below ${fmtTemp(sensor.threshold_min)}${unit}`;
+  const above = sensor.threshold_max == null ? "" : `above ${fmtTemp(sensor.threshold_max)}${unit}`;
+  if (below && above) return `alert ${below} or ${above}`;
+  return below || above ? `alert ${below || above}` : "";
 }
 
 function renderSensorSettings() {
@@ -1707,7 +1791,7 @@ function renderSensorSettings() {
       <span>
         <strong>${esc(sensor.name)}</strong>${sensor.unit ? ` · ${esc(sensor.unit)}` : ""}${sensor.active ? "" : ' <span class="badge">hidden</span>'}
         <br>
-        <span class="meta">${esc(sensor.entity_id)}${sensor.last_value === null ? "" : ` · ${fmtTemp(sensor.last_value)} ${esc(sensor.unit)} ${esc(fmtAgo(sensor.last_at))}`}</span>
+        <span class="meta">${esc(sensor.entity_id)}${sensor.last_value === null ? "" : ` · ${fmtTemp(sensor.last_value)} ${esc(sensor.unit)} ${esc(fmtAgo(sensor.last_at))}`}${sensorRangeLabel(sensor) ? ` · ${esc(sensorRangeLabel(sensor))}` : ""}</span>
       </span>
       <span class="icon-actions">
         <button class="ghost compact icon-only" data-color-sensor="${sensor.id}" type="button" title="Choose the colour">
@@ -1741,10 +1825,8 @@ function renderSensorSettings() {
     if (color === null) return;
     try {
       await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
-        name: sensor.name,
-        unit: sensor.unit,
+        ...sensorPayload(sensor),
         color,
-        active: sensor.active,
       }) });
       await loadSensorSettings();
     } catch (error) { showAppError(error); }
@@ -1758,15 +1840,20 @@ function renderSensorSettings() {
         { name: "name", label: "Name", value: sensor.name },
         { name: "unit", label: "Unit", value: sensor.unit },
         { name: "active", label: "Shown in the graphs", type: "checkbox", value: sensor.active },
+        { type: "heading", label: "Alert range - leave a side empty for no bound" },
+        { name: "threshold_min", label: `Alert below${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_min ?? "" },
+        { name: "threshold_max", label: `Alert above${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_max ?? "" },
       ],
     });
     if (answers === null) return;
     try {
       await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
+        ...sensorPayload(sensor),
         name: answers.name,
         unit: answers.unit,
-        color: sensor.color,
         active: answers.active,
+        threshold_min: answers.threshold_min === "" ? null : Number(answers.threshold_min),
+        threshold_max: answers.threshold_max === "" ? null : Number(answers.threshold_max),
       }) });
       await loadSensorSettings();
     } catch (error) { showAppError(error); }
@@ -1776,9 +1863,7 @@ function renderSensorSettings() {
     const sensor = state.sensors.find((item) => item.id === Number(button.dataset.toggleSensor));
     try {
       await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
-        name: sensor.name,
-        unit: sensor.unit,
-        color: sensor.color,
+        ...sensorPayload(sensor),
         active: !sensor.active,
       }) });
       await loadSensorSettings();
@@ -2236,6 +2321,18 @@ addEventListener("DOMContentLoaded", () => {
     state.sensorOffset = 0;
     loadSensors(true);
   }));
+  $("#sensor-alert-toggle").addEventListener("change", async () => {
+    const toggle = $("#sensor-alert-toggle");
+    try {
+      await api("/api/sensors/alerts", {
+        method: "POST",
+        body: JSON.stringify({ house_id: state.houseId, enabled: toggle.checked }),
+      });
+    } catch (error) {
+      toggle.checked = !toggle.checked;
+      showAppError(error);
+    }
+  });
   $("#sensor-celsius").addEventListener("change", () => {
     storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
     renderSensors();
@@ -2243,6 +2340,10 @@ addEventListener("DOMContentLoaded", () => {
   $("#sensor-previous").addEventListener("change", () => {
     storeItem("usage-sensor-previous", $("#sensor-previous").checked ? "1" : "0");
     loadSensors(true);
+  });
+  $("#sensor-thresholds").addEventListener("change", () => {
+    storeThresholds($("#sensor-thresholds").checked);
+    renderSensors();
   });
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));

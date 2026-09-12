@@ -37,6 +37,10 @@ class _Constants:
     sensor_ranges: tuple[tuple[int, int], ...] = ((1, 10), (7, 60), (30, 360), (365, 1440))
     ingest_max_samples: int = 1000
     ingest_token_bytes: int = 32
+    # A sensor sits in exactly one of these states; the email goes out when it changes.
+    alert_normal: str = ""
+    alert_below: str = "below"
+    alert_above: str = "above"
     email_test_suffixes: tuple[str, ...] = (
         "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
         ".test", ".invalid", ".example", ".localhost",

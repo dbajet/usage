@@ -59,7 +59,15 @@ file; users rename, reorder or hide them in Settings, Sensors (there is no
 delete: a deleted sensor would only come back on the next push). Samples are keyed by the instant the value
 last changed, so a value re-sent unchanged is not a duplicate. The Sensors view
 shows the latest values and a trend over a day, a week, a month or a year, with
-averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band.
+averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band. On
+the last range the view refreshes itself every five minutes; an earlier period
+cannot change, so it does not.
+
+A sensor can carry an alert range (Settings, Sensors, Edit): the "Thresholds"
+switch draws those bounds across the graph as dashed lines in the sensor's own
+colour, and a user who turns the house's switch on gets an email when a push
+takes a thermometer out of its range. The sensor remembers which side it is on,
+so the email follows the crossing, not every push that stays out of range.
 
 ## Historical data
 

@@ -14,12 +14,31 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = SensorUpdateRequest
     result = list(tested.model_fields.keys())
-    expected = ["name", "unit", "color", "active"]
+    expected = ["name", "unit", "color", "active", "threshold_min", "threshold_max"]
     assert result == expected
 
 
 def test___init__() -> None:
-    tested = SensorUpdateRequest(name="Garage", unit="°F", color="#2a78d6", active=False)
+    tested = SensorUpdateRequest(name="Garage", unit="°F", color="#2a78d6", active=False, threshold_min=40.0, threshold_max=85.5)
     result = tested.model_dump()
-    expected = {"name": "Garage", "unit": "°F", "color": "#2a78d6", "active": False}
+    expected = {
+        "name": "Garage",
+        "unit": "°F",
+        "color": "#2a78d6",
+        "active": False,
+        "threshold_min": 40.0,
+        "threshold_max": 85.5,
+    }
+    assert result == expected
+
+    tested = SensorUpdateRequest(name="Garage")
+    result = tested.model_dump()
+    expected = {
+        "name": "Garage",
+        "unit": "",
+        "color": "",
+        "active": True,
+        "threshold_min": None,
+        "threshold_max": None,
+    }
     assert result == expected

@@ -29,6 +29,7 @@ from usage.handlers.register_request import RegisterRequest
 from usage.handlers.reminder_request import ReminderRequest
 from usage.handlers.register_update_request import RegisterUpdateRequest
 from usage.handlers.sample_input import SampleInput
+from usage.handlers.sensor_alert_request import SensorAlertRequest
 from usage.handlers.sensor_order_request import SensorOrderRequest
 from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
@@ -152,7 +153,7 @@ def test___init__() -> None:
     assert meter_command_class.mock_calls == [call(database)]
     assert reading_command_class.mock_calls == [call(database, meter_reader)]
     assert stats_command_class.mock_calls == [call(database)]
-    assert sensor_command_class.mock_calls == [call(database)]
+    assert sensor_command_class.mock_calls == [call(database, settings, email_sender)]
     assert database.mock_calls == []
     assert email_sender.mock_calls == []
     assert meter_reader.mock_calls == []
@@ -217,6 +218,8 @@ def test__register() -> None:
         ("/api/registers/{register_id}", ("DELETE",)),
         ("/api/registers/{register_id}", ("PUT",)),
         ("/api/sensors", ("GET",)),
+        ("/api/sensors/alerts", ("GET",)),
+        ("/api/sensors/alerts", ("POST",)),
         ("/api/sensors/order", ("POST",)),
         ("/api/sensors/series", ("GET",)),
         ("/api/sensors/{sensor_id}", ("PUT",)),
@@ -1706,7 +1709,8 @@ def test__update_sensor() -> None:
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.update_sensor.side_effect = [{"message": "Sensor updated."}]
-    result = tested._update_sensor(9, SensorUpdateRequest(name="Garage", unit="°F", color="", active=True), "the-session")
+    body = SensorUpdateRequest(name="Garage", unit="°F", color="", active=True, threshold_min=40.0, threshold_max=85.0)
+    result = tested._update_sensor(9, body, "the-session")
     expected = ApiMessage(message="Sensor updated.")
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
@@ -1715,7 +1719,64 @@ def test__update_sensor() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
-    assert sensor_command.mock_calls == [call.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "color": "", "active": True})]
+    exp_data = {"name": "Garage", "unit": "°F", "color": "", "active": True, "threshold_min": 40.0, "threshold_max": 85.0}
+    assert sensor_command.mock_calls == [call.update_sensor(user, 9, exp_data)]
+    reset_mocks()
+
+
+def test__sensor_alerts() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.alerts.side_effect = [{"enabled": True}]
+    result = tested._sensor_alerts(3, "the-session")
+    expected = {"enabled": True}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.alerts(user, 3)]
+    reset_mocks()
+
+
+def test__set_sensor_alerts() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    sensor_command.set_alerts.side_effect = [{"message": "Threshold alerts enabled for this house."}]
+    result = tested._set_sensor_alerts(SensorAlertRequest(house_id=3, enabled=True), "the-session")
+    expected = ApiMessage(message="Threshold alerts enabled for this house.")
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == [call.set_alerts(user, {"house_id": 3, "enabled": True})]
     reset_mocks()
 
 

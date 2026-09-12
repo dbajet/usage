@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import secrets
@@ -9,9 +10,13 @@ from typing import Any
 
 from usage.constants.constants import Constants
 from usage.libraries.database import Database
+from usage.libraries.email_sender import EmailSender
+from usage.libraries.email_texts import EmailTexts
 from usage.structures.app_exception import AppException
+from usage.structures.sensor_breach import SensorBreach
 from usage.structures.sensor_sample import SensorSample
 from usage.structures.session_user import SessionUser
+from usage.structures.settings import Settings
 
 
 class SensorCommand:
@@ -22,13 +27,19 @@ class SensorCommand:
     fly, named by the Home Assistant configuration; users rename, order and
     hide sensors in Settings (a hidden sensor keeps collecting, out of the
     graphs - a deleted one would only come back on the next push). A sample
-    is keyed by the sensor and the
-    instant its value last changed, so a value re-sent unchanged is a no-op
-    rather than a duplicate.
+    is keyed by the sensor and the instant its value last changed, so a value
+    re-sent unchanged is a no-op rather than a duplicate.
+
+    A sensor may carry an alert range (Settings, Sensors): when a push takes it
+    out of that range, the users who opted in for the house get one email. The
+    sensor remembers the side it is on, so the alert fires on the crossing, not
+    on every push that follows it.
     """
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, settings: Settings, email_sender: EmailSender) -> None:
         self._database = database
+        self._settings = settings
+        self._email_sender = email_sender
 
     def ingest(self, authorization: str, data: dict[str, Any]) -> dict[str, int]:
         house_id = self._house_from_token(authorization)
@@ -51,6 +62,8 @@ class SensorCommand:
                     """,
                     (known[sample.entity_id], sample.measured_at.isoformat(), sample.value),
                 )
+        # Outside the transaction: the samples are in whatever the mail relay does next.
+        self._alert(house_id, parsed, known)
         return {"accepted": len(parsed), "created": created}
 
     def issue_token(self, user: SessionUser, house_id: int) -> dict[str, str]:
@@ -81,7 +94,8 @@ class SensorCommand:
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active
+                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
+                       threshold_min, threshold_max
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
                 (house_id,),
@@ -102,6 +116,8 @@ class SensorCommand:
                     "active": bool(sensor["active"]),
                     "last_value": float(last["value"]) if last is not None else None,
                     "last_at": last["measured_at"].isoformat() if last is not None else "",
+                    "threshold_min": float(sensor["threshold_min"]) if sensor["threshold_min"] is not None else None,
+                    "threshold_max": float(sensor["threshold_max"]) if sensor["threshold_max"] is not None else None,
                 },
             )
         return {"sensors": result}
@@ -114,13 +130,31 @@ class SensorCommand:
         color = str(data.get("color") or "").strip().lower()
         if color and not re.fullmatch(r"#[0-9a-f]{6}", color):
             raise AppException(400, "The colour must be like #2a78d6, or empty for the default.")
+        # The alert range is in the thermometer's own unit; either side may stay open.
+        threshold_min = self._threshold(data, "threshold_min")
+        threshold_max = self._threshold(data, "threshold_max")
+        if threshold_min is not None and threshold_max is not None and threshold_min >= threshold_max:
+            raise AppException(400, "The alert minimum must be lower than the maximum.")
+        # A range that moved re-arms the alert: the next push decides the state afresh.
         self._database.execute(
-            "UPDATE sensors SET name_sealed = %s, unit = %s, color = %s, active = %s WHERE id = %s",
+            """
+            UPDATE sensors
+            SET name_sealed = %s, unit = %s, color = %s, active = %s, threshold_min = %s, threshold_max = %s,
+                alert_state = CASE
+                    WHEN threshold_min IS DISTINCT FROM %s OR threshold_max IS DISTINCT FROM %s THEN %s
+                    ELSE alert_state END
+            WHERE id = %s
+            """,
             (
                 self._database.encrypt(name),
                 str(data.get("unit") or "").strip(),
                 color,
                 bool(data.get("active")),
+                threshold_min,
+                threshold_max,
+                threshold_min,
+                threshold_max,
+                Constants.alert_normal,
                 sensor_id,
             ),
         )
@@ -205,6 +239,29 @@ class SensorCommand:
             "until": until.isoformat(),
             "series": result,
         }
+
+    def alerts(self, user: SessionUser, house_id: int) -> dict[str, bool]:
+        """Whether this user asked for the house's threshold alerts (off unless asked)."""
+        self._require_house(user, house_id)
+        row = self._database.fetch_one(
+            "SELECT enabled FROM sensor_alerts WHERE user_id = %s AND house_id = %s",
+            (user.user_id, house_id),
+        )
+        return {"enabled": row is not None and bool(row["enabled"])}
+
+    def set_alerts(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        house_id = int(data.get("house_id") or 0)
+        enabled = bool(data.get("enabled"))
+        self._require_house(user, house_id)
+        self._database.execute(
+            """
+            INSERT INTO sensor_alerts(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """,
+            (user.user_id, house_id, enabled),
+        )
+        result = "Threshold alerts enabled for this house." if enabled else "Threshold alerts disabled for this house."
+        return {"message": result}
 
     def _find_or_create_sensor(self, house_id: int, sample: SensorSample) -> tuple[int, bool]:
         entity_hash = self._database.blind_index(sample.entity_id)
@@ -300,3 +357,99 @@ class SensorCommand:
         if int(result["house_id"]) not in self._visible_house_ids(user):
             raise AppException(403, "You do not have access to this house.")
         return result
+
+    def _threshold(self, data: dict[str, Any], key: str) -> float | None:
+        raw = data.get(key)
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return round(float(raw), 2)
+        except (TypeError, ValueError):
+            raise AppException(400, "The alert minimum and maximum must be numbers.") from None
+
+    def _alert(self, house_id: int, parsed: list[SensorSample], known: dict[str, int]) -> None:
+        """Email the house's subscribers about the thermometers that just left their range.
+
+        Edge triggered: Home Assistant pushes every few minutes, so the crossing
+        is worth an email, not every sample that stays out of range afterwards.
+        """
+        breaches = self._breaches(parsed, known)
+        if breaches:
+            self._send_alerts(house_id, breaches)
+
+    def _breaches(self, parsed: list[SensorSample], known: dict[str, int]) -> list[SensorBreach]:
+        """The sensors of this push whose state changed, with the stored state brought up to date."""
+        sensor_ids = sorted(set(known.values()))
+        if not sensor_ids:
+            return []
+        sensors = self._database.decrypt_rows(
+            self._database.fetch_all(
+                """
+                SELECT id, name_sealed AS name, unit, threshold_min, threshold_max, alert_state
+                FROM sensors
+                WHERE id = ANY(%s) AND (threshold_min IS NOT NULL OR threshold_max IS NOT NULL)
+                ORDER BY position, id
+                """,
+                (sensor_ids,),
+            ),
+            ("name",),
+        )
+        result: list[SensorBreach] = []
+        for sensor in sensors:
+            sensor_id = int(sensor["id"])
+            last = self._last_sample(sensor_id, parsed, known)
+            if last is None:
+                continue
+            state, threshold = self._state_of(last.value, sensor)
+            if state == str(sensor["alert_state"]):
+                continue
+            self._database.execute("UPDATE sensors SET alert_state = %s WHERE id = %s", (state, sensor_id))
+            if state != Constants.alert_normal:
+                result.append(
+                    SensorBreach(
+                        sensor_id=sensor_id,
+                        name=str(sensor["name"]),
+                        value=last.value,
+                        unit=str(sensor["unit"]),
+                        state=state,
+                        threshold=threshold,
+                    ),
+                )
+        return result
+
+    def _last_sample(self, sensor_id: int, parsed: list[SensorSample], known: dict[str, int]) -> SensorSample | None:
+        # One push can carry several samples of the same thermometer: the latest one decides.
+        samples = [sample for sample in parsed if known.get(sample.entity_id) == sensor_id]
+        return max(samples, key=lambda sample: sample.measured_at, default=None)
+
+    def _state_of(self, value: float, sensor: dict[str, Any]) -> tuple[str, float]:
+        minimum = sensor["threshold_min"]
+        maximum = sensor["threshold_max"]
+        if minimum is not None and value < float(minimum):
+            return Constants.alert_below, float(minimum)
+        if maximum is not None and value > float(maximum):
+            return Constants.alert_above, float(maximum)
+        return Constants.alert_normal, 0.0
+
+    def _send_alerts(self, house_id: int, breaches: list[SensorBreach]) -> None:
+        recipients = self._database.fetch_all(
+            """
+            SELECT users.email_sealed AS email
+            FROM sensor_alerts
+            JOIN users ON users.id = sensor_alerts.user_id
+            JOIN user_houses ON user_houses.user_id = sensor_alerts.user_id
+                            AND user_houses.house_id = sensor_alerts.house_id
+            WHERE sensor_alerts.house_id = %s AND sensor_alerts.enabled
+            ORDER BY sensor_alerts.user_id
+            """,
+            (house_id,),
+        )
+        if not recipients:
+            return
+        house = self._database.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (house_id,))
+        house_name = self._database.decrypt(str(house["name"])) if house is not None else ""
+        subject, body_lines = EmailTexts.sensor_alert(house_name, breaches, self._settings.base_url or "")
+        for recipient in recipients:
+            email = self._database.decrypt(str(recipient["email"]))
+            if not self._email_sender.send(email, subject, body_lines):
+                logging.getLogger("usage").warning("[ALERT] email failed for %s of house %s", email, house_id)

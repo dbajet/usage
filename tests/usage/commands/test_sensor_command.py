@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -9,11 +10,30 @@ import pytest
 from usage.commands.sensor_command import SensorCommand
 from usage.structures.app_exception import AppException
 from usage.structures.sensor_sample import SensorSample
+from usage.structures.sensor_breach import SensorBreach
 from usage.structures.session_user import SessionUser
+from usage.structures.settings import Settings
+
+
+def helper_settings(base_url: str = "https://usage.example.com") -> Settings:
+    return Settings(
+        database_url="postgresql://tests",
+        encryption_key="the-key",
+        dev_auth_links=False,
+        cookie_secure=True,
+        base_url=base_url,
+        smtp_host="smtp.example",
+        smtp_port=587,
+        smtp_username="the-username",
+        smtp_password="the-password",
+        smtp_sender="sender@example.com",
+        anthropic_api_key="the-anthropic-key",
+        anthropic_model="claude-opus-5",
+    )
 
 
 def helper_instance() -> SensorCommand:
-    return SensorCommand(MagicMock())
+    return SensorCommand(MagicMock(), helper_settings(), MagicMock())
 
 
 def helper_user(is_admin: bool = False) -> SessionUser:
@@ -32,20 +52,27 @@ def helper_sample(entity_id: str = "sensor.garage_temperature", value: float = 8
 
 def test___init__() -> None:
     database = MagicMock()
+    email_sender = MagicMock()
 
     def reset_mocks() -> None:
         database.reset_mock()
+        email_sender.reset_mock()
 
-    tested = SensorCommand(database)
+    settings = helper_settings()
+    tested = SensorCommand(database, settings, email_sender)
     assert tested._database is database
+    assert tested._settings == settings
+    assert tested._email_sender is email_sender
     assert database.mock_calls == []
+    assert email_sender.mock_calls == []
     reset_mocks()
 
 
+@patch.object(SensorCommand, "_alert")
 @patch.object(SensorCommand, "_find_or_create_sensor")
 @patch.object(SensorCommand, "_parse_sample")
 @patch.object(SensorCommand, "_house_from_token")
-def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_create_sensor: MagicMock) -> None:
+def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_create_sensor: MagicMock, alert: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
@@ -53,6 +80,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
         house_from_token.reset_mock()
         parse_sample.reset_mock()
         find_or_create_sensor.reset_mock()
+        alert.reset_mock()
         database.reset_mock()
 
     exp_upsert = """
@@ -69,17 +97,20 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     assert house_from_token.mock_calls == [call("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
+    assert alert.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
     # empty batch
     house_from_token.side_effect = [3]
+    alert.side_effect = [None]
     result = tested.ingest("Bearer the-token", {})
     expected = {"accepted": 0, "created": 0}
     assert result == expected
     assert house_from_token.mock_calls == [call("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
+    assert alert.mock_calls == [call(3, [], {})]
     exp_calls = [call.transaction(), call.transaction().__enter__(), call.transaction().__exit__(None, None, None)]
     assert database.mock_calls == exp_calls
     reset_mocks()
@@ -92,6 +123,7 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     house_from_token.side_effect = [3]
     parse_sample.side_effect = [garage, freezer, garage_later]
     find_or_create_sensor.side_effect = [(9, False), (10, True)]
+    alert.side_effect = [None]
     database.execute.side_effect = [0, 0, 0]
     result = tested.ingest("Bearer the-token", {"samples": raw})
     expected = {"accepted": 3, "created": 1}
@@ -99,6 +131,8 @@ def test_ingest(house_from_token: MagicMock, parse_sample: MagicMock, find_or_cr
     assert house_from_token.mock_calls == [call("Bearer the-token")]
     assert parse_sample.mock_calls == [call(raw[0]), call(raw[1]), call(raw[2])]
     assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
+    exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+    assert alert.mock_calls == [call(3, [garage, freezer, garage_later], exp_known)]
     exp_calls = [
         call.transaction(),
         call.transaction().__enter__(),
@@ -180,8 +214,28 @@ def test_list_sensors(require_house: MagicMock) -> None:
     database.fetch_all.side_effect = [latest, sensor_rows]
     database.decrypt_rows.side_effect = [
         [
-            {"id": 9, "entity_id": "sensor.garage_temperature", "name": "Garage", "unit": "°F", "color": "#2a78d6", "position": 0, "active": True},
-            {"id": 10, "entity_id": "sensor.freezer_temperature", "name": "Freezer", "unit": "°F", "color": "", "position": 1, "active": False},
+            {
+                "id": 9,
+                "entity_id": "sensor.garage_temperature",
+                "name": "Garage",
+                "unit": "°F",
+                "color": "#2a78d6",
+                "position": 0,
+                "active": True,
+                "threshold_min": Decimal("40.00"),
+                "threshold_max": Decimal("85.00"),
+            },
+            {
+                "id": 10,
+                "entity_id": "sensor.freezer_temperature",
+                "name": "Freezer",
+                "unit": "°F",
+                "color": "",
+                "position": 1,
+                "active": False,
+                "threshold_min": None,
+                "threshold_max": None,
+            },
         ],
     ]
     result = tested.list_sensors(user, 3)
@@ -197,6 +251,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "active": True,
                 "last_value": 84.9,
                 "last_at": "2026-09-02T23:16:59+00:00",
+                "threshold_min": 40.0,
+                "threshold_max": 85.0,
             },
             {
                 "id": 10,
@@ -208,6 +264,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "active": False,
                 "last_value": None,
                 "last_at": "",
+                "threshold_min": None,
+                "threshold_max": None,
             },
         ],
     }
@@ -225,7 +283,8 @@ def test_list_sensors(require_house: MagicMock) -> None:
         ),
         call.fetch_all(
             """
-                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active
+                SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
+                       threshold_min, threshold_max
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
             (3,),
@@ -267,25 +326,57 @@ def test_update_sensor(require_sensor: MagicMock) -> None:
     assert database.mock_calls == []
     reset_mocks()
 
+    # the alert range must be the right way round
+    require_sensor.side_effect = [{"id": 9, "house_id": 3}]
+    with pytest.raises(AppException) as exc_info:
+        tested.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "active": True, "threshold_min": 85, "threshold_max": 40})
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The alert minimum must be lower than the maximum."
+    assert require_sensor.mock_calls == [call(user, 9)]
+    assert database.mock_calls == []
+    reset_mocks()
+
+    exp_update = """
+            UPDATE sensors
+            SET name_sealed = %s, unit = %s, color = %s, active = %s, threshold_min = %s, threshold_max = %s,
+                alert_state = CASE
+                    WHEN threshold_min IS DISTINCT FROM %s OR threshold_max IS DISTINCT FROM %s THEN %s
+                    ELSE alert_state END
+            WHERE id = %s
+            """
+
     # happy paths: a colour, or the default
     tests = [(" #2A78D6 ", "#2a78d6"), ("", "")]
     for color, exp_color in tests:
         require_sensor.side_effect = [{"id": 9, "house_id": 3}]
         database.encrypt.side_effect = ["sealedGarage"]
         database.execute.side_effect = [0]
-        result = tested.update_sensor(user, 9, {"name": " Garage ", "unit": " °C ", "color": color, "active": False})
+        data = {"name": " Garage ", "unit": " °C ", "color": color, "active": False, "threshold_min": "4.567", "threshold_max": 30}
+        result = tested.update_sensor(user, 9, data)
         expected = {"message": "Sensor updated."}
         assert result == expected
         assert require_sensor.mock_calls == [call(user, 9)]
         exp_calls = [
             call.encrypt("Garage"),
-            call.execute(
-                "UPDATE sensors SET name_sealed = %s, unit = %s, color = %s, active = %s WHERE id = %s",
-                ("sealedGarage", "°C", exp_color, False, 9),
-            ),
+            call.execute(exp_update, ("sealedGarage", "°C", exp_color, False, 4.57, 30.0, 4.57, 30.0, "", 9)),
         ]
         assert database.mock_calls == exp_calls
         reset_mocks()
+
+    # no bound on either side
+    require_sensor.side_effect = [{"id": 9, "house_id": 3}]
+    database.encrypt.side_effect = ["sealedGarage"]
+    database.execute.side_effect = [0]
+    result = tested.update_sensor(user, 9, {"name": "Garage", "unit": "°F", "color": "", "active": True})
+    expected = {"message": "Sensor updated."}
+    assert result == expected
+    assert require_sensor.mock_calls == [call(user, 9)]
+    exp_calls = [
+        call.encrypt("Garage"),
+        call.execute(exp_update, ("sealedGarage", "°F", "", True, None, None, None, None, "", 9)),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
 
 
 @patch.object(SensorCommand, "_require_house")
@@ -438,6 +529,66 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
             ),
         ]
         assert database.mock_calls == exp_calls
+        reset_mocks()
+
+
+@patch.object(SensorCommand, "_require_house")
+def test_alerts(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+    exp_fetch = call.fetch_one(
+        "SELECT enabled FROM sensor_alerts WHERE user_id = %s AND house_id = %s",
+        (7, 3),
+    )
+
+    # never asked, asked and on, asked and off
+    tests: list[tuple[dict[str, bool] | None, bool]] = [(None, False), ({"enabled": True}, True), ({"enabled": False}, False)]
+    for row, exp_enabled in tests:
+        require_house.side_effect = [None]
+        database.fetch_one.side_effect = [row]
+        result = tested.alerts(user, 3)
+        expected = {"enabled": exp_enabled}
+        assert result == expected
+        assert require_house.mock_calls == [call(user, 3)]
+        assert database.mock_calls == [exp_fetch]
+        reset_mocks()
+
+
+@patch.object(SensorCommand, "_require_house")
+def test_set_alerts(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+    exp_upsert = """
+            INSERT INTO sensor_alerts(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """
+
+    tests = [
+        ({"house_id": 3, "enabled": True}, True, "Threshold alerts enabled for this house."),
+        ({"house_id": "3", "enabled": False}, False, "Threshold alerts disabled for this house."),
+        ({}, False, "Threshold alerts disabled for this house."),
+    ]
+    for data, exp_enabled, exp_message in tests:
+        house_id = int(data.get("house_id") or 0)
+        require_house.side_effect = [None]
+        database.execute.side_effect = [0]
+        result = tested.set_alerts(user, data)
+        expected = {"message": exp_message}
+        assert result == expected
+        assert require_house.mock_calls == [call(user, house_id)]
+        assert database.mock_calls == [call.execute(exp_upsert, (7, house_id, exp_enabled))]
         reset_mocks()
 
 
@@ -740,4 +891,289 @@ def test__require_sensor(visible_house_ids: MagicMock) -> None:
     assert result == expected
     assert visible_house_ids.mock_calls == [call(user)]
     assert database.mock_calls == [call.fetch_one("SELECT id, house_id FROM sensors WHERE id = %s", (9,))]
+    reset_mocks()
+
+
+def test__threshold() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    tests: list[tuple[dict[str, Any], float | None]] = [
+        ({}, None),
+        ({"threshold_min": None}, None),
+        ({"threshold_min": ""}, None),
+        ({"threshold_min": "   "}, None),
+        ({"threshold_min": 30}, 30.0),
+        ({"threshold_min": "4.567"}, 4.57),
+        ({"threshold_min": -12.344}, -12.34),
+    ]
+    for data, expected in tests:
+        result = tested._threshold(data, "threshold_min")
+        assert result == expected
+        assert database.mock_calls == []
+        reset_mocks()
+
+    # anything that is not a number is refused
+    for value in ["twenty", [1]]:
+        with pytest.raises(AppException) as exc_info:
+            tested._threshold({"threshold_min": value}, "threshold_min")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message == "The alert minimum and maximum must be numbers."
+        assert database.mock_calls == []
+        reset_mocks()
+
+
+@patch.object(SensorCommand, "_send_alerts")
+@patch.object(SensorCommand, "_breaches")
+def test__alert(breaches: MagicMock, send_alerts: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        breaches.reset_mock()
+        send_alerts.reset_mock()
+        database.reset_mock()
+
+    garage = helper_sample()
+    known = {"sensor.garage_temperature": 9}
+
+    # nothing crossed: no email
+    breaches.side_effect = [[]]
+    result = tested._alert(3, [garage], known)
+    assert result is None
+    assert breaches.mock_calls == [call([garage], known)]
+    assert send_alerts.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # a crossing: the house is told
+    breach = SensorBreach(sensor_id=9, name="Garage", value=91.0, unit="°F", state="above", threshold=85.0)
+    breaches.side_effect = [[breach]]
+    send_alerts.side_effect = [None]
+    result = tested._alert(3, [garage], known)
+    assert result is None
+    assert breaches.mock_calls == [call([garage], known)]
+    assert send_alerts.mock_calls == [call(3, [breach])]
+    assert database.mock_calls == []
+    reset_mocks()
+
+
+@patch.object(SensorCommand, "_state_of")
+@patch.object(SensorCommand, "_last_sample")
+def test__breaches(last_sample: MagicMock, state_of: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        last_sample.reset_mock()
+        state_of.reset_mock()
+        database.reset_mock()
+
+    garage = helper_sample()
+    freezer = helper_sample(entity_id="sensor.freezer_temperature", value=-0.58)
+    known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+    exp_fetch = call.fetch_all(
+        """
+                SELECT id, name_sealed AS name, unit, threshold_min, threshold_max, alert_state
+                FROM sensors
+                WHERE id = ANY(%s) AND (threshold_min IS NOT NULL OR threshold_max IS NOT NULL)
+                ORDER BY position, id
+                """,
+        ([9, 10],),
+    )
+
+    # no sensor in the push: nothing is even looked up
+    result = tested._breaches([], {})
+    assert result == []
+    assert last_sample.mock_calls == []
+    assert state_of.mock_calls == []
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # no sensor carries a range
+    sealed: list[dict[str, Any]] = []
+    database.fetch_all.side_effect = [sealed]
+    database.decrypt_rows.side_effect = [[]]
+    result = tested._breaches([garage, freezer], known)
+    assert result == []
+    assert last_sample.mock_calls == []
+    assert state_of.mock_calls == []
+    assert database.mock_calls == [exp_fetch, call.decrypt_rows(sealed, ("name",))]
+    reset_mocks()
+
+    # one sensor just went out of range, one was already out, one has no sample
+    # in this push, and one came back to normal: only the crossing is reported,
+    # and only the sensors whose state moved are written back.
+    sealed = [{"id": 9}, {"id": 10}, {"id": 11}, {"id": 12}]
+    rows = [
+        {"id": 9, "name": "Garage", "unit": "°F", "threshold_min": None, "threshold_max": Decimal("85.00"), "alert_state": ""},
+        {"id": 10, "name": "Freezer", "unit": "°F", "threshold_min": Decimal("0.00"), "threshold_max": None, "alert_state": "below"},
+        {"id": 11, "name": "Cave", "unit": "°F", "threshold_min": Decimal("40.00"), "threshold_max": None, "alert_state": ""},
+        {"id": 12, "name": "Grenier", "unit": "°F", "threshold_min": Decimal("40.00"), "threshold_max": None, "alert_state": "below"},
+    ]
+    database.fetch_all.side_effect = [sealed]
+    database.decrypt_rows.side_effect = [rows]
+    last_sample.side_effect = [garage, freezer, None, garage]
+    state_of.side_effect = [("above", 85.0), ("below", 0.0), ("", 0.0)]
+    database.execute.side_effect = [0, 0]
+    result = tested._breaches([garage, freezer], known)
+    expected = [SensorBreach(sensor_id=9, name="Garage", value=84.9, unit="°F", state="above", threshold=85.0)]
+    assert result == expected
+    exp_calls = [
+        call(9, [garage, freezer], known),
+        call(10, [garage, freezer], known),
+        call(11, [garage, freezer], known),
+        call(12, [garage, freezer], known),
+    ]
+    assert last_sample.mock_calls == exp_calls
+    assert state_of.mock_calls == [call(84.9, rows[0]), call(-0.58, rows[1]), call(84.9, rows[3])]
+    exp_calls = [
+        exp_fetch,
+        call.decrypt_rows(sealed, ("name",)),
+        call.execute("UPDATE sensors SET alert_state = %s WHERE id = %s", ("above", 9)),
+        call.execute("UPDATE sensors SET alert_state = %s WHERE id = %s", ("", 12)),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__last_sample() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    early = helper_sample(value=84.9)
+    late = SensorSample(
+        entity_id="sensor.garage_temperature",
+        name="Garage",
+        unit="°F",
+        value=85.1,
+        measured_at=datetime(2026, 9, 2, 23, 26, 59, tzinfo=UTC),
+    )
+    freezer = helper_sample(entity_id="sensor.freezer_temperature", value=-0.58)
+    known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+
+    tests: list[tuple[int, SensorSample | None]] = [(9, late), (10, freezer), (11, None)]
+    for sensor_id, expected in tests:
+        result = tested._last_sample(sensor_id, [early, freezer, late], known)
+        assert result == expected
+        assert database.mock_calls == []
+        reset_mocks()
+
+
+def test__state_of() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    both = {"threshold_min": Decimal("40.00"), "threshold_max": Decimal("85.00")}
+    low_only = {"threshold_min": Decimal("40.00"), "threshold_max": None}
+    high_only = {"threshold_min": None, "threshold_max": Decimal("85.00")}
+    tests: list[tuple[float, dict[str, Any], tuple[str, float]]] = [
+        (39.99, both, ("below", 40.0)),
+        (40.0, both, ("", 0.0)),
+        (62.5, both, ("", 0.0)),
+        (85.0, both, ("", 0.0)),
+        (85.01, both, ("above", 85.0)),
+        (200.0, low_only, ("", 0.0)),
+        (12.0, low_only, ("below", 40.0)),
+        (-200.0, high_only, ("", 0.0)),
+        (91.0, high_only, ("above", 85.0)),
+    ]
+    for value, sensor, expected in tests:
+        result = tested._state_of(value, sensor)
+        assert result == expected
+        assert database.mock_calls == []
+        reset_mocks()
+
+
+@patch("usage.commands.sensor_command.logging")
+@patch("usage.commands.sensor_command.EmailTexts")
+def test__send_alerts(email_texts: MagicMock, mock_logging: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+    email_sender = tested._email_sender
+    logger = MagicMock()
+
+    def reset_mocks() -> None:
+        email_texts.reset_mock()
+        mock_logging.reset_mock()
+        logger.reset_mock()
+        database.reset_mock()
+        email_sender.reset_mock()
+
+    breach = SensorBreach(sensor_id=9, name="Garage", value=91.0, unit="°F", state="above", threshold=85.0)
+    exp_recipients = call.fetch_all(
+        """
+            SELECT users.email_sealed AS email
+            FROM sensor_alerts
+            JOIN users ON users.id = sensor_alerts.user_id
+            JOIN user_houses ON user_houses.user_id = sensor_alerts.user_id
+                            AND user_houses.house_id = sensor_alerts.house_id
+            WHERE sensor_alerts.house_id = %s AND sensor_alerts.enabled
+            ORDER BY sensor_alerts.user_id
+            """,
+        (3,),
+    )
+    exp_house = call.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (3,))
+
+    # nobody asked for the alerts: no email, not even the house is read
+    database.fetch_all.side_effect = [[]]
+    result = tested._send_alerts(3, [breach])
+    assert result is None
+    assert email_texts.mock_calls == []
+    assert mock_logging.mock_calls == []
+    assert logger.mock_calls == []
+    assert database.mock_calls == [exp_recipients]
+    assert email_sender.mock_calls == []
+    reset_mocks()
+
+    # two subscribers, the second one's email fails and is logged
+    database.fetch_all.side_effect = [[{"email": "sealedJane"}, {"email": "sealedJohn"}]]
+    database.fetch_one.side_effect = [{"name": "sealedFremur"}]
+    database.decrypt.side_effect = ["Fremur", "jane@example.com", "john@example.com"]
+    email_texts.sensor_alert.side_effect = [("the subject", ["the body"])]
+    email_sender.send.side_effect = [True, False]
+    mock_logging.getLogger.side_effect = [logger]
+    result = tested._send_alerts(3, [breach])
+    assert result is None
+    assert email_texts.mock_calls == [call.sensor_alert("Fremur", [breach], "https://usage.example.com")]
+    assert mock_logging.mock_calls == [call.getLogger("usage")]
+    exp_calls = [call.warning("[ALERT] email failed for %s of house %s", "john@example.com", 3)]
+    assert logger.mock_calls == exp_calls
+    exp_calls = [
+        exp_recipients,
+        exp_house,
+        call.decrypt("sealedFremur"),
+        call.decrypt("sealedJane"),
+        call.decrypt("sealedJohn"),
+    ]
+    assert database.mock_calls == exp_calls
+    exp_calls = [
+        call.send("jane@example.com", "the subject", ["the body"]),
+        call.send("john@example.com", "the subject", ["the body"]),
+    ]
+    assert email_sender.mock_calls == exp_calls
+    reset_mocks()
+
+    # the house vanished between the push and the email: it goes out unnamed
+    database.fetch_all.side_effect = [[{"email": "sealedJane"}]]
+    database.fetch_one.side_effect = [None]
+    database.decrypt.side_effect = ["jane@example.com"]
+    email_texts.sensor_alert.side_effect = [("the subject", ["the body"])]
+    email_sender.send.side_effect = [True]
+    result = tested._send_alerts(3, [breach])
+    assert result is None
+    assert email_texts.mock_calls == [call.sensor_alert("", [breach], "https://usage.example.com")]
+    assert mock_logging.mock_calls == []
+    assert logger.mock_calls == []
+    assert database.mock_calls == [exp_recipients, exp_house, call.decrypt("sealedJane")]
+    assert email_sender.mock_calls == [call.send("jane@example.com", "the subject", ["the body"])]
     reset_mocks()

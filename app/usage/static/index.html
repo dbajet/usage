@@ -127,6 +127,8 @@
               <input id="sensor-celsius" type="checkbox"><span class="slider"></span> °C</label>
             <label class="switch" title="Overlay the previous day, week, month or year as dotted curves">
               <input id="sensor-previous" type="checkbox"><span class="slider"></span> Previous</label>
+            <label class="switch" title="Show min/max threshold lines">
+              <input id="sensor-thresholds" type="checkbox"><span class="slider"></span> Thresholds</label>
             <div class="range-tabs" id="sensor-ranges">
               <button class="ghost compact" data-sensor-days="1" type="button" title="Day"><span class="long">Day</span><span class="short">D</span></button>
               <button class="ghost compact" data-sensor-days="7" type="button" title="Week"><span class="long">Week</span><span class="short">W</span></button>
@@ -198,6 +200,10 @@
             <p class="meta">Home Assistant pushes the thermometers' readings every few minutes; a new entity appears here
               on its own. Rename, reorder or hide the sensors - a hidden one keeps collecting but stays out of the graphs.
               To stop a thermometer for good, remove it from the Home Assistant configuration.</p>
+            <label class="switch">
+              <input id="sensor-alert-toggle" type="checkbox"><span class="slider"></span>
+              <span>Email me when a thermometer of this house leaves the alert range set for it (Edit, Alert range)</span>
+            </label>
             <div id="sensor-list"></div>
           </div>
         </div>

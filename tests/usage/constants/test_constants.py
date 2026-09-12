@@ -38,6 +38,9 @@ def test_class() -> None:
         "sensor_ranges",
         "ingest_max_samples",
         "ingest_token_bytes",
+        "alert_normal",
+        "alert_below",
+        "alert_above",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -260,6 +263,27 @@ def test_ingest_token_bytes() -> None:
     tested = Constants
     result = tested.ingest_token_bytes
     expected = 32
+    assert result == expected
+
+
+def test_alert_normal() -> None:
+    tested = Constants
+    result = tested.alert_normal
+    expected = ""
+    assert result == expected
+
+
+def test_alert_below() -> None:
+    tested = Constants
+    result = tested.alert_below
+    expected = "below"
+    assert result == expected
+
+
+def test_alert_above() -> None:
+    tested = Constants
+    result = tested.alert_above
+    expected = "above"
     assert result == expected
 
 
