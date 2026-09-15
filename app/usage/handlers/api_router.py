@@ -40,6 +40,7 @@ from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
+from usage.handlers.water_alert_request import WaterAlertRequest
 from usage.handlers.water_feed_request import WaterFeedRequest
 from usage.handlers.water_feed_update_request import WaterFeedUpdateRequest
 from usage.libraries.database import Database
@@ -121,6 +122,8 @@ class ApiRouter:
         self._router.add_api_route("/water/feeds", self._list_water_feeds, methods=["GET"])
         self._router.add_api_route("/water/feeds", self._create_water_feed, methods=["POST"])
         self._router.add_api_route("/water/series", self._water_series, methods=["GET"])
+        self._router.add_api_route("/water/alerts", self._water_alerts, methods=["GET"])
+        self._router.add_api_route("/water/alerts", self._set_water_alerts, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds/{feed_id}", self._update_water_feed, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds/{feed_id}", self._delete_water_feed, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds/{feed_id}/backfill", self._restart_water_backfill, methods=["POST"], response_model=ApiMessage)
@@ -565,6 +568,23 @@ class ApiRouter:
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
         message = self._water_command.restart_backfill(user, feed_id)
+        return ApiMessage(message=message["message"])
+
+    def _water_alerts(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, bool]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._water_command.alerts(user, house_id)
+
+    def _set_water_alerts(
+        self,
+        body: WaterAlertRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._water_command.set_alerts(user, body.model_dump())
         return ApiMessage(message=message["message"])
 
     def _water_series(

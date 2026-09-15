@@ -60,6 +60,9 @@ def test_class() -> None:
         "water_chunks_per_tick",
         "water_message_max",
         "water_unreadable_status",
+        "water_leak_hours",
+        "water_leak_span_hours",
+        "water_leak_min_readings",
         "water_cubic_meters",
         "water_ranges",
         "email_test_suffixes",
@@ -438,6 +441,27 @@ def test_water_unreadable_status() -> None:
     tested = Constants
     result = tested.water_unreadable_status
     expected = 422
+    assert result == expected
+
+
+def test_water_leak_hours() -> None:
+    tested = Constants
+    result = tested.water_leak_hours
+    expected = 24
+    assert result == expected
+
+
+def test_water_leak_span_hours() -> None:
+    tested = Constants
+    result = tested.water_leak_span_hours
+    expected = 23
+    assert result == expected
+
+
+def test_water_leak_min_readings() -> None:
+    tested = Constants
+    result = tested.water_leak_min_readings
+    expected = 20
     assert result == expected
 
 

@@ -8,9 +8,13 @@ from typing import Any
 
 from usage.constants.constants import Constants
 from usage.libraries.database import Database
+from usage.libraries.email_sender import EmailSender
+from usage.libraries.email_texts import EmailTexts
 from usage.libraries.eye_on_water_client import EyeOnWaterClient
 from usage.structures.app_exception import AppException
+from usage.structures.settings import Settings
 from usage.structures.water_feed import WaterFeed
+from usage.structures.water_leak import WaterLeak
 from usage.structures.water_point import WaterPoint
 
 
@@ -34,8 +38,10 @@ class WaterSyncCommand:
     and the loop goes round again.
     """
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, settings: Settings, email_sender: EmailSender) -> None:
         self._database = database
+        self._settings = settings
+        self._email_sender = email_sender
 
     def start(self) -> None:
         thread = threading.Thread(target=self._loop, name="water-sync", daemon=True)
@@ -81,6 +87,7 @@ class WaterSyncCommand:
                 break
             walked = self._chunk(client, walked, today)
         self._record(feed.feed_id, "")
+        self._leak(feed)
 
     def _chunk(self, client: EyeOnWaterClient, feed: WaterFeed, today: date) -> WaterFeed:
         """One month further back; two barren ones in a row end the walk."""
@@ -129,6 +136,81 @@ class WaterSyncCommand:
                 (feed_id, feed_id),
             )
         return len(points)
+
+    def _leak(self, feed: WaterFeed) -> None:
+        """Report 24 hours that never went quiet, once, when they start."""
+        leak = self._continuous_flow(feed.feed_id)
+        crossed = self._database.execute(
+            "UPDATE water_feeds SET leaking = %s WHERE id = %s AND leaking IS DISTINCT FROM %s RETURNING id",
+            (leak is not None, feed.feed_id, leak is not None),
+        )
+        # Edge triggered, like the thermometers': the crossing is the news, and
+        # a leak left unfixed would otherwise mail every quarter of an hour.
+        if crossed and leak is not None:
+            self._send_leak(feed.house_id, leak)
+
+    def _continuous_flow(self, feed_id: int) -> WaterLeak | None:
+        """The last 24 hours of readings, when not one of them is zero.
+
+        A rolling window, not a calendar day: a stretch that runs from one
+        afternoon to the next counts exactly as much as one from midnight to
+        midnight, and the midnight version would miss it. The window ends at
+        the newest reading rather than now, because EyeOnWater publishes hours
+        late and a window ending at this instant is always half empty at the
+        near end - it would never look complete enough to judge.
+
+        A window that is only partly reported proves nothing, so the readings
+        must also be many enough and spread far enough apart to cover it - a
+        meter reporting a handful of times a day cannot answer this at all.
+        """
+        row = self._database.fetch_one(
+            """
+            SELECT COUNT(*) AS readings, MIN(volume) AS smallest, SUM(volume) AS total,
+                   MIN(measured_at) AS oldest, MAX(measured_at) AS newest
+            FROM water_points
+            WHERE feed_id = %s
+              AND measured_at > (SELECT MAX(measured_at) FROM water_points WHERE feed_id = %s) - %s
+            """,
+            (feed_id, feed_id, timedelta(hours=Constants.water_leak_hours)),
+        )
+        if row is None or row["oldest"] is None or row["newest"] is None:
+            return None
+        readings = int(row["readings"])
+        hours = (row["newest"] - row["oldest"]).total_seconds() / 3600
+        if readings < Constants.water_leak_min_readings or hours < Constants.water_leak_span_hours:
+            return None
+        if float(row["smallest"]) <= 0:
+            return None
+        return WaterLeak(
+            feed_id=feed_id,
+            readings=readings,
+            hours=round(hours, 1),
+            smallest=float(row["smallest"]),
+            total=float(row["total"]),
+        )
+
+    def _send_leak(self, house_id: int, leak: WaterLeak) -> None:
+        recipients = self._database.fetch_all(
+            """
+            SELECT users.email_sealed AS email
+            FROM water_alerts
+            JOIN users ON users.id = water_alerts.user_id
+            JOIN user_houses ON user_houses.user_id = water_alerts.user_id
+                            AND user_houses.house_id = water_alerts.house_id
+            WHERE water_alerts.house_id = %s AND water_alerts.enabled
+            ORDER BY water_alerts.user_id
+            """,
+            (house_id,),
+        )
+        if not recipients:
+            return
+        house = self._database.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (house_id,))
+        house_name = self._database.decrypt(str(house["name"])) if house is not None else ""
+        subject, body_lines = EmailTexts.water_leak(house_name, leak, self._settings.base_url or "")
+        for recipient in recipients:
+            email = self._database.decrypt(str(recipient["email"]))
+            if not self._email_sender.send(email, subject, body_lines):
+                logging.getLogger("usage").warning("[WATER] leak email failed for %s of house %s", email, house_id)
 
     def _claim(self, feed_id: int) -> bool:
         claimed = self._database.execute(

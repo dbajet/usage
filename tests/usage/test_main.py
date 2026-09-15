@@ -112,14 +112,14 @@ def test_create() -> None:
         patch("usage.main.ReminderCommand") as reminder_command_class,
         patch("usage.main.WaterSyncCommand") as water_sync_command_class,
     ):
-        email_sender_class.side_effect = [email_sender]
+        email_sender_class.side_effect = [email_sender, email_sender]
         reminder_command_class.side_effect = [reminder_command]
         water_sync_command_class.side_effect = [water_sync_command]
         asyncio.run(run_lifespan(result))
     assert database.mock_calls == [call.initialize()]
-    assert email_sender_class.mock_calls == [call(settings)]
+    assert email_sender_class.mock_calls == [call(settings), call(settings)]
     assert reminder_command_class.mock_calls == [call(database, settings, email_sender)]
-    assert water_sync_command_class.mock_calls == [call(database)]
+    assert water_sync_command_class.mock_calls == [call(database, settings, email_sender)]
     assert email_sender.mock_calls == []
     assert reminder_command.mock_calls == [call.start()]
     assert water_sync_command.mock_calls == [call.start()]

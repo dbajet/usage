@@ -74,6 +74,13 @@ class _Constants:
     # An export whose rows cannot be read: deterministic, so the backfill walks
     # past it rather than retrying the same month for ever.
     water_unreadable_status: int = 422
+    # A house always has some idle stretch in any 24 hours - asleep, out, the taps
+    # shut. A rolling 24 hours without one means something is running that nobody
+    # turned on. Rolling, not midnight to midnight: a stretch from one afternoon
+    # to the next counts just as much, and calendar days would step over it.
+    water_leak_hours: int = 24
+    water_leak_span_hours: int = 23
+    water_leak_min_readings: int = 20
     # Cubic metres per unit: the CSV reports `Read` in the meter's own unit
     # whatever `export_unit` asks for, so the reading has to be converted.
     water_cubic_meters: tuple[tuple[str, float], ...] = (

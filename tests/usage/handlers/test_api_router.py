@@ -35,6 +35,7 @@ from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
+from usage.handlers.water_alert_request import WaterAlertRequest
 from usage.handlers.water_feed_request import WaterFeedRequest
 from usage.handlers.water_feed_update_request import WaterFeedUpdateRequest
 from usage.structures.app_exception import AppException
@@ -241,6 +242,8 @@ def test__register() -> None:
         ("/api/users/{user_id}", ("DELETE",)),
         ("/api/users/{user_id}", ("PUT",)),
         ("/api/version", ("GET",)),
+        ("/api/water/alerts", ("GET",)),
+        ("/api/water/alerts", ("POST",)),
         ("/api/water/feeds", ("GET",)),
         ("/api/water/feeds", ("POST",)),
         ("/api/water/feeds/{feed_id}", ("DELETE",)),
@@ -2106,6 +2109,66 @@ def test__water_series() -> None:
     assert stats_command.mock_calls == []
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.series(user, 3, 7, True, 2)]
+    reset_mocks()
+
+
+def test__water_alerts() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    water_command.alerts.side_effect = [{"enabled": True}]
+    result = tested._water_alerts(3, "the-session")
+    expected = {"enabled": True}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == [call.alerts(user, 3)]
+    reset_mocks()
+
+
+def test__set_water_alerts() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    water_command.set_alerts.side_effect = [{"message": "Leak alerts enabled for this house."}]
+    result = tested._set_water_alerts(WaterAlertRequest(house_id=3, enabled=True), "the-session")
+    expected = ApiMessage(message="Leak alerts enabled for this house.")
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == [call.set_alerts(user, {"house_id": 3, "enabled": True})]
     reset_mocks()
 
 

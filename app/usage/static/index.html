@@ -223,6 +223,11 @@
               there is none left to find. The password is stored sealed and never shown again.</p>
             <p class="meta">Leave the <strong>meter uuid</strong> empty: the account is asked for it. Fill it in only
               when the account carries several meters — the form will then list them for you to choose from.</p>
+            <label class="switch">
+              <input id="water-alert-toggle" type="checkbox"><span class="slider"></span>
+              <span>Email me when this house draws water for 24 hours running without ever stopping -
+                a house normally has some quiet stretch in any day, so that usually means a leak</span>
+            </label>
             <div id="water-feed-list"></div>
             <form id="water-feed-form" class="stack-form">
               <div class="inline-form">

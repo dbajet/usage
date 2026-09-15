@@ -143,6 +143,25 @@ is local time with no offset beside a `Timezone` column, so on the autumn fall-b
 repeats; the rows arrive in order, so a moment that fails to move forward is the second pass
 through it and takes `fold=1`.
 
+A house always has some quiet stretch in any 24 hours — asleep, out, every tap shut — so 24
+hours of readings without a single zero among them means water is running that nobody turned
+on. When that happens the users who asked for it (Settings, Water) get one email naming the
+quietest reading of the stretch and what it drew in total.
+
+It is a **rolling** window, not a calendar day: a stretch running from one afternoon to the
+next counts exactly as much as one from midnight to midnight, and grouping by day would step
+straight over it. The window ends at the newest reading rather than at this instant, since
+EyeOnWater publishes hours late and a window ending now is always half empty at the near end;
+a window that is only partly reported proves nothing either, so the readings must be many
+enough and spread far enough apart to cover it. The feed remembers whether it is already
+reported, so the email follows the crossing rather than every quarter of an hour, exactly as
+the thermometers' alerts do.
+
+Against four years of one real meter the rule fires seven times — stretches of 27, 29, 90,
+385, 31, 120 and 260 hours. The two longest drew around twice the ordinary daily volume
+throughout. Grouping the same data by calendar day instead finds only five of the seven,
+which is the case for the rolling window in one line.
+
 The point of storing it all is ownership: once a month is in `water_points` it never has to be
 asked for again, whatever the portal does next. Readings are keyed by feed and instant, so an
 overlapping export is absorbed rather than counted twice. The Realtime view draws them as bars

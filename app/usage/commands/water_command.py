@@ -15,6 +15,10 @@ from usage.structures.water_meter import WaterMeter
 class WaterCommand:
     """The EyeOnWater feeds of a house, and the consumption they have collected.
 
+    A house whose water never stops for a whole day is leaking, and the users who
+    asked for it get one email when that starts - the alert is the house's, like
+    the thermometers' one, not any single meter's.
+
     A feed is one meter of one EyeOnWater account. The meter uuid is asked of
     the account rather than copied by hand: the portal shows a nineteen-digit
     uuid beside a nine-digit meter id, and an export for the wrong one dies
@@ -200,6 +204,29 @@ class WaterCommand:
             "points": [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows],
             "latest": self._latest(house_id),
         }
+
+    def alerts(self, user: SessionUser, house_id: int) -> dict[str, bool]:
+        """Whether this user asked for the house's leak alerts (off unless asked)."""
+        self._require_house(user, house_id)
+        row = self._database.fetch_one(
+            "SELECT enabled FROM water_alerts WHERE user_id = %s AND house_id = %s",
+            (user.user_id, house_id),
+        )
+        return {"enabled": row is not None and bool(row["enabled"])}
+
+    def set_alerts(self, user: SessionUser, data: dict[str, Any]) -> dict[str, str]:
+        house_id = int(data.get("house_id") or 0)
+        enabled = bool(data.get("enabled"))
+        self._require_house(user, house_id)
+        self._database.execute(
+            """
+            INSERT INTO water_alerts(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """,
+            (user.user_id, house_id, enabled),
+        )
+        result = "Leak alerts enabled for this house." if enabled else "Leak alerts disabled for this house."
+        return {"message": result}
 
     def _latest(self, house_id: int) -> dict[str, Any]:
         row = self._database.fetch_one(

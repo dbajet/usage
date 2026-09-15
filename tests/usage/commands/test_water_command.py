@@ -576,6 +576,53 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
         reset_mocks()
 
 
+@patch.object(WaterCommand, "_require_house")
+def test_alerts(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+    exp_calls = [call.fetch_one("SELECT enabled FROM water_alerts WHERE user_id = %s AND house_id = %s", (7, 3))]
+    tests: list[tuple[dict[str, Any] | None, bool]] = [(None, False), ({"enabled": False}, False), ({"enabled": True}, True)]
+    for row, expected in tests:
+        require_house.side_effect = [None]
+        database.fetch_one.side_effect = [row]
+        result = tested.alerts(user, 3)
+        assert result == {"enabled": expected}
+        assert require_house.mock_calls == [call(user, 3)]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
+
+
+@patch.object(WaterCommand, "_require_house")
+def test_set_alerts(require_house: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        require_house.reset_mock()
+        database.reset_mock()
+
+    user = helper_user()
+    sql = """
+            INSERT INTO water_alerts(user_id, house_id, enabled) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, house_id) DO UPDATE SET enabled = EXCLUDED.enabled
+            """
+    tests = [(True, "Leak alerts enabled for this house."), (False, "Leak alerts disabled for this house.")]
+    for enabled, message in tests:
+        require_house.side_effect = [None]
+        database.execute.side_effect = [1]
+        result = tested.set_alerts(user, {"house_id": 3, "enabled": enabled})
+        assert result == {"message": message}
+        assert require_house.mock_calls == [call(user, 3)]
+        assert database.mock_calls == [call.execute(sql, (7, 3, enabled))]
+        reset_mocks()
+
+
 def test__latest() -> None:
     tested = helper_instance()
     database = tested._database

@@ -30,7 +30,7 @@ class AppFactory:
         async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             self._database.initialize()
             ReminderCommand(self._database, self._settings, EmailSender(self._settings)).start()
-            WaterSyncCommand(self._database).start()
+            WaterSyncCommand(self._database, self._settings, EmailSender(self._settings)).start()
             yield
 
         result = FastAPI(title="Usage", lifespan=lifespan)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from usage.libraries.email_texts import EmailTexts
 from usage.structures.sensor_breach import SensorBreach
+from usage.structures.water_leak import WaterLeak
 
 
 def test_sign_in_link() -> None:
@@ -81,6 +82,39 @@ def test_sensor_alert() -> None:
         ],
     )
     assert result == expected
+
+
+def test_water_leak() -> None:
+    tested = EmailTexts
+    leak = WaterLeak(feed_id=11, readings=96, hours=23.8, smallest=0.0034, total=0.4123)
+
+    result = tested.water_leak("Dougmar", leak, "https://usage.example.com")
+    expected = (
+        "Usage: the water never stopped running in Dougmar",
+        [
+            "Hello,",
+            "",
+            "Every one of the last 96 readings of the water meter of Dougmar shows water",
+            "flowing - 23.8 hours without a single quiet moment. A house normally has some:",
+            "overnight, or while nobody is in. This usually means a tap, a cistern or a pipe is leaking.",
+            "",
+            "- quietest reading in that time: 3 L",
+            "- drawn in that time: 0.412 m3",
+            "",
+            "It is worth shutting every tap and watching whether the meter still moves.",
+            "",
+            "https://usage.example.com",
+            "",
+            "You receive this alert because you turned leak alerts on for this house;",
+            "you can turn them off in Settings > Water at any time.",
+        ],
+    )
+    assert result == expected
+
+    # without a public URL there is no link to give, and no blank line for it either
+    result = tested.water_leak("Dougmar", leak, "")
+    assert "https://usage.example.com" not in result[1]
+    assert result[1][-4] == "It is worth shutting every tap and watching whether the meter still moves."
 
 
 def test_footer() -> None:

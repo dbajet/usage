@@ -1955,9 +1955,14 @@ async function loadWaterSettings() {
     const current = houses.find((house) => house.id === state.houseId);
     $("#water-house-name").textContent = current ? current.name : "";
     $("#water-feed-form").hidden = !state.houseId;
+    $("#water-alert-toggle").disabled = !state.houseId;
     if (!state.me || !state.me.is_admin || !state.houseId) return;
-    const data = await api(`/api/water/feeds?house_id=${state.houseId}`);
+    const [data, alerts] = await Promise.all([
+      api(`/api/water/feeds?house_id=${state.houseId}`),
+      api(`/api/water/alerts?house_id=${state.houseId}`),
+    ]);
     state.waterFeeds = data.feeds || [];
+    $("#water-alert-toggle").checked = Boolean(alerts.enabled);
     renderWaterFeeds();
   } catch (error) { showAppError(error); }
 }
@@ -2649,6 +2654,18 @@ addEventListener("DOMContentLoaded", () => {
     const toggle = $("#sensor-alert-toggle");
     try {
       await api("/api/sensors/alerts", {
+        method: "POST",
+        body: JSON.stringify({ house_id: state.houseId, enabled: toggle.checked }),
+      });
+    } catch (error) {
+      toggle.checked = !toggle.checked;
+      showAppError(error);
+    }
+  });
+  $("#water-alert-toggle").addEventListener("change", async () => {
+    const toggle = $("#water-alert-toggle");
+    try {
+      await api("/api/water/alerts", {
         method: "POST",
         body: JSON.stringify({ house_id: state.houseId, enabled: toggle.checked }),
       });
