@@ -1973,7 +1973,10 @@ function waterFeedStatus(feed) {
   // Until the walk ends, how far back it has reached says more than a percentage
   // nobody can compute: how deep the utility keeps its history is unknown.
   bits.push(feed.backfill_done ? "history complete" : `still walking back${feed.backfill_from ? ` (at ${feed.backfill_from})` : ""}`);
-  if (feed.last_point_at) bits.push(`last ${fmtAgo(feed.last_point_at)}`);
+  if (feed.last_point_at) bits.push(`last reading ${fmtAgo(feed.last_point_at)}`);
+  // Before the first check there is nothing to show but the wait itself, and a
+  // feed with nothing in it and nothing said about it reads as a broken one.
+  bits.push(feed.last_sync_at ? `checked ${fmtAgo(feed.last_sync_at)}` : "first check due within a minute");
   return bits.join(" · ");
 }
 

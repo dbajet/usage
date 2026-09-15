@@ -278,7 +278,7 @@ def test_create_feed(
     database.fetch_one.side_effect = [None]
     database.execute.side_effect = [11]
     result = tested.create_feed(user, payload)
-    expected = {"id": 11, "message": "Water feed added. The first import starts within a few minutes."}
+    expected = {"id": 11, "message": "Water feed added. The first import starts within a minute."}
     assert result == expected
     assert require_admin.mock_calls == [call(user)]
     assert require_house.mock_calls == [call(user, 3)]
@@ -484,13 +484,17 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
     require_feed.side_effect = [{"id": 11, "house_id": 3, "password": "sealedPassword"}]
     database.execute.side_effect = [11]
     result = tested.restart_backfill(user, 11)
-    expected = {"message": "History import restarted; it walks back a month at a time."}
+    expected = {"message": "History import restarted. It starts within a minute and walks back a month at a time."}
     assert result == expected
     assert require_admin.mock_calls == [call(user)]
     assert require_feed.mock_calls == [call(user, 11)]
     exp_calls = [
         call.execute(
-            "UPDATE water_feeds SET backfill_from = NULL, backfill_done = false, empty_chunks = 0 WHERE id = %s",
+            """
+            UPDATE water_feeds
+            SET backfill_from = NULL, backfill_done = false, empty_chunks = 0, last_sync_at = NULL
+            WHERE id = %s
+            """,
             (11,),
         ),
     ]

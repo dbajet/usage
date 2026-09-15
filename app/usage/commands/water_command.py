@@ -114,7 +114,7 @@ class WaterCommand:
                 export_unit,
             ),
         )
-        return {"id": feed_id, "message": "Water feed added. The first import starts within a few minutes."}
+        return {"id": feed_id, "message": "Water feed added. The first import starts within a minute."}
 
     def update_feed(self, user: SessionUser, feed_id: int, data: dict[str, Any]) -> dict[str, str]:
         self._require_admin(user)
@@ -161,11 +161,17 @@ class WaterCommand:
         """Send the history walk back to the start; stored points are kept and refreshed."""
         self._require_admin(user)
         self._require_feed(user, feed_id)
+        # last_sync_at goes with it: the feed becomes due again, so the walk
+        # starts within the minute rather than whenever the quarter hour lands.
         self._database.execute(
-            "UPDATE water_feeds SET backfill_from = NULL, backfill_done = false, empty_chunks = 0 WHERE id = %s",
+            """
+            UPDATE water_feeds
+            SET backfill_from = NULL, backfill_done = false, empty_chunks = 0, last_sync_at = NULL
+            WHERE id = %s
+            """,
             (feed_id,),
         )
-        return {"message": "History import restarted; it walks back a month at a time."}
+        return {"message": "History import restarted. It starts within a minute and walks back a month at a time."}
 
     def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
         """The house's consumption over one `days`-long period, summed per bucket.

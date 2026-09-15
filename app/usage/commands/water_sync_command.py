@@ -32,6 +32,11 @@ class WaterSyncCommand:
     is to hit it. The point of the whole exercise is that once a month is
     stored it never has to be asked for again, whatever the portal does next.
 
+    The loop wakes every minute and asks which feeds are due, rather than
+    sleeping a quarter of an hour between rounds: a feed added or reset just
+    after a round would otherwise show nothing until the next one, and a new
+    feed with nothing in it is indistinguishable from a broken one.
+
     A feed is claimed before it is pulled (`claimed_until`), so a restart or
     the brief blue/green overlap cannot have two colours importing at once.
     Nothing here is allowed to raise: a failure is written to `last_error`
@@ -53,7 +58,7 @@ class WaterSyncCommand:
                 self.tick()
             except Exception as exception:  # never let the loop die
                 logging.getLogger("usage").warning("[WATER] tick failed: %s", exception)
-            time.sleep(Constants.water_sync_seconds)
+            time.sleep(Constants.water_tick_seconds)
 
     def tick(self) -> None:
         rows = self._database.fetch_all(
@@ -62,8 +67,10 @@ class WaterSyncCommand:
                    meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done, empty_chunks
             FROM water_feeds
             WHERE active AND (claimed_until IS NULL OR claimed_until < now())
+              AND (last_sync_at IS NULL OR last_sync_at < now() - %s)
             ORDER BY id
             """,
+            (timedelta(seconds=Constants.water_sync_seconds),),
         )
         for row in self._database.decrypt_rows(rows, ("username", "password", "meter_uuid")):
             feed = self._feed(row)

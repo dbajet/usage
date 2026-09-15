@@ -61,8 +61,13 @@ class _Constants:
     water_poll_attempts: int = 30
     water_poll_seconds: float = 2.0
     # The meter publishes a few hours late, so a quarter-hour of freshness is
-    # pointless: a quarter of an hour between pulls is already generous.
+    # pointless: a quarter of an hour between pulls of one feed is already generous.
     water_sync_seconds: int = 900
+    # The loop looks far more often than it pulls, and asks the database which
+    # feeds are due. A feed added or reset between two pulls would otherwise sit
+    # untouched for a quarter of an hour with nothing at all to show for itself,
+    # which reads exactly like a feed that does not work.
+    water_tick_seconds: int = 60
     water_claim_minutes: int = 30
     # Re-asking for the last couple of days costs one export and repairs the
     # rows EyeOnWater re-estimates after the fact.

@@ -20,6 +20,7 @@ SQL_DUE = """
                    meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done, empty_chunks
             FROM water_feeds
             WHERE active AND (claimed_until IS NULL OR claimed_until < now())
+              AND (last_sync_at IS NULL OR last_sync_at < now() - %s)
             ORDER BY id
             """
 SQL_UPSERT = """
@@ -157,7 +158,7 @@ def test__loop(tick: MagicMock, mock_time: MagicMock, mock_logging: MagicMock) -
     with pytest.raises(KeyboardInterrupt):
         tested._loop()
     assert tick.mock_calls == [call(), call()]
-    assert mock_time.mock_calls == [call.sleep(900), call.sleep(900)]
+    assert mock_time.mock_calls == [call.sleep(60), call.sleep(60)]
     assert mock_logging.mock_calls == [call.getLogger("usage")]
     assert logger.mock_calls == [call.warning("[WATER] tick failed: %s", error)]
     reset_mocks()
@@ -191,7 +192,7 @@ def test_tick(
     row = helper_row()
     feed = helper_feed()
     exp_database = [
-        call.fetch_all(SQL_DUE),
+        call.fetch_all(SQL_DUE, (timedelta(seconds=900),)),
         call.decrypt_rows([row], ("username", "password", "meter_uuid")),
     ]
 

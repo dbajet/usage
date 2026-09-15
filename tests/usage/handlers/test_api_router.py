@@ -1942,12 +1942,12 @@ def test__create_water_feed() -> None:
         water_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
-    water_command.create_feed.side_effect = [{"id": 11, "message": "Water feed added. The first import starts within a few minutes."}]
+    water_command.create_feed.side_effect = [{"id": 11, "message": "Water feed added. The first import starts within a minute."}]
     result = tested._create_water_feed(
         WaterFeedRequest(house_id=3, username="theUsername", password="thePassword", meter_uuid="1234567890123456789"),
         "the-session",
     )
-    expected = {"id": 11, "message": "Water feed added. The first import starts within a few minutes."}
+    expected = {"id": 11, "message": "Water feed added. The first import starts within a minute."}
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
@@ -2066,9 +2066,9 @@ def test__restart_water_backfill() -> None:
         water_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
-    water_command.restart_backfill.side_effect = [{"message": "History import restarted; it walks back a month at a time."}]
+    water_command.restart_backfill.side_effect = [{"message": "History import restarted. It starts within a minute and walks back a month at a time."}]
     result = tested._restart_water_backfill(11, "the-session")
-    expected = ApiMessage(message="History import restarted; it walks back a month at a time.")
+    expected = ApiMessage(message="History import restarted. It starts within a minute and walks back a month at a time.")
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []

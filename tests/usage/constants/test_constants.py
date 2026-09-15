@@ -53,6 +53,7 @@ def test_class() -> None:
         "water_poll_attempts",
         "water_poll_seconds",
         "water_sync_seconds",
+        "water_tick_seconds",
         "water_claim_minutes",
         "water_recent_days",
         "water_chunk_days",
@@ -392,6 +393,13 @@ def test_water_sync_seconds() -> None:
     tested = Constants
     result = tested.water_sync_seconds
     expected = 900
+    assert result == expected
+
+
+def test_water_tick_seconds() -> None:
+    tested = Constants
+    result = tested.water_tick_seconds
+    expected = 60
     assert result == expected
 
 

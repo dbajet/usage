@@ -127,7 +127,11 @@ list of uuids to pick from. Creating a feed then reads a day back over the expor
 too, so a bad password or an account the export refuses is caught in the form rather than
 hours later in `last_error`.
 
-A background thread pulls every fifteen minutes: the last two days each time — EyeOnWater
+A background thread wakes every minute and asks which feeds are due; each one is pulled
+at most every fifteen minutes. Looking often and pulling rarely is what makes a feed added
+or reset between two pulls show something straight away rather than sitting empty for a
+quarter of an hour, which reads exactly like a feed that does not work. Each pull takes
+the last two days — EyeOnWater
 publishes a few hours late and re-estimates rows afterwards, and re-asking repairs them for
 free — plus, until the history has been walked, four month-long chunks going backwards. The
 walk ends after two barren chunks in a row, since how far back a utility keeps its data is
