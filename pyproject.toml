@@ -9,6 +9,9 @@ dependencies = [
     "pydantic==2.11.7",
     "psycopg[binary]==3.2.9",
     "cryptography==45.0.6",
+    # The full IANA database: slim images drop the legacy aliases (US/Pacific
+    # among them) and EyeOnWater writes its exports in exactly those.
+    "tzdata==2025.2",
 ]
 
 [project.optional-dependencies]

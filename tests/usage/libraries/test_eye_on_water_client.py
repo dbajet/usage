@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
@@ -586,35 +587,53 @@ def test__is_blank() -> None:
         assert result is expected
 
 
+def test__zone() -> None:
+    tested = EyeOnWaterClient
+    # The legacy alias EyeOnWater actually writes, and the canonical name.
+    for name in ["US/Pacific", "America/Los_Angeles", " US/Pacific "]:
+        result = tested._zone(name)
+        assert isinstance(result, ZoneInfo)
+        assert datetime(2026, 9, 14, 0, 14, tzinfo=result).utcoffset() == timedelta(hours=-7)
+
+    result = tested._zone("")
+    assert result is UTC
+
+    # A zone this server cannot resolve stops the export: filing every reading
+    # hours from where it belongs would be worse than filing none.
+    with pytest.raises(AppException) as exc_info:
+        tested._zone("Mars/Olympus")
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.message == "This server does not know the time zone Mars/Olympus that the export is written in."
+
+
 def test__moment() -> None:
     tested = EyeOnWaterClient
-    tests: list[tuple[str, str, datetime | None, datetime | None]] = [
-        ("", "US/Pacific", None, None),
-        ("   ", "US/Pacific", None, None),
-        ("not a date", "US/Pacific", None, None),
-        ("2026-09-14 00:14", "US/Pacific", None, datetime(2026, 9, 14, 7, 14, tzinfo=UTC)),
-        ("2026-09-14T00:14:30", "US/Pacific", None, datetime(2026, 9, 14, 7, 14, 30, tzinfo=UTC)),
-        # no zone, and a zone nobody knows: read as UTC rather than dropped
-        ("2026-09-14 00:14", "", None, datetime(2026, 9, 14, 0, 14, tzinfo=UTC)),
-        ("2026-09-14 00:14", "Mars/Olympus", None, datetime(2026, 9, 14, 0, 14, tzinfo=UTC)),
+    pacific = ZoneInfo("US/Pacific")
+    tests: list[tuple[str, tzinfo, datetime | None, datetime | None]] = [
+        ("", pacific, None, None),
+        ("   ", pacific, None, None),
+        ("not a date", pacific, None, None),
+        ("2026-09-14 00:14", pacific, None, datetime(2026, 9, 14, 7, 14, tzinfo=UTC)),
+        ("2026-09-14T00:14:30", pacific, None, datetime(2026, 9, 14, 7, 14, 30, tzinfo=UTC)),
+        ("2026-09-14 00:14", UTC, None, datetime(2026, 9, 14, 0, 14, tzinfo=UTC)),
         # the autumn fall-back: 01:14 comes round twice and the second one is later
-        ("2026-11-01 01:14", "US/Pacific", None, datetime(2026, 11, 1, 8, 14, tzinfo=UTC)),
+        ("2026-11-01 01:14", pacific, None, datetime(2026, 11, 1, 8, 14, tzinfo=UTC)),
         (
             "2026-11-01 01:14",
-            "US/Pacific",
+            pacific,
             datetime(2026, 11, 1, 8, 14, tzinfo=UTC),
             datetime(2026, 11, 1, 9, 14, tzinfo=UTC),
         ),
         # a plain duplicate outside any fall-back keeps its instant
         (
             "2026-09-14 00:14",
-            "US/Pacific",
+            pacific,
             datetime(2026, 9, 14, 7, 14, tzinfo=UTC),
             datetime(2026, 9, 14, 7, 14, tzinfo=UTC),
         ),
     ]
-    for raw, zone_name, previous, expected in tests:
-        result = tested._moment(raw, zone_name, previous)
+    for raw, zone, previous, expected in tests:
+        result = tested._moment(raw, zone, previous)
         assert result == expected
 
 

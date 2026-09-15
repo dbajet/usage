@@ -147,6 +147,13 @@ is local time with no offset beside a `Timezone` column, so on the autumn fall-b
 repeats; the rows arrive in order, so a moment that fails to move forward is the second pass
 through it and takes `fold=1`.
 
+That `Timezone` column is why `tzdata` is a dependency. EyeOnWater writes legacy IANA aliases
+(`US/Pacific`, not `America/Los_Angeles`), and a slim image's tz database leaves the aliases
+out — the canonical names resolve and the alias does not. Falling back to UTC there filed
+every reading seven hours from where it belonged, silently, which is how four years of it got
+stored before anyone noticed. A zone that cannot be resolved now stops the export and says so:
+no data beats wrong data that looks right.
+
 A house always has some quiet stretch in any 24 hours — asleep, out, every tap shut — so 24
 hours of readings without a single zero among them means water is running that nobody turned
 on. When that happens the users who asked for it (Settings, Water) get one email naming the

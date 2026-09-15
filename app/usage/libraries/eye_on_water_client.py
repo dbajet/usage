@@ -234,7 +234,7 @@ class EyeOnWaterClient:
             if self._is_blank(row):
                 continue
             seen += 1
-            moment = self._moment(str(row.get("Read_Time") or ""), str(row.get("Timezone") or ""), previous)
+            moment = self._moment(str(row.get("Read_Time") or ""), self._zone(str(row.get("Timezone") or "")), previous)
             volume = self._cubic_meters(self._number(row.get("Flow")), str(row.get("Flow_Unit") or ""))
             if moment is None or volume is None:
                 continue
@@ -267,7 +267,25 @@ class EyeOnWaterClient:
         return not any(str(row.get(field) or "").strip() for field in ("Read_Time", "Read", "Flow"))
 
     @classmethod
-    def _moment(cls, raw: str, zone_name: str, previous: datetime | None) -> datetime | None:
+    def _zone(cls, name: str) -> tzinfo:
+        """The time zone the export is written in, or no export at all.
+
+        The CSV names it in IANA terms and sometimes by a legacy alias -
+        "US/Pacific" rather than "America/Los_Angeles" - and a slim image ships
+        a tz database with the aliases left out. Falling back to UTC there was a
+        silent way to file every reading hours from where it belongs, which is
+        worse than filing none: an unknown zone now stops the export and says so.
+        """
+        text = name.strip()
+        if not text:
+            return UTC
+        try:
+            return ZoneInfo(text)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise AppException(502, f"This server does not know the time zone {text} that the export is written in.") from None
+
+    @classmethod
+    def _moment(cls, raw: str, zone: tzinfo, previous: datetime | None) -> datetime | None:
         text = raw.strip()
         if not text:
             return None
@@ -278,10 +296,6 @@ class EyeOnWaterClient:
                 naive = datetime.fromisoformat(text)
             except ValueError:
                 return None
-        try:
-            zone: tzinfo = ZoneInfo(zone_name.strip()) if zone_name.strip() else UTC
-        except (ZoneInfoNotFoundError, ValueError):
-            zone = UTC
         result = naive.replace(tzinfo=zone).astimezone(UTC)
         # The CSV gives local time with no offset, so on the autumn fall-back the
         # hour repeats and its second pass would land on the first one's instant.
