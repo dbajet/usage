@@ -45,19 +45,19 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
         meter_reader.reset_mock()
 
     user = helper_user()
-    house_rows = [{"id": 1, "name": "sealedFremur", "has_sensors": True}, {"id": 2, "name": "sealedDougmar", "has_sensors": False}]
+    house_rows = [{"id": 1, "name": "sealedFremur", "has_sensors": True, "has_water": True}, {"id": 2, "name": "sealedDougmar", "has_sensors": False, "has_water": False}]
     meter_rows = [{"id": 9, "house_id": 1, "kind": "electricity", "label": "sealedEDF", "unit": "kWh", "monthly": False}]
     register_rows = [{"id": 21, "meter_id": 9, "label": "sealedHC", "position": 0}]
     visible_house_ids.side_effect = [[1]]
     database.fetch_all.side_effect = [house_rows, meter_rows, register_rows]
     database.decrypt_rows.side_effect = [
-        [{"id": 1, "name": "Fremur", "has_sensors": True}, {"id": 2, "name": "Dougmar", "has_sensors": False}],
+        [{"id": 1, "name": "Fremur", "has_sensors": True, "has_water": True}, {"id": 2, "name": "Dougmar", "has_sensors": False, "has_water": False}],
         [{"id": 9, "house_id": 1, "kind": "electricity", "label": "EDF", "unit": "kWh", "monthly": False}],
         [{"id": 21, "meter_id": 9, "label": "HC", "position": 0}],
     ]
     result = tested.dashboard(user)
     expected = {
-        "houses": [{"id": 1, "name": "Fremur", "has_sensors": True}],
+        "houses": [{"id": 1, "name": "Fremur", "has_sensors": True, "has_water": True}],
         "meters": [
             {
                 "id": 9,
@@ -76,7 +76,7 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
         call.fetch_all(
             """
                     SELECT houses.id, houses.name_sealed AS name,
-                           EXISTS (SELECT 1 FROM sensors WHERE sensors.house_id = houses.id) AS has_sensors
+                           houses.shows_sensors AS has_sensors, houses.shows_water AS has_water
                     FROM houses ORDER BY houses.id
                     """,
         ),

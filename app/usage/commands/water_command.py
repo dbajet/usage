@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from usage.constants.constants import Constants
+from usage.libraries.database import Database
+from usage.libraries.eye_on_water_client import EyeOnWaterClient
+from usage.structures.app_exception import AppException
+from usage.structures.session_user import SessionUser
+from usage.structures.water_meter import WaterMeter
+
+
+class WaterCommand:
+    """The EyeOnWater feeds of a house, and the consumption they have collected.
+
+    A feed is one meter of one EyeOnWater account. The meter uuid is asked of
+    the account rather than copied by hand: the portal shows a nineteen-digit
+    uuid beside a nine-digit meter id, and an export for the wrong one dies
+    inside EyeOnWater's own task with "list index out of range". An account
+    with a single meter needs no uuid at all.
+
+    Creating a feed also asks for a day of readings straight away, so a wrong
+    password is refused in the form rather than discovered hours later by the
+    background sync.
+
+    Everything is stored in cubic metres, and the graph sums rather than
+    averages: water is a counter, not a temperature.
+    """
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    def list_feeds(self, user: SessionUser, house_id: int) -> dict[str, Any]:
+        self._require_admin(user)
+        self._require_house(user, house_id)
+        feeds = self._database.decrypt_rows(
+            self._database.fetch_all(
+                """
+                SELECT id, hostname, username_sealed AS username, meter_uuid_sealed AS meter_uuid, export_unit,
+                       active, last_sync_at, last_point_at, last_error, backfill_from, backfill_done
+                FROM water_feeds WHERE house_id = %s ORDER BY id
+                """,
+                (house_id,),
+            ),
+            ("username", "meter_uuid"),
+        )
+        result: list[dict[str, Any]] = []
+        for feed in feeds:
+            counts = self._database.fetch_one(
+                "SELECT COUNT(*) AS points, MIN(measured_at) AS first_at FROM water_points WHERE feed_id = %s",
+                (int(feed["id"]),),
+            )
+            result.append(
+                {
+                    "id": int(feed["id"]),
+                    "hostname": str(feed["hostname"]),
+                    "username": str(feed["username"]),
+                    "meter_uuid": str(feed["meter_uuid"]),
+                    "export_unit": str(feed["export_unit"]),
+                    "active": bool(feed["active"]),
+                    "last_sync_at": self._moment(feed["last_sync_at"]),
+                    "last_point_at": self._moment(feed["last_point_at"]),
+                    "last_error": str(feed["last_error"]),
+                    "backfill_from": str(feed["backfill_from"] or ""),
+                    "backfill_done": bool(feed["backfill_done"]),
+                    "points": int(counts["points"]) if counts is not None else 0,
+                    "first_point_at": self._moment(counts["first_at"]) if counts is not None else "",
+                },
+            )
+        return {"feeds": result}
+
+    def create_feed(self, user: SessionUser, data: dict[str, Any]) -> dict[str, Any]:
+        house_id = int(data.get("house_id") or 0)
+        self._require_admin(user)
+        self._require_house(user, house_id)
+        hostname = self._hostname(data)
+        username = str(data.get("username") or "").strip()
+        password = str(data.get("password") or "")
+        meter_uuid = self._meter_uuid(data)
+        if not username or not password:
+            raise AppException(400, "Enter the EyeOnWater username and password.")
+        export_unit = str(data.get("export_unit") or Constants.water_export_unit).strip() or Constants.water_export_unit
+        # Proves the credentials, settles the uuid, and reads a day back.
+        client = EyeOnWaterClient(hostname, username, password, export_unit)
+        meter_uuid = self._resolve_meter(client, meter_uuid)
+        self._probe(client, meter_uuid)
+        existing = self._database.fetch_one(
+            "SELECT id FROM water_feeds WHERE house_id = %s AND meter_uuid_hash = %s",
+            (house_id, self._database.blind_index(meter_uuid)),
+        )
+        if existing is not None:
+            raise AppException(409, "This meter is already collected for this house.")
+        feed_id = self._database.execute(
+            """
+            INSERT INTO water_feeds(house_id, hostname, username_sealed, username_hash, password_sealed,
+                                    meter_uuid_sealed, meter_uuid_hash, export_unit)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                house_id,
+                hostname,
+                self._database.encrypt(username),
+                self._database.blind_index(username),
+                self._database.encrypt(password),
+                self._database.encrypt(meter_uuid),
+                self._database.blind_index(meter_uuid),
+                export_unit,
+            ),
+        )
+        return {"id": feed_id, "message": "Water feed added. The first import starts within a few minutes."}
+
+    def update_feed(self, user: SessionUser, feed_id: int, data: dict[str, Any]) -> dict[str, str]:
+        self._require_admin(user)
+        feed = self._require_feed(user, feed_id)
+        hostname = self._hostname(data)
+        username = str(data.get("username") or "").strip()
+        meter_uuid = self._meter_uuid(data)
+        if not username:
+            raise AppException(400, "Enter the EyeOnWater username.")
+        # An empty password means "keep the one already stored".
+        password = str(data.get("password") or "") or self._database.decrypt(str(feed["password"]))
+        export_unit = str(data.get("export_unit") or Constants.water_export_unit).strip() or Constants.water_export_unit
+        client = EyeOnWaterClient(hostname, username, password, export_unit)
+        meter_uuid = self._resolve_meter(client, meter_uuid)
+        self._probe(client, meter_uuid)
+        self._database.execute(
+            """
+            UPDATE water_feeds
+            SET hostname = %s, username_sealed = %s, username_hash = %s, password_sealed = %s,
+                meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s, last_error = ''
+            WHERE id = %s
+            """,
+            (
+                hostname,
+                self._database.encrypt(username),
+                self._database.blind_index(username),
+                self._database.encrypt(password),
+                self._database.encrypt(meter_uuid),
+                self._database.blind_index(meter_uuid),
+                export_unit,
+                bool(data.get("active")),
+                feed_id,
+            ),
+        )
+        return {"message": "Water feed updated."}
+
+    def delete_feed(self, user: SessionUser, feed_id: int) -> dict[str, str]:
+        self._require_admin(user)
+        self._require_feed(user, feed_id)
+        self._database.execute("DELETE FROM water_feeds WHERE id = %s", (feed_id,))
+        return {"message": "Water feed deleted, with everything it had collected."}
+
+    def restart_backfill(self, user: SessionUser, feed_id: int) -> dict[str, str]:
+        """Send the history walk back to the start; stored points are kept and refreshed."""
+        self._require_admin(user)
+        self._require_feed(user, feed_id)
+        self._database.execute(
+            "UPDATE water_feeds SET backfill_from = NULL, backfill_done = false, empty_chunks = 0 WHERE id = %s",
+            (feed_id,),
+        )
+        return {"message": "History import restarted; it walks back a month at a time."}
+
+    def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
+        """The house's consumption over one `days`-long period, summed per bucket.
+
+        Same windowing as the thermometers so both graphs of the Realtime view
+        move together, but the buckets are sums: half a bucket of water is not
+        an average of anything.
+        """
+        self._require_house(user, house_id)
+        bucket_minutes = dict(Constants.water_ranges).get(days)
+        if bucket_minutes is None:
+            choices = ", ".join(str(range_days) for range_days, _ in Constants.water_ranges)
+            raise AppException(400, f"The range must be one of {choices} days.")
+        if offset < 0:
+            raise AppException(400, "The offset counts periods back from now.")
+        until = datetime.now(UTC) - timedelta(days=days * offset)
+        since = until - timedelta(days=days * (2 if previous else 1))
+        rows = self._database.fetch_all(
+            """
+            SELECT date_bin(%s, water_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+                   SUM(water_points.volume) AS volume
+            FROM water_points JOIN water_feeds ON water_feeds.id = water_points.feed_id
+            WHERE water_feeds.house_id = %s AND water_feeds.active
+              AND water_points.measured_at >= %s AND water_points.measured_at < %s
+            GROUP BY bucket ORDER BY bucket
+            """,
+            (timedelta(minutes=bucket_minutes), house_id, since.isoformat(), until.isoformat()),
+        )
+        return {
+            "days": days,
+            "bucket_minutes": bucket_minutes,
+            "previous": previous,
+            "offset": offset,
+            "until": until.isoformat(),
+            "unit": "m³",
+            "points": [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows],
+            "latest": self._latest(house_id),
+        }
+
+    def _latest(self, house_id: int) -> dict[str, Any]:
+        row = self._database.fetch_one(
+            """
+            SELECT water_points.measured_at, water_points.volume, water_points.reading
+            FROM water_points JOIN water_feeds ON water_feeds.id = water_points.feed_id
+            WHERE water_feeds.house_id = %s AND water_feeds.active
+            ORDER BY water_points.measured_at DESC LIMIT 1
+            """,
+            (house_id,),
+        )
+        if row is None:
+            return {"at": "", "volume": None, "reading": None}
+        return {
+            "at": self._moment(row["measured_at"]),
+            "volume": round(float(row["volume"]), 4),
+            "reading": None if row["reading"] is None else round(float(row["reading"]), 4),
+        }
+
+    def _resolve_meter(self, client: EyeOnWaterClient, wanted: str) -> str:
+        """The uuid to collect, checked against the ones the account actually has."""
+        meters = client.meters()
+        if not meters:
+            raise AppException(502, "That EyeOnWater account has no meter on it.")
+        known = [meter.uuid for meter in meters]
+        if not wanted:
+            if len(known) > 1:
+                raise AppException(400, f"This account has several meters. Enter one of these uuids: {', '.join(known)}.")
+            return known[0]
+        if wanted not in known:
+            raise AppException(400, self._wrong_meter(wanted, meters))
+        return wanted
+
+    @classmethod
+    def _wrong_meter(cls, wanted: str, meters: list[WaterMeter]) -> str:
+        """Name the right uuid, and say so plainly when the meter id was used."""
+        mistaken = next((meter for meter in meters if meter.meter_id == wanted), None)
+        if mistaken is not None:
+            return f"That is the meter ID, not the meter uuid. This meter's uuid is {mistaken.uuid}."
+        return f"This account has no meter with that uuid. It has: {', '.join(meter.uuid for meter in meters)}."
+
+    def _probe(self, client: EyeOnWaterClient, meter_uuid: str) -> None:
+        """One day of export, thrown away: it is the account that is being tested."""
+        today = datetime.now(UTC).date()
+        client.export(meter_uuid, today - timedelta(days=Constants.water_recent_days), today)
+
+    @classmethod
+    def _hostname(cls, data: dict[str, Any]) -> str:
+        result = str(data.get("hostname") or Constants.water_host_default).strip().lower()
+        if result not in Constants.water_hosts:
+            choices = " or ".join(Constants.water_hosts)
+            raise AppException(400, f"The EyeOnWater host must be {choices}.")
+        return result
+
+    @classmethod
+    def _meter_uuid(cls, data: dict[str, Any]) -> str:
+        """Empty is allowed: the account is asked, and one meter needs no choosing."""
+        result = str(data.get("meter_uuid") or "").strip()
+        if result and not re.fullmatch(r"[A-Za-z0-9-]{1,64}", result):
+            raise AppException(400, "A meter uuid is letters and digits only.")
+        return result
+
+    @classmethod
+    def _moment(cls, value: datetime | None) -> str:
+        return value.isoformat() if value is not None else ""
+
+    def _visible_house_ids(self, user: SessionUser) -> list[int]:
+        rows = self._database.fetch_all("SELECT house_id FROM user_houses WHERE user_id = %s ORDER BY house_id", (user.user_id,))
+        return [int(row["house_id"]) for row in rows]
+
+    @classmethod
+    def _require_admin(cls, user: SessionUser) -> None:
+        if not user.is_admin:
+            raise AppException(403, "Only admins can do this.")
+
+    def _require_house(self, user: SessionUser, house_id: int) -> None:
+        row = self._database.fetch_one("SELECT id FROM houses WHERE id = %s", (house_id,))
+        if row is None:
+            raise AppException(404, "The house was not found.")
+        if house_id not in self._visible_house_ids(user):
+            raise AppException(403, "You do not have access to this house.")
+
+    def _require_feed(self, user: SessionUser, feed_id: int) -> dict[str, Any]:
+        result = self._database.fetch_one(
+            "SELECT id, house_id, password_sealed AS password FROM water_feeds WHERE id = %s",
+            (feed_id,),
+        )
+        if result is None:
+            raise AppException(404, "The water feed was not found.")
+        if int(result["house_id"]) not in self._visible_house_ids(user):
+            raise AppException(403, "You do not have access to this house.")
+        return result

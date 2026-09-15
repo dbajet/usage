@@ -41,6 +41,27 @@ def test_class() -> None:
         "alert_normal",
         "alert_below",
         "alert_above",
+        "water_host_default",
+        "water_hosts",
+        "water_sign_in_path",
+        "water_initiate_path",
+        "water_status_path",
+        "water_search_path",
+        "water_resolution",
+        "water_export_unit",
+        "water_timeout_seconds",
+        "water_poll_attempts",
+        "water_poll_seconds",
+        "water_sync_seconds",
+        "water_claim_minutes",
+        "water_recent_days",
+        "water_chunk_days",
+        "water_empty_chunks_max",
+        "water_chunks_per_tick",
+        "water_message_max",
+        "water_unreadable_status",
+        "water_cubic_meters",
+        "water_ranges",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -284,6 +305,174 @@ def test_alert_above() -> None:
     tested = Constants
     result = tested.alert_above
     expected = "above"
+    assert result == expected
+
+
+def test_water_host_default() -> None:
+    tested = Constants
+    result = tested.water_host_default
+    expected = 'eyeonwater.com'
+    assert result == expected
+
+
+def test_water_hosts() -> None:
+    tested = Constants
+    result = tested.water_hosts
+    expected = ('eyeonwater.com', 'eyeonwater.ca')
+    assert result == expected
+
+
+def test_water_sign_in_path() -> None:
+    tested = Constants
+    result = tested.water_sign_in_path
+    expected = '/account/signin'
+    assert result == expected
+
+
+def test_water_initiate_path() -> None:
+    tested = Constants
+    result = tested.water_initiate_path
+    expected = '/reports/export_initiate'
+    assert result == expected
+
+
+def test_water_status_path() -> None:
+    tested = Constants
+    result = tested.water_status_path
+    expected = '/reports/export_check_status/'
+    assert result == expected
+
+
+def test_water_search_path() -> None:
+    tested = Constants
+    result = tested.water_search_path
+    expected = '/api/2/residential/new_search'
+    assert result == expected
+
+
+def test_water_resolution() -> None:
+    tested = Constants
+    result = tested.water_resolution
+    expected = 'quarter_hourly'
+    assert result == expected
+
+
+def test_water_export_unit() -> None:
+    tested = Constants
+    result = tested.water_export_unit
+    expected = 'Gallons'
+    assert result == expected
+
+
+def test_water_timeout_seconds() -> None:
+    tested = Constants
+    result = tested.water_timeout_seconds
+    expected = 120
+    assert result == expected
+
+
+def test_water_poll_attempts() -> None:
+    tested = Constants
+    result = tested.water_poll_attempts
+    expected = 30
+    assert result == expected
+
+
+def test_water_poll_seconds() -> None:
+    tested = Constants
+    result = tested.water_poll_seconds
+    expected = 2.0
+    assert result == expected
+
+
+def test_water_sync_seconds() -> None:
+    tested = Constants
+    result = tested.water_sync_seconds
+    expected = 900
+    assert result == expected
+
+
+def test_water_claim_minutes() -> None:
+    tested = Constants
+    result = tested.water_claim_minutes
+    expected = 30
+    assert result == expected
+
+
+def test_water_recent_days() -> None:
+    tested = Constants
+    result = tested.water_recent_days
+    expected = 2
+    assert result == expected
+
+
+def test_water_chunk_days() -> None:
+    tested = Constants
+    result = tested.water_chunk_days
+    expected = 31
+    assert result == expected
+
+
+def test_water_empty_chunks_max() -> None:
+    tested = Constants
+    result = tested.water_empty_chunks_max
+    expected = 2
+    assert result == expected
+
+
+def test_water_chunks_per_tick() -> None:
+    tested = Constants
+    result = tested.water_chunks_per_tick
+    expected = 4
+    assert result == expected
+
+
+def test_water_message_max() -> None:
+    tested = Constants
+    result = tested.water_message_max
+    expected = 300
+    assert result == expected
+
+
+def test_water_unreadable_status() -> None:
+    tested = Constants
+    result = tested.water_unreadable_status
+    expected = 422
+    assert result == expected
+
+
+def test_water_cubic_meters() -> None:
+    tested = Constants
+    result = tested.water_cubic_meters
+    expected = (
+        ('CM', 1.0),
+        ('CUBIC_METER', 1.0),
+        ('CUBIC METERS', 1.0),
+        ('LITER', 0.001),
+        ('LITERS', 0.001),
+        ('HECTOLITERS', 0.1),
+        ('CF', 0.0283168466),
+        ('CUBIC_FEET', 0.0283168466),
+        ('CUBIC FEET', 0.0283168466),
+        ('10 CF', 0.283168466),
+        ('CCF', 2.83168466),
+        ('GAL', 0.0037854118),
+        ('GALLONS', 0.0037854118),
+        ('10 GAL', 0.037854118),
+        ('100 GAL', 0.37854118),
+        ('KGAL', 3.7854118),
+        ('IMPERIAL GALLONS', 0.00454609),
+        ('ACRE FEET', 1233.48184),
+        ('OIL BARRELS', 0.158987295),
+        ('FLUID BARRELS', 0.119240471),
+    )
+    assert result == expected
+
+
+def test_water_ranges() -> None:
+    tested = Constants
+    result = tested.water_ranges
+    expected = ((1, 15), (7, 60), (30, 360), (365, 1440))
     assert result == expected
 
 

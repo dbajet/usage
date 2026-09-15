@@ -328,24 +328,30 @@ def test_update_house(require_admin: MagicMock) -> None:
     assert database.mock_calls == exp_calls
     reset_mocks()
 
-    # happy path
-    database.fetch_one.side_effect = [{"id": 3}]
-    database.encrypt.side_effect = ["sealedName"]
-    database.execute.side_effect = [0]
-    result = tested.update_house(user, 3, {"name": " Fremur ", "timezone": "America/Los_Angeles"})
-    expected = {"message": "House updated."}
-    assert result == expected
-    assert require_admin.mock_calls == [call(user)]
-    exp_calls = [
-        call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
-        call.encrypt("Fremur"),
-        call.execute(
-            "UPDATE houses SET name_sealed = %s, timezone = %s WHERE id = %s",
-            ("sealedName", "America/Los_Angeles", 3),
-        ),
+    # happy path - the Realtime switches travel with the name and the time zone
+    tests = [
+        ({"shows_sensors": True, "shows_water": True}, True, True),
+        ({"shows_water": True}, False, True),
+        ({}, False, False),
     ]
-    assert database.mock_calls == exp_calls
-    reset_mocks()
+    for switches, exp_sensors, exp_water in tests:
+        database.fetch_one.side_effect = [{"id": 3}]
+        database.encrypt.side_effect = ["sealedName"]
+        database.execute.side_effect = [0]
+        result = tested.update_house(user, 3, {"name": " Fremur ", "timezone": "America/Los_Angeles", **switches})
+        expected = {"message": "House updated."}
+        assert result == expected
+        assert require_admin.mock_calls == [call(user)]
+        exp_calls = [
+            call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
+            call.encrypt("Fremur"),
+            call.execute(
+                "UPDATE houses SET name_sealed = %s, timezone = %s, shows_sensors = %s, shows_water = %s WHERE id = %s",
+                ("sealedName", "America/Los_Angeles", exp_sensors, exp_water, 3),
+            ),
+        ]
+        assert database.mock_calls == exp_calls
+        reset_mocks()
 
 
 @patch.object(AdminCommand, "_require_admin")
@@ -461,7 +467,8 @@ def test__houses() -> None:
     assert result == expected
     exp_calls = [
         call.fetch_all(
-            "SELECT id, name_sealed AS name, timezone, (ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
+            "SELECT id, name_sealed AS name, timezone, shows_sensors, shows_water, "
+            "(ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
         ),
         call.decrypt_rows(rows, ("name",)),
     ]

@@ -18,6 +18,8 @@ let state = {
   sensorOffset: 0,
   hiddenSensors: new Set(),
   sensorAutoRefreshId: null,
+  waterData: null,
+  waterFeeds: null,
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -190,11 +192,12 @@ function showView(name) {
   $$(".app-main > section").forEach((section) => { section.hidden = section.id !== `view-${name}`; });
   if (name === "settings") {
     let tab = storedItem("usage-settings-tab", "meters");
-    if (!state.me.is_admin && (tab === "houses" || tab === "users")) tab = "meters";
+    if (!state.me.is_admin && (tab === "houses" || tab === "users" || tab === "water")) tab = "meters";
     showSettingsTab(tab);
     loadPasskeys();
     loadMeters();
     loadSensorSettings();
+    loadWaterSettings();
     loadReminder();
     if (state.me && state.me.is_admin) loadAdmin();
   }
@@ -208,10 +211,7 @@ async function chooseHouseView() {
   // After the house changes, a view or tab the new house cannot show falls
   // back. Returns the view to open, so the caller loads it exactly once.
   await ensureDashboard();
-  if (currentView() === "sensors" && !houseHasSensors()) return "stats";
-  if (currentView() === "settings" && storedItem("usage-settings-tab", "meters") === "sensors" && !houseHasSensors()) {
-    showSettingsTab("meters");
-  }
+  if (currentView() === "sensors" && !houseHasSensors() && !houseHasWater()) return "stats";
   return currentView();
 }
 
@@ -391,16 +391,31 @@ async function ensureDashboard() {
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
   $("#house-btn").hidden = houses.length < 2;
-  // Sensors only show up for a house that has received some: the nav item
-  // and the settings tab stay out of the way elsewhere.
+  // Each house says what it measures (Settings, Houses, Edit): the Realtime
+  // nav item and the two settings tabs follow that, not the data.
   const hasSensors = Boolean(current && current.has_sensors);
-  $('[data-nav="sensors"]').hidden = !hasSensors;
+  const hasWater = Boolean(current && current.has_water);
+  $('[data-nav="sensors"]').hidden = !hasSensors && !hasWater;
   $('[data-settings-tab="sensors"]').hidden = !hasSensors;
+  // Both halves are per house, and the water one is an admin's to set up.
+  const showsWater = hasWater && Boolean(state.me && state.me.is_admin);
+  $('[data-settings-tab="water"]').hidden = !showsWater;
+  // A tab that has just been hidden cannot stay the selected one. This waits for
+  // the dashboard on purpose: deciding earlier would answer "no" for every house,
+  // and a restored Water tab would fall back to Meters on the way in.
+  const tab = storedItem("usage-settings-tab", "meters");
+  const gone = (tab === "sensors" && !hasSensors) || (tab === "water" && !showsWater);
+  if (gone && currentView() === "settings") showSettingsTab("meters");
 }
 
 function houseHasSensors() {
   const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
   return Boolean(current && current.has_sensors);
+}
+
+function houseHasWater() {
+  const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
+  return Boolean(current && current.has_water);
 }
 
 function currentView() {
@@ -1229,7 +1244,9 @@ async function chooseColor(title, current) {
   return answers === null ? null : String(answers.color || "").toLowerCase();
 }
 
-function wantsCelsius() {
+function wantsMetric() {
+  // One switch for the whole view: Celsius with litres, or Fahrenheit with
+  // gallons. Stored under the old key, so nobody's choice is lost.
   return storedItem("usage-temp-unit", "F") === "C";
 }
 
@@ -1282,8 +1299,8 @@ function displayTemp(value, unit) {
   // A viewer's choice: every temperature shows in Celsius or in Fahrenheit,
   // whatever the thermometer reports. Other units pass through.
   if (value === null || value === undefined) return { value, unit };
-  if (wantsCelsius() && unit === "°F") return { value: ((value - 32) * 5) / 9, unit: "°C" };
-  if (!wantsCelsius() && unit === "°C") return { value: (value * 9) / 5 + 32, unit: "°F" };
+  if (wantsMetric() && unit === "°F") return { value: ((value - 32) * 5) / 9, unit: "°C" };
+  if (!wantsMetric() && unit === "°C") return { value: (value * 9) / 5 + 32, unit: "°F" };
   return { value, unit };
 }
 
@@ -1355,24 +1372,35 @@ async function loadSensors(seriesOnly = false) {
         $("#sensor-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
         return;
       }
-      if (!houseHasSensors()) { showView("stats"); return; }
+      if (!houseHasSensors() && !houseHasWater()) { showView("stats"); return; }
     }
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
-    $("#sensor-celsius").checked = wantsCelsius();
+    $("#sensor-units").checked = wantsMetric();
     $("#sensor-previous").checked = wantsPrevious();
     $("#sensor-thresholds").checked = wantsThresholds();
+    // Celsius, the overlay and the alert lines are the thermometers': a house
+    // that only has the water meter would be offered three switches doing nothing.
+    $$("#view-sensors .sensor-controls .switch").forEach((control) => { control.hidden = !houseHasSensors(); });
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     showSensorsLoading();
-    // The list and the series leave together: one round trip, not two.
-    const [list, series] = await Promise.all([
+    // The list and both series leave together: one round trip, not three, and
+    // both follow the same range, offset and overlay so the two graphs of the
+    // view always show the same window.
+    const [list, series, water] = await Promise.all([
       reuse
         ? Promise.resolve({ sensors: state.sensors })
         : api(`/api/sensors?house_id=${state.houseId}`),
-      api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`),
+      houseHasSensors()
+        ? api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
+        : Promise.resolve({ days: state.sensorDays, bucket_minutes: 10, series: [] }),
+      houseHasWater()
+        ? api(`/api/water/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
+        : Promise.resolve(null),
     ]);
     state.sensors = list.sensors || [];
     state.sensorsHouseId = state.houseId;
     state.sensorData = series;
+    state.waterData = water;
     renderSensors();
   } catch (error) {
     $("#sensor-content").classList.remove("loading");
@@ -1395,11 +1423,21 @@ function renderSensors() {
   const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
   if (!sensors.length) {
     $("#sensor-content").classList.remove("loading");
-    $("#sensor-content").innerHTML = `
+    const alone = waterCardMarkup(state.waterData);
+    if (!alone) {
+      $("#sensor-content").innerHTML = `
       <div class="card">
         <p class="meta">No sensor yet. Once Home Assistant pushes readings with this house's sensor token
           (Settings, Houses), the thermometers appear here on their own.</p>
       </div>`;
+      return;
+    }
+    // Water without a single thermometer: the period bar still belongs to it.
+    const until = state.waterData.until ? Date.parse(state.waterData.until) : Date.now();
+    const since = until - state.waterData.days * 86400000;
+    const label = `${fmtPeriodEdge(since, state.waterData.days)} – ${fmtPeriodEdge(until, state.waterData.days)}`;
+    $("#sensor-content").innerHTML = periodBarMarkup(label, "Water drawn per bucket.") + alone;
+    wirePeriodBar();
     return;
   }
   const colors = sensorColors(sensors);
@@ -1431,47 +1469,17 @@ function renderSensors() {
   const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
   const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
   const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
-  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click the legend to hide a sensor.`;
+  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click a tile for that sensor alone.`;
   $("#sensor-content").classList.remove("loading");
   $("#sensor-content").innerHTML = `
-    <div class="period-bar">
-      <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
-      <span class="range-tabs">
-        <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
-        ${state.sensorOffset
-          ? `<button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period">${ICON_CHEVRON_RIGHT}</button>`
-          : `<button id="sensor-refresh" class="ghost compact icon-button" type="button" title="Refresh the readings" aria-label="Refresh the readings">${ICON_REFRESH}</button>`}
-      </span>
-    </div>
+    ${periodBarMarkup(rangeLabel, hint)}
     <div class="card graph-card">
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds.filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id))) || '<p class="meta">No reading in this period.</p>'}
-    </div>
-    ${sensorLegendMarkup(allSeries)}
-    <div class="card">
-      <h3>Now</h3>
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
-    </div>`;
+    </div>
+    ${waterCardMarkup(state.waterData)}`;
   wireSensorChartHover("#sensor-content");
-  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(true); });
-  // On the current period there is nothing later to show: the arrow makes way
-  // for a refresh, which reloads the readings and the tiles without touching
-  // the range, the overlay, the unit or the sensors on show. Only the window's
-  // own end moves, since it always finishes now.
-  const later = $("#sensor-later");
-  if (later) {
-    later.addEventListener("click", () => {
-      if (!state.sensorOffset) return;
-      state.sensorOffset -= 1;
-      loadSensors(true);
-    });
-  }
-  const refresh = $("#sensor-refresh");
-  if (refresh) {
-    refresh.addEventListener("click", () => {
-      showSensorsLoading();
-      loadSensors();
-    });
-  }
+  wirePeriodBar();
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
     const solo = () => {
@@ -1521,24 +1529,6 @@ function renderSensors() {
       else solo();
     });
   });
-  $$("[data-sensor-toggle]").forEach((button) => button.addEventListener("click", () => {
-    const sensorId = Number(button.dataset.sensorToggle);
-    if (state.hiddenSensors.has(sensorId)) state.hiddenSensors.delete(sensorId);
-    else state.hiddenSensors.add(sensorId);
-    renderSensors();
-  }));
-}
-
-function sensorLegendMarkup(seriesList) {
-  if (!seriesList.length) return "";
-  return `
-    <div class="viz-legend sensor-legend">
-      ${seriesList.map((item) => {
-        const off = state.hiddenSensors.has(item.sensor_id) ? " off" : "";
-        return `<button class="legend-toggle${off}" type="button" data-sensor-toggle="${item.sensor_id}" title="Show or hide this sensor">
-          <i style="background:${item.color}"></i>${esc(item.name)}</button>`;
-      }).join("")}
-    </div>`;
 }
 
 function sensorTicks(tMin, tMax, days) {
@@ -1782,6 +1772,281 @@ async function loadSensorSettings() {
   } catch (error) { showAppError(error); }
 }
 
+// ---------- Water (EyeOnWater consumption) ----------
+
+const WATER_COLOR = "var(--viz-2)";
+const WATER_BUCKETS = { 15: "quarter-hour", 60: "hourly", 360: "6-hour", 1440: "daily" };
+const WATER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
+
+function periodBarMarkup(rangeLabel, hint) {
+  // Shared by the thermometers and the water: both graphs of the view move together.
+  return `
+    <div class="period-bar">
+      <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
+      <span class="range-tabs">
+        <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
+        ${state.sensorOffset
+          ? `<button id="sensor-later" class="ghost compact icon-button" type="button" title="Later period" aria-label="Later period">${ICON_CHEVRON_RIGHT}</button>`
+          : `<button id="sensor-refresh" class="ghost compact icon-button" type="button" title="Refresh the readings" aria-label="Refresh the readings">${ICON_REFRESH}</button>`}
+      </span>
+    </div>`;
+}
+
+function wirePeriodBar() {
+  $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(true); });
+  // On the current period there is nothing later to show: the arrow makes way
+  // for a refresh, which reloads the readings and the tiles without touching
+  // the range, the overlay, the unit or the sensors on show. Only the window's
+  // own end moves, since it always finishes now.
+  const later = $("#sensor-later");
+  if (later) {
+    later.addEventListener("click", () => {
+      if (!state.sensorOffset) return;
+      state.sensorOffset -= 1;
+      loadSensors(true);
+    });
+  }
+  const refresh = $("#sensor-refresh");
+  if (refresh) {
+    refresh.addEventListener("click", () => {
+      showSensorsLoading();
+      loadSensors();
+    });
+  }
+}
+
+const GALLONS_PER_M3 = 264.172052;
+
+function volumeUnit(highest, axis = false) {
+  // US reads everything in gallons. FR takes litres while the numbers are small
+  // and cubic metres once they are not - an axis decides from its top so every
+  // one of its labels lands in the same unit, since a ladder ending
+  // "750 L, 1.00 m³" is arithmetic the reader should not have to do.
+  if (!wantsMetric()) return "gal";
+  return Math.abs(highest) < (axis ? 2 : 1) ? "L" : "m3";
+}
+
+function fmtVolume(value, unit = null) {
+  // Everything is stored in cubic metres; this is only how it is shown.
+  if (value === null || value === undefined) return "—";
+  const shown = unit || volumeUnit(value);
+  if (shown === "gal") {
+    const gallons = value * GALLONS_PER_M3;
+    // A tenth of a gallon is worth showing for one bucket, never for a round
+    // rung of an axis: "0.0 gal" beside "20 gal" only looks like a mistake.
+    const rounded = Math.abs(gallons - Math.round(gallons)) < 0.05;
+    return `${gallons < 10 && !rounded ? gallons.toFixed(1) : Math.round(gallons).toLocaleString("en-US")} gal`;
+  }
+  if (shown === "L") return `${Math.round(value * 1000)} L`;
+  return `${value.toFixed(value < 10 ? 2 : 1)} m³`;
+}
+
+function waterStamp(time) {
+  // One shape whatever the range: MM/DD hh:mm, in the viewer's own time zone. A
+  // stamp that drops the date on the day view, or the clock on the year view,
+  // leaves the two lines of an overlay tooltip with nothing to tell them apart.
+  const moment = new Date(time);
+  const two = (value) => String(value).padStart(2, "0");
+  return `${two(moment.getMonth() + 1)}/${two(moment.getDate())} ${two(moment.getHours())}:${two(moment.getMinutes())}`;
+}
+
+function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
+  // Bars, not a curve: each one is the water drawn in its bucket, so the scale
+  // starts at zero and an empty bucket is an honest gap rather than a dip.
+  const tMin = tMax - days * 86400000;
+  if (!current.length && !earlier.length) return "";
+  const width = 720;
+  const height = 200;
+  const left = 52;
+  const right = 16;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const high = Math.max(...[...current, ...earlier].map((point) => point.volume), 0);
+  // The ladder is built in the unit it will be read in, not in the cubic metres
+  // everything is stored as: a step that is round in m3 lands on 26 and 53 gal.
+  const unit = volumeUnit(high, true);
+  const perCubicMetre = unit === "gal" ? GALLONS_PER_M3 : unit === "L" ? 1000 : 1;
+  const stepShown = sensorStep(Math.max(high * perCubicMetre, 1) / 4);
+  const topShown = Math.max(stepShown, Math.ceil((high * perCubicMetre) / stepShown) * stepShown);
+  const yMax = topShown / perCubicMetre;
+  const xAt = (time) => left + ((time - tMin) / (tMax - tMin)) * plotWidth;
+  const yAt = (value) => top + plotHeight - (value / yMax) * plotHeight;
+
+  const gridLines = [];
+  const yLabels = [];
+  for (let shown = 0; shown <= topShown + stepShown / 2; shown += stepShown) {
+    const y = yAt(shown / perCubicMetre);
+    gridLines.push(`<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
+    yLabels.push(`<text x="${left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${esc(fmtVolume(shown / perCubicMetre, unit))}</text>`);
+  }
+  const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
+    `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
+
+  const bucketMs = bucketMinutes * 60000;
+  const barWidth = Math.max(1, (plotWidth * bucketMs) / (tMax - tMin) - 1);
+  // A bucket is drawn twice when the overlay is on, and the point of the overlay
+  // is the comparison: both bars carry both readings, each under its own date,
+  // so whichever one the pointer lands on answers the same question.
+  const currentAt = new Map(current.map((point) => [point.time, point]));
+  const earlierAt = new Map(earlier.map((point) => [point.time, point]));
+  const titleAt = (time) => {
+    const now = currentAt.get(time);
+    const before = earlierAt.get(time);
+    const lines = [`${waterStamp(time)} · ${fmtVolume(now ? now.volume : 0)}`];
+    if (earlier.length) {
+      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${fmtVolume(before ? before.volume : 0)}`);
+    }
+    return lines.join("\n");
+  };
+  const barsOf = (timed, className) => timed.map((point) => {
+    const y = yAt(point.volume);
+    const barHeight = Math.max(point.volume > 0 ? 1 : 0, top + plotHeight - y);
+    if (!barHeight) return "";
+    return `<rect class="${className}" x="${xAt(point.time).toFixed(1)}" y="${(top + plotHeight - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" fill="${WATER_COLOR}"><title>${esc(titleAt(point.time))}</title></rect>`;
+  }).join("");
+  return `
+    <div class="viz-holder">
+      <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Water consumption">
+        <g class="grid">${gridLines.join("")}</g>
+        <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        <g class="bars">${barsOf(earlier, "previous")}${barsOf(current, "")}</g>
+      </svg>
+    </div>`;
+}
+
+function waterCardMarkup(data) {
+  if (!data) return "";
+  const points = data.points || [];
+  const latest = data.latest || {};
+  if (!points.length && !latest.at) return "";
+  const tMax = data.until ? Date.parse(data.until) : Date.now();
+  // The server sends both periods in one flat list when the overlay is on; the
+  // earlier one is shifted forward by the range so it lines up under the shown
+  // one, exactly as the thermometers' curves are.
+  const span = data.days * 86400000;
+  const current = [];
+  const earlier = [];
+  for (const point of points) {
+    const time = Date.parse(point.at);
+    if (time >= tMax - span) current.push({ time, volume: point.volume });
+    else if (data.previous) earlier.push({ time: time + span, actual: time, volume: point.volume });
+  }
+  const total = current.reduce((sum, point) => sum + point.volume, 0);
+  const bucket = WATER_BUCKETS[data.bucket_minutes] || `${data.bucket_minutes}-minute`;
+  const reading = latest.reading === null || latest.reading === undefined ? "" : ` · meter at ${fmtVolume(latest.reading)}`;
+  // EyeOnWater publishes in batches, so the freshest bar is usually hours old:
+  // saying when the last reading landed stops that looking like a dry house.
+  const freshness = latest.at ? `Last reading ${fmtAgo(latest.at)}${reading}.` : "Nothing collected yet.";
+  const overlay = earlier.length ? ` Pale bars: the previous ${WATER_PERIODS[data.days] || "period"}.` : "";
+  return `
+    <div class="card graph-card">
+      <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span></h3>
+      ${waterChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
+      <p class="meta">${esc(bucket)} totals from the water meter. ${esc(freshness)}${esc(overlay)}</p>
+    </div>`;
+}
+
+async function loadWaterSettings() {
+  try {
+    await ensureDashboard();
+    const houses = state.dashboard.houses || [];
+    const current = houses.find((house) => house.id === state.houseId);
+    $("#water-house-name").textContent = current ? current.name : "";
+    $("#water-feed-form").hidden = !state.houseId;
+    if (!state.me || !state.me.is_admin || !state.houseId) return;
+    const data = await api(`/api/water/feeds?house_id=${state.houseId}`);
+    state.waterFeeds = data.feeds || [];
+    renderWaterFeeds();
+  } catch (error) { showAppError(error); }
+}
+
+function waterFeedStatus(feed) {
+  const bits = [feed.points ? `${feed.points.toLocaleString()} readings` : "nothing collected yet"];
+  if (feed.first_point_at) bits.push(`from ${new Date(feed.first_point_at).toLocaleDateString()}`);
+  // Until the walk ends, how far back it has reached says more than a percentage
+  // nobody can compute: how deep the utility keeps its history is unknown.
+  bits.push(feed.backfill_done ? "history complete" : `still walking back${feed.backfill_from ? ` (at ${feed.backfill_from})` : ""}`);
+  if (feed.last_point_at) bits.push(`last ${fmtAgo(feed.last_point_at)}`);
+  return bits.join(" · ");
+}
+
+function renderWaterFeeds() {
+  const feeds = state.waterFeeds || [];
+  $("#water-feed-list").innerHTML = feeds.map((feed) => `
+    <div class="mini-row wrap-row${feed.active ? "" : " inactive"}">
+      <span>
+        <strong>${esc(feed.username)}</strong> · ${esc(feed.hostname)}${feed.active ? "" : ' <span class="badge">paused</span>'}
+        <br>
+        <span class="meta">meter ${esc(feed.meter_uuid)} · ${esc(waterFeedStatus(feed))}</span>
+        ${feed.last_error ? `<br><span class="meta warn">${esc(feed.last_error)}</span>` : ""}
+      </span>
+      <span class="icon-actions">
+        <button class="ghost compact" data-edit-water="${feed.id}" type="button">Edit</button>
+        <button class="ghost compact" data-backfill-water="${feed.id}" type="button"
+          title="Walk the whole history again, a month at a time">Import history</button>
+        <button class="ghost compact" data-delete-water="${feed.id}" type="button">Delete</button>
+      </span>
+    </div>`).join("") || '<p class="meta">No water feed yet.</p>';
+  $$("[data-edit-water]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.editWater));
+    const answers = await openModal({
+      title: `Edit water feed · ${feed.username}`,
+      message: "Leave the password empty to keep the one already stored.",
+      fields: [
+        { name: "hostname", label: "Host", type: "select", options: ["eyeonwater.com", "eyeonwater.ca"], value: feed.hostname },
+        { name: "username", label: "Username", value: feed.username },
+        { name: "password", label: "New password", type: "password", value: "" },
+        { name: "meter_uuid", label: "Meter uuid", value: feed.meter_uuid },
+        { name: "active", label: "Collecting", type: "checkbox", value: feed.active },
+      ],
+    });
+    if (answers === null) return;
+    try {
+      await api(`/api/water/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify(answers) });
+      await loadWaterSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-backfill-water]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.backfillWater));
+    if (!await confirmModal("Import the history again", `Walk ${feed.username}'s history back from today. Readings already stored are kept and refreshed.`, "Import")) return;
+    try {
+      await api(`/api/water/feeds/${feed.id}/backfill`, { method: "POST" });
+      await loadWaterSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-delete-water]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.deleteWater));
+    if (!await confirmModal("Delete this water feed", `Everything collected for ${feed.username} goes with it. The history would have to be imported again.`)) return;
+    try {
+      await api(`/api/water/feeds/${feed.id}`, { method: "DELETE" });
+      invalidateDashboard();
+      await loadWaterSettings();
+    } catch (error) { showAppError(error); }
+  }));
+}
+
+async function addWaterFeed(event) {
+  event.preventDefault();
+  try {
+    // The server signs in and asks for a day before storing anything, so a wrong
+    // password or uuid is refused here rather than hours later in the log.
+    await api("/api/water/feeds", { method: "POST", body: JSON.stringify({
+      house_id: state.houseId,
+      hostname: $("#water-hostname").value,
+      username: $("#water-username").value.trim(),
+      password: $("#water-password").value,
+      meter_uuid: $("#water-meter-uuid").value.trim(),
+    }) });
+    $("#water-username").value = "";
+    $("#water-password").value = "";
+    $("#water-meter-uuid").value = "";
+    invalidateDashboard();
+    await loadWaterSettings();
+  } catch (error) { showAppError(error); }
+}
+
 function sensorPayload(sensor) {
   // Every sensor write sends the whole sensor: a partial one would clear the rest.
   return {
@@ -1903,11 +2168,12 @@ function renderSensorSettings() {
   }));
 }
 
-async function issueSensorToken(house) {
+async function issueSensorToken(house, top = false) {
+  // `top` stacks it above the house dialog it is opened from, which stays put.
   const warning = house.has_sensor_token
     ? "This house already has a sensor token. Generating a new one stops the previous one at once: update Home Assistant with the new token."
     : "The token lets Home Assistant push the thermometers' readings into this house. It is shown once.";
-  if (!await openModal({ title: `Sensor token · ${house.name}`, message: warning, submitLabel: "Generate" })) return;
+  if (!await openModal({ title: `Sensor token · ${house.name}`, message: warning, submitLabel: "Generate", top })) return false;
   try {
     const data = await api(`/api/houses/${house.id}/sensor-token`, { method: "POST", body: "{}" });
     await openModal({
@@ -1915,9 +2181,12 @@ async function issueSensorToken(house) {
       message: "Copy it now into Home Assistant's secrets.yaml (see deploy/home-assistant.yaml); it will not be shown again.",
       submitLabel: "Done",
       fields: [{ type: "html", html: `<div class="token-box">${esc(data.token)}</div>` }],
+      top,
     });
     await loadAdmin();
+    return true;
   } catch (error) { showAppError(error); }
+  return false;
 }
 
 async function loadAdmin() {
@@ -1982,34 +2251,56 @@ function timezoneOptions() {
 function renderHouses() {
   $("#house-list").innerHTML = (state.admin.houses || []).map((house) => `
     <div class="mini-row">
-      <span><strong>${esc(house.name)}</strong> <span class="meta">· ${esc(house.timezone || "")}</span></span>
+      <span><strong>${esc(house.name)}</strong> <span class="meta">· ${esc(house.timezone || "")}${
+        [house.shows_sensors ? "thermometers" : "", house.shows_water ? "water" : ""].filter(Boolean).join(", ")
+          ? ` · ${[house.shows_sensors ? "thermometers" : "", house.shows_water ? "water" : ""].filter(Boolean).join(", ")}`
+          : ""}</span></span>
       <span>
-        <button class="ghost compact" data-token-house="${house.id}" type="button"
-          title="${house.has_sensor_token ? "Replace the Home Assistant sensor token" : "Create the Home Assistant sensor token"}">
-          Sensor token${house.has_sensor_token ? ' <span class="badge">set</span>' : ""}</button>
         <button class="ghost compact" data-rename-house="${house.id}" type="button">Edit</button>
         <button class="ghost compact danger" data-delete-house="${house.id}" type="button">Delete</button>
       </span>
     </div>`).join("") || '<p class="meta">No house yet.</p>';
-  $$("[data-token-house]").forEach((button) => button.addEventListener("click", () =>
-    issueSensorToken((state.admin.houses || []).find((item) => item.id === Number(button.dataset.tokenHouse)))));
   $$("[data-rename-house]").forEach((button) => button.addEventListener("click", async () => {
     const house = (state.admin.houses || []).find((item) => item.id === Number(button.dataset.renameHouse));
-    const answers = await openModal({
+    const dialog = openModal({
       title: `Edit house · ${house.name}`,
       fields: [
         { name: "name", label: "House name", value: house.name },
         // The reminder email goes out at 06:15 in the house's own time zone.
         { name: "timezone", label: "Time zone", type: "select", value: house.timezone, options: timezoneOptions() },
+        { type: "heading", label: "Realtime - what this house measures" },
+        { name: "shows_sensors", label: "Thermometers (Home Assistant)", type: "checkbox", value: house.shows_sensors },
+        { type: "html", html: `<button class="ghost compact modal-action" data-issue-token type="button"
+          title="${house.has_sensor_token ? "Replace the Home Assistant sensor token" : "Create the Home Assistant sensor token"}">
+          Sensor token${house.has_sensor_token ? ' <span class="badge">set</span>' : ""}</button>` },
+        { name: "shows_water", label: "Water meter (EyeOnWater)", type: "checkbox", value: house.shows_water },
       ],
     });
+    // The token is what Home Assistant pushes with, so it belongs beside that
+    // switch rather than in the row. openModal builds its fields before it
+    // resolves, so the button is already there to be wired.
+    const tokenButton = $("#modal-fields [data-issue-token]");
+    if (tokenButton) {
+      tokenButton.addEventListener("click", async () => {
+        if (!await issueSensorToken(house, true)) return;
+        house.has_sensor_token = true;
+        tokenButton.innerHTML = 'Sensor token <span class="badge">set</span>';
+      });
+    }
+    const answers = await dialog;
     if (answers === null || !answers.name.trim()) return;
     try {
       await api(`/api/houses/${house.id}`, { method: "PUT", body: JSON.stringify({
         name: answers.name.trim(),
         timezone: answers.timezone,
+        shows_sensors: answers.shows_sensors,
+        shows_water: answers.shows_water,
       }) });
+      // The switches decide a nav item and two settings tabs: the cached
+      // dashboard would keep showing yesterday's answer.
+      invalidateDashboard();
       await loadAdmin();
+      await ensureDashboard();
     } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-house]").forEach((button) => button.addEventListener("click", async () => {
@@ -2343,6 +2634,7 @@ addEventListener("DOMContentLoaded", () => {
   $("#house-form").addEventListener("submit", addHouse);
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);
+  $("#water-feed-form").addEventListener("submit", addWaterFeed);
   // A monthly meter has no counter: the start-value row would only mislead.
   $("#meter-monthly").addEventListener("change", () => {
     $("#meter-register-row").hidden = $("#meter-monthly").checked;
@@ -2365,8 +2657,8 @@ addEventListener("DOMContentLoaded", () => {
       showAppError(error);
     }
   });
-  $("#sensor-celsius").addEventListener("change", () => {
-    storeItem("usage-temp-unit", $("#sensor-celsius").checked ? "C" : "F");
+  $("#sensor-units").addEventListener("change", () => {
+    storeItem("usage-temp-unit", $("#sensor-units").checked ? "C" : "F");
     renderSensors();
   });
   $("#sensor-previous").addEventListener("change", () => {

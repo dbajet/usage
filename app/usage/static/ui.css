@@ -292,6 +292,8 @@ button.icon-only .msym { width: 16px; height: 16px; }
 .value-row input { flex: 1; min-width: 0; margin-top: 0; }
 label.check { display: flex; align-items: center; gap: 0.35rem; margin: 0.5rem 0; color: var(--text); }
 label.check input { width: auto; margin: 0; }
+/* A button sitting among a modal's fields: indented under the switch it belongs to. */
+.modal-action { margin: 0 0 0.5rem 1.35rem; }
 label.check.compact { display: inline-flex; margin: 0 0.4rem 0 0; font-size: 0.85rem; }
 .house-checks { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
 .badge {
@@ -480,6 +482,8 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .range-tabs button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .range-tabs button[disabled] { opacity: 0.35; cursor: default; }
 .range-tabs .short { display: none; }
+.sensor-controls .switch .short { display: none; }
+.sensor-controls .switch .short .msym { display: block; width: 18px; height: 18px; }
 .sensor-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -534,11 +538,9 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
   animation: busy-spin 0.8s linear infinite;
 }
 /* The sensor legend lives under the graph card, not inside it. */
-.sensor-legend { margin: -0.5rem 0 1rem; padding: 0 0.25rem; }
-.sensor-legend + .card { margin-top: 1rem; }
-html.device-mobile .sensor-legend { gap: 0.15rem 0.6rem; }
-html.device-mobile .sensor-legend .legend-toggle { padding: 0.1rem 0.25rem; font-size: 0.75rem; }
-html.device-mobile .sensor-legend i { width: 10px; }
+/* The tiles sit under the curves they belong to: each one's colour is the
+   line's, so they are the legend as well as the current readings. */
+.graph-card .sensor-tiles { margin-top: 0.85rem; }
 .period-label { font-weight: 600; }
 /* On a phone (the device, not the window width - see theme.js) the tiles are
    one line each, two per row: the name on the left, the value on the right. */
@@ -563,6 +565,13 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 .viz-chart .series path.previous { stroke-dasharray: 1.5 3; stroke-linecap: round; opacity: 0.85; }
 /* The alert bounds: a thin line of long dashes, in the colour of its own sensor. */
 .viz-chart .threshold { stroke-width: 1; stroke-dasharray: 12 7; opacity: 0.75; }
+/* Water is a counter: bars from zero, with a hairline gap so a busy day stays readable. */
+.viz-chart .bars rect { opacity: 0.85; }
+.viz-chart .bars rect:hover { opacity: 1; }
+/* Last period, drawn underneath: pale enough to read past, solid enough to compare. */
+.viz-chart .bars rect.previous { opacity: 0.28; }
+.units-switch span { font-size: 0.8rem; letter-spacing: 0.04em; }
+.meta.warn { color: var(--danger); }
 .token-box {
   margin: 0.5rem 0;
   padding: 0.5rem 0.65rem;
@@ -612,6 +621,11 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
   .range-tabs button { padding: 0.3rem 0.45rem; font-size: 0.78rem; }
   .range-tabs .long { display: none; }
   .range-tabs .short { display: inline; }
+  /* The bottom bar already names the view; the heading would only repeat it. */
+  #view-sensors .view-heading h2 { display: none; }
+  #view-sensors .view-heading { justify-content: flex-end; }
+  .sensor-controls .switch .long { display: none; }
+  .sensor-controls .switch .short { display: inline-flex; }
   /* The build stamp shrinks to an info icon; a tap reveals it in a bubble. */
   .version-tag { cursor: pointer; }
   .version-tag > .msym { display: block; }

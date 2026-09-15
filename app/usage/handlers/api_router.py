@@ -12,6 +12,7 @@ from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
 from usage.commands.sensor_command import SensorCommand
 from usage.commands.stats_command import StatsCommand
+from usage.commands.water_command import WaterCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_message import ApiMessage
 from usage.handlers.auth_link_request import AuthLinkRequest
@@ -39,6 +40,8 @@ from usage.handlers.sensor_update_request import SensorUpdateRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
+from usage.handlers.water_feed_request import WaterFeedRequest
+from usage.handlers.water_feed_update_request import WaterFeedUpdateRequest
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.libraries.meter_reader import MeterReader
@@ -59,6 +62,7 @@ class ApiRouter:
         self._reading_command = ReadingCommand(database, MeterReader(settings))
         self._stats_command = StatsCommand(database)
         self._sensor_command = SensorCommand(database, settings, email_sender)
+        self._water_command = WaterCommand(database)
         self._register()
 
     @property
@@ -114,6 +118,12 @@ class ApiRouter:
         self._router.add_api_route("/sensors/alerts", self._sensor_alerts, methods=["GET"])
         self._router.add_api_route("/sensors/alerts", self._set_sensor_alerts, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/sensors/{sensor_id}", self._update_sensor, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/water/feeds", self._list_water_feeds, methods=["GET"])
+        self._router.add_api_route("/water/feeds", self._create_water_feed, methods=["POST"])
+        self._router.add_api_route("/water/series", self._water_series, methods=["GET"])
+        self._router.add_api_route("/water/feeds/{feed_id}", self._update_water_feed, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/water/feeds/{feed_id}", self._delete_water_feed, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/water/feeds/{feed_id}/backfill", self._restart_water_backfill, methods=["POST"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
         return {
@@ -512,6 +522,61 @@ class ApiRouter:
         user = self._auth_command.user_from_token(usage_session)
         message = self._sensor_command.set_alerts(user, body.model_dump())
         return ApiMessage(message=message["message"])
+
+    def _list_water_feeds(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._water_command.list_feeds(user, house_id)
+
+    def _create_water_feed(
+        self,
+        body: WaterFeedRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._water_command.create_feed(user, body.model_dump())
+
+    def _update_water_feed(
+        self,
+        feed_id: int,
+        body: WaterFeedUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._water_command.update_feed(user, feed_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_water_feed(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._water_command.delete_feed(user, feed_id)
+        return ApiMessage(message=message["message"])
+
+    def _restart_water_backfill(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._water_command.restart_backfill(user, feed_id)
+        return ApiMessage(message=message["message"])
+
+    def _water_series(
+        self,
+        house_id: int,
+        days: int = 1,
+        previous: bool = False,
+        offset: int = 0,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._water_command.series(user, house_id, days, previous, offset)
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"
