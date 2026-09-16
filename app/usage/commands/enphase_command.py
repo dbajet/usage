@@ -114,8 +114,8 @@ class EnphaseCommand:
             """
             INSERT INTO enphase_feeds(house_id, client_id_sealed, client_secret_sealed, api_key_sealed,
                                       system_id_sealed, system_id_hash, access_token_sealed,
-                                      refresh_token_sealed, token_expires_at, calls_budget)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      refresh_token_sealed, token_expires_at, calls_budget, production_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -129,6 +129,9 @@ class EnphaseCommand:
                 self._database.encrypt(tokens.refresh_token),
                 tokens.expires_at.isoformat() if tokens.expires_at is not None else None,
                 self._budget(data),
+                # The probe has just asked for a day of production, so it already
+                # knows which endpoint answers here: the sync need not find out.
+                client.production_path,
             ),
         )
         return {"id": feed_id, "message": "Enphase feed added. The first import starts within a minute."}
@@ -153,7 +156,7 @@ class EnphaseCommand:
             SET client_id_sealed = %s, client_secret_sealed = %s, api_key_sealed = %s,
                 system_id_sealed = %s, system_id_hash = %s, access_token_sealed = %s,
                 refresh_token_sealed = %s, token_expires_at = %s, calls_budget = %s,
-                active = %s, last_error = ''
+                active = %s, production_path = %s, last_error = ''
             WHERE id = %s
             """,
             (
@@ -167,6 +170,7 @@ class EnphaseCommand:
                 client.tokens.expires_at.isoformat() if client.tokens.expires_at is not None else None,
                 self._budget(data),
                 bool(data.get("active")),
+                client.production_path,
                 feed_id,
             ),
         )

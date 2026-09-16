@@ -26,6 +26,7 @@ def helper_feed() -> EnphaseFeed:
         calls_used=123,
         calls_budget=1000,
         calls_month=date(2026, 9, 1),
+        production_path="micro",
         last_point_at=datetime(2026, 9, 16, 7, 15, tzinfo=UTC),
     )
 
@@ -50,6 +51,7 @@ def test_class() -> None:
         "calls_used",
         "calls_budget",
         "calls_month",
+        "production_path",
         "last_point_at",
     ]
     result = is_namedtuple(tested, fields)
@@ -78,6 +80,7 @@ def test_to_dict() -> None:
                 "calls_used": 123,
                 "calls_budget": 1000,
                 "calls_month": "2026-09-01",
+                "production_path": "micro",
                 "last_point_at": "2026-09-16T07:15:00+00:00",
             },
         ),
@@ -108,6 +111,7 @@ def test_to_dict() -> None:
                 "calls_used": 0,
                 "calls_budget": 0,
                 "calls_month": "",
+                "production_path": "",
                 "last_point_at": "",
             },
         ),
@@ -141,6 +145,7 @@ def test_from_dict() -> None:
                 calls_used=0,
                 calls_budget=0,
                 calls_month=None,
+                production_path="",
                 last_point_at=None,
             ),
         ),

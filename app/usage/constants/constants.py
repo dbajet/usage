@@ -126,6 +126,10 @@ class _Constants:
     enphase_redirect_uri: str = "https://api.enphaseenergy.com/oauth/redirect_uri"
     enphase_systems_path: str = "/api/v4/systems"
     enphase_production_path: str = "/api/v4/systems/{system_id}/telemetry/production_meter"
+    # Which endpoint answers for production on a given system, once it is known.
+    # An empty string means nobody has found out yet.
+    enphase_production_meter: str = "meter"
+    enphase_production_micro: str = "micro"
     # The fallback for a system with no production CTs: the microinverters always
     # report what they made, whether or not a meter was fitted to measure it.
     enphase_production_micro_path: str = "/api/v4/systems/{system_id}/telemetry/production_micro"

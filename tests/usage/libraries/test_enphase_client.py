@@ -22,8 +22,12 @@ def helper_tokens(expires_at: datetime | None = None) -> EnphaseTokens:
     return EnphaseTokens(access_token="theAccessToken", refresh_token="theRefreshToken", expires_at=expires_at)
 
 
-def helper_instance(tokens: EnphaseTokens | None = None, limiter: MagicMock | None = None) -> EnphaseClient:
-    return EnphaseClient("theClientId", "theClientSecret", "theApiKey", tokens or helper_tokens(), limiter)
+def helper_instance(
+    tokens: EnphaseTokens | None = None,
+    limiter: MagicMock | None = None,
+    production_path: str = "",
+) -> EnphaseClient:
+    return EnphaseClient("theClientId", "theClientSecret", "theApiKey", tokens or helper_tokens(), limiter, production_path)
 
 
 def test___init__() -> None:
@@ -36,6 +40,7 @@ def test___init__() -> None:
     assert tested._calls == 0
 
     assert tested._limiter is None
+    assert tested._production_path == ""
 
     limiter = MagicMock()
     tested = helper_instance(tokens, limiter)
@@ -174,46 +179,93 @@ def test_systems(get: MagicMock) -> None:
         reset_mocks()
 
 
+@patch.object(EnphaseClient, "_discover_production")
 @patch.object(EnphaseClient, "_telemetry")
-def test_production(telemetry: MagicMock) -> None:
+def test_production(telemetry: MagicMock, discover: MagicMock) -> None:
+    def reset_mocks() -> None:
+        telemetry.reset_mock()
+        discover.reset_mock()
+
+    points = [EnphasePoint(measured_at=NOW, production=0.4)]
+
+    # the endpoint is already known: nothing is tried twice
+    tests: list[tuple[str, str]] = [
+        ("meter", "/api/v4/systems/{system_id}/telemetry/production_meter"),
+        ("micro", "/api/v4/systems/{system_id}/telemetry/production_micro"),
+    ]
+    for known, path in tests:
+        telemetry.side_effect = [points]
+        tested = helper_instance()
+        tested._production_path = known
+        result = tested.production("3456789", date(2026, 9, 16))
+        assert result == points
+        assert telemetry.mock_calls == [call(path, "3456789", date(2026, 9, 16), "production")]
+        assert discover.mock_calls == []
+        reset_mocks()
+
+    # nobody knows yet: that is the one case worth asking about
+    discover.side_effect = [points]
+    tested = helper_instance()
+    result = tested.production("3456789", date(2026, 9, 16))
+    assert result == points
+    assert telemetry.mock_calls == []
+    assert discover.mock_calls == [call("3456789", date(2026, 9, 16))]
+    reset_mocks()
+
+
+@patch.object(EnphaseClient, "_telemetry")
+def test__discover_production(telemetry: MagicMock) -> None:
     def reset_mocks() -> None:
         telemetry.reset_mock()
 
     points = [EnphasePoint(measured_at=NOW, production=0.4)]
-    exp_meter = call(
-        "/api/v4/systems/{system_id}/telemetry/production_meter",
-        "3456789",
-        date(2026, 9, 16),
-        "production",
-    )
-    exp_micro = call(
-        "/api/v4/systems/{system_id}/telemetry/production_micro",
-        "3456789",
-        date(2026, 9, 16),
-        "production",
-    )
+    exp_meter = call("/api/v4/systems/{system_id}/telemetry/production_meter", "3456789", date(2026, 9, 16), "production")
+    exp_micro = call("/api/v4/systems/{system_id}/telemetry/production_micro", "3456789", date(2026, 9, 16), "production")
 
-    # a system with production CTs is answered by the meter
+    # a system with production CTs: the meter answers and is remembered
     telemetry.side_effect = [points]
     tested = helper_instance()
-    result = tested.production("3456789", date(2026, 9, 16))
+    result = tested._discover_production("3456789", date(2026, 9, 16))
     assert result == points
+    assert tested.production_path == "meter"
     assert telemetry.mock_calls == [exp_meter]
     reset_mocks()
 
-    # an empty day is a good answer at night, not a reason to ask twice
-    telemetry.side_effect = [[]]
+    # a system without them is not refused - it is answered with an empty day,
+    # which is exactly what used to leave production uncollected for ever
+    telemetry.side_effect = [[], points]
     tested = helper_instance()
-    result = tested.production("3456789", date(2026, 9, 16))
-    assert result == []
-    assert telemetry.mock_calls == [exp_meter]
+    result = tested._discover_production("3456789", date(2026, 9, 16))
+    assert result == points
+    assert tested.production_path == "micro"
+    assert telemetry.mock_calls == [exp_meter, exp_micro]
     reset_mocks()
 
-    # a system with no production meter refuses that endpoint: the inverters answer
+    # a refusal falls through the same way
     telemetry.side_effect = [AppException(422, "no production meter"), points]
     tested = helper_instance()
-    result = tested.production("3456789", date(2026, 9, 16))
+    result = tested._discover_production("3456789", date(2026, 9, 16))
     assert result == points
+    assert tested.production_path == "micro"
+    assert telemetry.mock_calls == [exp_meter, exp_micro]
+    reset_mocks()
+
+    # both quiet: a night. Nothing is learned from it, so the question stays
+    # open rather than pinning the feed to whichever was asked last
+    telemetry.side_effect = [[], []]
+    tested = helper_instance()
+    result = tested._discover_production("3456789", date(2026, 9, 16))
+    assert result == []
+    assert tested.production_path == ""
+    assert telemetry.mock_calls == [exp_meter, exp_micro]
+    reset_mocks()
+
+    # both refuse
+    telemetry.side_effect = [AppException(422, "nope"), AppException(422, "nope")]
+    tested = helper_instance()
+    result = tested._discover_production("3456789", date(2026, 9, 16))
+    assert result == []
+    assert tested.production_path == ""
     assert telemetry.mock_calls == [exp_meter, exp_micro]
     reset_mocks()
 
@@ -221,10 +273,24 @@ def test_production(telemetry: MagicMock) -> None:
     telemetry.side_effect = [AppException(401, "theRefusal")]
     tested = helper_instance()
     with pytest.raises(AppException) as exc_info:
-        tested.production("3456789", date(2026, 9, 16))
+        tested._discover_production("3456789", date(2026, 9, 16))
     assert exc_info.value.status_code == 401
+    assert tested.production_path == ""
     assert telemetry.mock_calls == [exp_meter]
     reset_mocks()
+
+
+def test__path_of() -> None:
+    tested = helper_instance()
+    tests: list[tuple[str, str]] = [
+        ("micro", "/api/v4/systems/{system_id}/telemetry/production_micro"),
+        ("meter", "/api/v4/systems/{system_id}/telemetry/production_meter"),
+        # anything unexpected reads as the meter, which is the documented default
+        ("", "/api/v4/systems/{system_id}/telemetry/production_meter"),
+    ]
+    for name, expected in tests:
+        result = tested._path_of(name)
+        assert result == expected
 
 
 @patch.object(EnphaseClient, "_telemetry")

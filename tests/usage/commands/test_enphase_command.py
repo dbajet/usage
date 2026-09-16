@@ -24,8 +24,8 @@ SQL_EXISTING = "SELECT id FROM enphase_feeds WHERE house_id = %s AND system_id_h
 SQL_INSERT = """
             INSERT INTO enphase_feeds(house_id, client_id_sealed, client_secret_sealed, api_key_sealed,
                                       system_id_sealed, system_id_hash, access_token_sealed,
-                                      refresh_token_sealed, token_expires_at, calls_budget)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      refresh_token_sealed, token_expires_at, calls_budget, production_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """
 SQL_UPDATE = """
@@ -33,7 +33,7 @@ SQL_UPDATE = """
             SET client_id_sealed = %s, client_secret_sealed = %s, api_key_sealed = %s,
                 system_id_sealed = %s, system_id_hash = %s, access_token_sealed = %s,
                 refresh_token_sealed = %s, token_expires_at = %s, calls_budget = %s,
-                active = %s, last_error = ''
+                active = %s, production_path = %s, last_error = ''
             WHERE id = %s
             """
 SQL_RESTART = """
@@ -375,6 +375,7 @@ def test_create_feed(
     require_house.side_effect = [None]
     client_class.side_effect = [client]
     client.exchange.side_effect = [helper_tokens()]
+    client.production_path = "micro"
     resolve_system.side_effect = ["3456789"]
     probe.side_effect = [None]
     database.blind_index.side_effect = ["hashedSystem", "hashedSystem"]
@@ -420,6 +421,7 @@ def test_create_feed(
                 "sealedRefresh",
                 "2026-09-17T07:14:00+00:00",
                 5000,
+                "micro",
             ),
         ),
     ]
@@ -431,6 +433,7 @@ def test_create_feed(
     require_house.side_effect = [None]
     client_class.side_effect = [client]
     client.exchange.side_effect = [EnphaseTokens(access_token="theAccessToken", refresh_token="theRefreshToken")]
+    client.production_path = "micro"
     resolve_system.side_effect = ["3456789"]
     probe.side_effect = [None]
     database.blind_index.side_effect = ["hashedSystem", "hashedSystem"]
@@ -441,7 +444,7 @@ def test_create_feed(
     assert result == expected
     assert database.mock_calls[-1] == call.execute(
         SQL_INSERT,
-        (3, "a", "b", "c", "d", "hashedSystem", "e", "f", None, 5000),
+        (3, "a", "b", "c", "d", "hashedSystem", "e", "f", None, 5000, "micro"),
     )
     reset_mocks()
 
@@ -538,6 +541,7 @@ def test_update_feed(
     reauthorize.side_effect = [helper_tokens()]
     client_class.side_effect = [client]
     client.tokens = helper_tokens()
+    client.production_path = "micro"
     resolve_system.side_effect = ["3456789"]
     probe.side_effect = [None]
     database.encrypt.side_effect = [
@@ -581,6 +585,7 @@ def test_update_feed(
                 "2026-09-17T07:14:00+00:00",
                 5000,
                 True,
+                "micro",
                 11,
             ),
         ),
@@ -595,6 +600,7 @@ def test_update_feed(
     reauthorize.side_effect = [helper_tokens()]
     client_class.side_effect = [client]
     client.tokens = EnphaseTokens(access_token="theAccessToken", refresh_token="theRefreshToken")
+    client.production_path = "micro"
     resolve_system.side_effect = ["3456789"]
     probe.side_effect = [None]
     database.encrypt.side_effect = ["a", "b", "c", "d", "e", "f"]
@@ -614,7 +620,7 @@ def test_update_feed(
         call.encrypt("theAccessToken"),
         call.encrypt("theRefreshToken"),
         # no budget given falls back to the free plan's, and no stated life stores none
-        call.execute(SQL_UPDATE, ("a", "b", "c", "d", "hashedSystem", "e", "f", None, 1000, False, 11)),
+        call.execute(SQL_UPDATE, ("a", "b", "c", "d", "hashedSystem", "e", "f", None, 1000, False, "micro", 11)),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()

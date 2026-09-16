@@ -362,6 +362,7 @@ class Database:
                 calls_budget INTEGER NOT NULL DEFAULT 1000,
                 calls_month DATE,
                 source TEXT NOT NULL DEFAULT 'cloud',
+                production_path TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, system_id_hash)
             )
@@ -439,10 +440,18 @@ class Database:
             (18, "enphase solar production, consumption and batteries"),
             (19, "per minute api ceiling shared by both colours"),
             (20, "solar pushed live by home assistant"),
+            (21, "remember which endpoint answers for production"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 21:
+                    # A system without production CTs is answered by the meter
+                    # endpoint with an empty day rather than a refusal, which is
+                    # indistinguishable from night. So the endpoint that does
+                    # answer is learned once and written down here, instead of
+                    # both being tried twice a day for ever.
+                    connection.execute("ALTER TABLE enphase_feeds ADD COLUMN IF NOT EXISTS production_path TEXT NOT NULL DEFAULT ''")
                 if version == 20:
                     # A house can be fed by the metered cloud API, by Home
                     # Assistant reading the gateway on its own network, or by

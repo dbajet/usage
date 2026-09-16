@@ -63,7 +63,7 @@ class EnphaseSyncCommand:
                    api_key_sealed AS api_key, system_id_sealed AS system_id,
                    access_token_sealed AS access_token, refresh_token_sealed AS refresh_token,
                    token_expires_at, active, backfill_from, backfill_done, fine_from, fine_done,
-                   calls_used, calls_budget, calls_month, last_sync_at
+                   calls_used, calls_budget, calls_month, production_path, last_sync_at
             FROM enphase_feeds
             WHERE active AND source = %s AND (claimed_until IS NULL OR claimed_until < now())
             ORDER BY id
@@ -94,6 +94,7 @@ class EnphaseSyncCommand:
             # A rotated refresh token is the only one that still works: losing it
             # because the pull failed afterwards would lock the feed out for good.
             self._save_tokens(feed, client.tokens)
+            self._save_production_path(feed, client.production_path)
             self._record(feed.feed_id, message, client.calls)
 
     def _sync(self, client: EnphaseClient, feed: EnphaseFeed) -> None:
@@ -258,6 +259,15 @@ class EnphaseSyncCommand:
             ),
         )
 
+    def _save_production_path(self, feed: EnphaseFeed, path: str) -> None:
+        """Keep what the pull found out, so nothing has to find it out again."""
+        if path == feed.production_path or not path:
+            return
+        self._database.execute(
+            "UPDATE enphase_feeds SET production_path = %s WHERE id = %s",
+            (path, feed.feed_id),
+        )
+
     def _claim(self, feed_id: int) -> bool:
         claimed = self._database.execute(
             """
@@ -295,6 +305,7 @@ class EnphaseSyncCommand:
                 expires_at=feed.token_expires_at,
             ),
             self._limiter,
+            feed.production_path,
         )
 
     @classmethod
@@ -317,4 +328,5 @@ class EnphaseSyncCommand:
             calls_used=int(row["calls_used"]),
             calls_budget=int(row["calls_budget"]),
             calls_month=row["calls_month"],
+            production_path=str(row["production_path"]),
         )

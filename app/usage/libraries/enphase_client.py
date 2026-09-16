@@ -50,18 +50,25 @@ class EnphaseClient:
         api_key: str,
         tokens: EnphaseTokens | None = None,
         limiter: RateLimiter | None = None,
+        production_path: str = "",
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._api_key = api_key
         self._tokens = tokens or EnphaseTokens(access_token="", refresh_token="")
         self._limiter = limiter
+        self._production_path = production_path
         self._calls = 0
 
     @property
     def tokens(self) -> EnphaseTokens:
         """The current pair, which a refresh may have replaced since it was given."""
         return self._tokens
+
+    @property
+    def production_path(self) -> str:
+        """Which endpoint answers for production here, once anything has."""
+        return self._production_path
 
     @property
     def calls(self) -> int:
@@ -126,20 +133,42 @@ class EnphaseClient:
     def production(self, system_id: str, day: date) -> list[EnphasePoint]:
         """What the panels made, from the meter if there is one and the inverters if not.
 
-        Production CTs are usual but not universal, and a system without them
-        does not answer the meter endpoint with an empty day - it refuses it.
-        The microinverters always know what they made, so the refusal costs one
-        extra call rather than a feed that collects consumption and no
-        production at all. Only a refusal falls through: an empty day is a
-        perfectly good answer at night, and retrying it would double the cost
-        of every tick after sunset.
+        Production CTs are usual but not universal, and a system without them is
+        not refused by the meter endpoint - it is answered with an empty day,
+        which looks exactly like night. That was the whole bug: a fallback that
+        waited for a refusal never fired, and such a system collected
+        consumption and no production at all.
+
+        So an empty answer falls through too, and the endpoint that finally says
+        something is remembered. Only the learning costs the extra call: once
+        the path is known nothing is tried twice, and a system that really is
+        idle at 3am is not re-asked every tick for ever.
         """
-        try:
-            return self._telemetry(Constants.enphase_production_path, system_id, day, "production")
-        except AppException as exception:
-            if exception.status_code != Constants.enphase_unreadable_status:
-                raise
-            return self._telemetry(Constants.enphase_production_micro_path, system_id, day, "production")
+        if self._production_path:
+            return self._telemetry(self._path_of(self._production_path), system_id, day, "production")
+        return self._discover_production(system_id, day)
+
+    def _discover_production(self, system_id: str, day: date) -> list[EnphasePoint]:
+        """Ask each endpoint in turn, and keep the name of whichever answers."""
+        for name in (Constants.enphase_production_meter, Constants.enphase_production_micro):
+            try:
+                result = self._telemetry(self._path_of(name), system_id, day, "production")
+            except AppException as exception:
+                if exception.status_code != Constants.enphase_unreadable_status:
+                    raise
+                continue
+            if result:
+                self._production_path = name
+                return result
+        # Both quiet: a night, most likely. Nothing is learned from that, so the
+        # question stays open for a day with some daylight in it.
+        return []
+
+    @classmethod
+    def _path_of(cls, name: str) -> str:
+        if name == Constants.enphase_production_micro:
+            return Constants.enphase_production_micro_path
+        return Constants.enphase_production_path
 
     def consumption(self, system_id: str, day: date) -> list[EnphasePoint]:
         return self._telemetry(Constants.enphase_consumption_path, system_id, day, "consumption")

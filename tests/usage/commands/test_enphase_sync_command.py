@@ -20,7 +20,7 @@ SQL_DUE = """
                    api_key_sealed AS api_key, system_id_sealed AS system_id,
                    access_token_sealed AS access_token, refresh_token_sealed AS refresh_token,
                    token_expires_at, active, backfill_from, backfill_done, fine_from, fine_done,
-                   calls_used, calls_budget, calls_month, last_sync_at
+                   calls_used, calls_budget, calls_month, production_path, last_sync_at
             FROM enphase_feeds
             WHERE active AND source = %s AND (claimed_until IS NULL OR claimed_until < now())
             ORDER BY id
@@ -113,6 +113,7 @@ def helper_row() -> dict[str, Any]:
         "calls_used": 0,
         "calls_budget": 1000,
         "calls_month": None,
+        "production_path": "",
         "last_sync_at": None,
     }
 
@@ -803,3 +804,33 @@ def test__feed() -> None:
     result = tested._feed(helper_row())
     expected = helper_feed()
     assert result == expected
+
+
+def test__save_production_path() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sql = "UPDATE enphase_feeds SET production_path = %s WHERE id = %s"
+
+    # the pull found out something the feed did not know
+    database.execute.side_effect = [11]
+    result = tested._save_production_path(helper_feed(), "micro")
+    assert result is None
+    assert database.mock_calls == [call.execute(sql, ("micro", 11))]
+    reset_mocks()
+
+    # already known, and unchanged: nothing to write
+    result = tested._save_production_path(helper_feed()._replace(production_path="micro"), "micro")
+    assert result is None
+    assert database.mock_calls == []
+    reset_mocks()
+
+    # a night taught it nothing, so the question stays open rather than being
+    # closed with an empty answer
+    result = tested._save_production_path(helper_feed()._replace(production_path="micro"), "")
+    assert result is None
+    assert database.mock_calls == []
+    reset_mocks()

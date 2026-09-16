@@ -816,6 +816,7 @@ def test__create_schema() -> None:
                 calls_budget INTEGER NOT NULL DEFAULT 1000,
                 calls_month DATE,
                 source TEXT NOT NULL DEFAULT 'cloud',
+                production_path TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, system_id_hash)
             )
@@ -887,7 +888,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 20
+    connection.execute.return_value.fetchone.side_effect = [None] * 21
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1107,12 +1108,22 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (20, 'solar pushed live by home assistant'),
         ),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (21,),
+        ),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE enphase_feeds ADD COLUMN IF NOT EXISTS production_path TEXT NOT NULL DEFAULT ''"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (21, 'remember which endpoint answers for production'),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 20
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 21
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1214,6 +1225,11 @@ def test__migrate() -> None:
         call.execute(
             "SELECT 1 FROM schema_migrations WHERE version = %s",
             (20,),
+        ),
+        call.execute().fetchone(),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (21,),
         ),
         call.execute().fetchone(),
     ]

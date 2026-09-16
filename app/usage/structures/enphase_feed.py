@@ -19,6 +19,12 @@ class EnphaseFeed(NamedTuple):
     are the monthly allowance of the account's plan: unlike the water portal,
     Enphase counts every request, so the feed paces itself to make its own
     budget last the month rather than running fast and going silent on the 8th.
+
+    `production_path` is which endpoint turned out to answer for production on
+    this system, remembered the first time anything did. A system without
+    production CTs is not refused by the meter endpoint - it is answered with an
+    empty day, which is indistinguishable from night - so the choice is worth
+    learning once rather than paying for twice a day for ever.
     """
 
     feed_id: int
@@ -38,6 +44,7 @@ class EnphaseFeed(NamedTuple):
     calls_used: int = 0
     calls_budget: int = 0
     calls_month: date | None = None
+    production_path: str = ""
     last_point_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +66,7 @@ class EnphaseFeed(NamedTuple):
             "calls_used": self.calls_used,
             "calls_budget": self.calls_budget,
             "calls_month": self.calls_month.isoformat() if self.calls_month is not None else "",
+            "production_path": self.production_path,
             "last_point_at": self.last_point_at.isoformat() if self.last_point_at is not None else "",
         }
 
@@ -87,5 +95,6 @@ class EnphaseFeed(NamedTuple):
             calls_used=int(data.get("calls_used") or 0),
             calls_budget=int(data.get("calls_budget") or 0),
             calls_month=date.fromisoformat(calls_month) if calls_month else None,
+            production_path=str(data.get("production_path") or ""),
             last_point_at=datetime.fromisoformat(last_point_at) if last_point_at else None,
         )

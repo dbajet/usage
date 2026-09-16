@@ -311,11 +311,15 @@ to fill the day and week views — and then stops for good. Both resolutions liv
 quarter-hours, the month and year views read the daily rows, and no query ever reads both, or an
 hour would be counted inside its own day twice.
 
-Production CTs are usual but not universal, and a system without them refuses the meter
-endpoint rather than answering an empty day — so a refusal there falls through to the
-microinverters, which always know what they made. Only a refusal falls through: an empty day is
-a perfectly good answer at night, and retrying it would double the cost of every tick after
-sunset.
+Production CTs are usual but not universal, and a system without them is **not refused** by the
+meter endpoint — it is answered with an empty day, which looks exactly like night. That cost a
+real feed its production: a fallback that waited for a refusal never fired, and the system
+collected consumption and nothing else. So an empty answer falls through to the microinverters
+too, which always know what they made, and the endpoint that finally says something is written
+down on the feed (`production_path`). Only the learning costs the extra call; once the path is
+known nothing is tried twice, and a system that really is idle at 3am is not re-asked for ever.
+Both quiet teaches nothing, so the question simply stays open until a day with some daylight
+in it.
 
 Production and consumption are counters, so their buckets are sums and the graph draws them as
 paired bars — what the panels made beside what the house drew, on one scale, since that

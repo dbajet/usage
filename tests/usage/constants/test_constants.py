@@ -72,6 +72,8 @@ def test_class() -> None:
         "enphase_redirect_uri",
         "enphase_systems_path",
         "enphase_production_path",
+        "enphase_production_meter",
+        "enphase_production_micro",
         "enphase_production_micro_path",
         "enphase_consumption_path",
         "enphase_battery_path",
@@ -871,6 +873,20 @@ def test_enphase_energy_watt_hours() -> None:
         ("MWH", 1000000.0),
         ("GWH", 1000000000.0),
     )
+    assert result == expected
+
+
+def test_enphase_production_meter() -> None:
+    tested = Constants
+    result = tested.enphase_production_meter
+    expected = "meter"
+    assert result == expected
+
+
+def test_enphase_production_micro() -> None:
+    tested = Constants
+    result = tested.enphase_production_micro
+    expected = "micro"
     assert result == expected
 
 
