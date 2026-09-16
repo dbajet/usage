@@ -541,7 +541,11 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 /* The tiles sit under the curves they belong to: each one's colour is the
    line's, so they are the legend as well as the current readings. */
 .graph-card .sensor-tiles { margin-top: 0.85rem; }
-.period-label { font-weight: 600; }
+.period-label { font-weight: 600; margin-right: auto; }
+/* The two button groups sit together on the right, with the date holding the
+   left: which graphs are on show, then which period they show. */
+.card-toggles button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.card-toggles button:not(.active) { opacity: 0.45; }
 /* On a phone (the device, not the window width - see theme.js) the tiles are
    one line each, two per row: the name on the left, the value on the right. */
 html.device-mobile .sensor-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
@@ -571,11 +575,10 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 /* Last period, drawn underneath: pale enough to read past, solid enough to compare. */
 .viz-chart .bars rect.previous { opacity: 0.28; }
 
-/* The battery is a level, so it is a line rather than bars - and its overlay is
-   pale in the same way the water's and the solar's are. */
-.viz-chart .lines path { stroke-linejoin: round; stroke-linecap: round; }
-.viz-chart .lines path.previous { stroke-dasharray: 1.5 3; opacity: 0.4; }
-.viz-chart .lines circle { cursor: crosshair; }
+/* The battery is a level, so it is a line rather than bars. It is the only
+   curve on its own graph, where a dozen thermometers share theirs, so it can
+   afford to be drawn as thick as the consumption lines. */
+[data-battery-chart] .viz-chart .series path { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .units-switch span { font-size: 0.8rem; letter-spacing: 0.04em; }
 .meta.warn { color: var(--danger); }
 .token-box {

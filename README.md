@@ -49,9 +49,23 @@ uv run --extra dev ruff check .
 
 Each thermometer's current reading sits on a tile under its own graph, in the
 colour of its curve: the tiles are the legend as well, so a click shows that
-sensor alone and Ctrl+click (or a long press) adds and removes them. On a phone
-the view drops its heading — the bottom bar already names it — and the switches
-keep their sliders but trade their words for icons.
+sensor alone and Ctrl+click (or a long press) adds and removes them. The solar's
+two tiles work the same way — a click leaves production or consumption alone on
+the chart, and a lone series gets the whole bucket rather than half of it. One
+rule, written once, for both sets of tiles. On a phone the view drops its
+heading — the bottom bar already names it — and the switches keep their sliders
+but trade their words for icons.
+
+The date bar carries an icon for each half the house actually has: thermometer,
+drop, sun. Pressed is showing. They are a viewer's choice kept per browser, like
+the unit switch, and they decide which graphs get the screen rather than what is
+collected — a house measuring three things rarely wants to look at all three at
+once. Turning every one of them off leaves the bar behind, since otherwise there
+would be no way back.
+
+The battery graph is drawn on the same holder the thermometers use, so the pointer gets the
+same circle on the curve and the same label beside it; one hover to maintain rather than two
+that drift apart.
 
 The solar tiles show **power** - what the panels are making this second - whenever Home
 Assistant is pushing, and fall back to the last interval's energy when only the cloud feed is

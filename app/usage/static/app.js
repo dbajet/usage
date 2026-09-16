@@ -17,6 +17,7 @@ let state = {
   sensorDays: 1,
   sensorOffset: 0,
   hiddenSensors: new Set(),
+  hiddenPower: new Set(),
   sensorAutoRefreshId: null,
   waterData: null,
   waterFeeds: null,
@@ -1217,6 +1218,9 @@ const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://w
 const ICON_REFRESH = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/></svg>';
 const ICON_CHEVRON_RIGHT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/></svg>';
 const LONG_PRESS_MS = 500;
+const ICON_THERMOMETER = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-83 0-141.5-58.5T280-280q0-48 21-89.5t59-70.5v-280q0-50 35-85t85-35q50 0 85 35t35 85v280q38 29 59 70.5t21 89.5q0 83-58.5 141.5T480-80Zm-40-440h80v-40h-40v-40h40v-80h-40v-40h40v-40q0-17-11.5-28.5T480-800q-17 0-28.5 11.5T440-760v240Z"/></svg>';
+const ICON_DROP = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-137 0-228.5-94T160-408q0-100 79.5-217.5T480-880q161 137 240.5 254.5T800-408q0 140-91.5 234T480-80Z"/></svg>';
+const ICON_SUN = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-800v-120h80v120h-80Zm0 760v-120h80v120h-80Zm360-400v-80h120v80H800ZM40-440v-80h120v80H40Zm708-252-56-56 70-72 58 58-72 70Zm-580 580-58-58 72-70 56 56-70 72Zm622 0-70-72 56-56 72 70-58 58ZM168-692l-72-70 58-58 70 72-56 56Zm312 452q-100 0-170-70t-70-170q0-100 70-170t170-70q100 0 170 70t70 170q0 100-70 170t-170 70Z"/></svg>';
 
 function fmtAgo(iso) {
   const elapsed = Date.now() - Date.parse(iso);
@@ -1304,6 +1308,51 @@ function stopSensorAutoRefresh() {
     clearInterval(state.sensorAutoRefreshId);
     state.sensorAutoRefreshId = null;
   }
+}
+
+function wireTileGestures(tile, solo, toggle) {
+  // Plain click picks one, Ctrl/Cmd+click or a long press adds and removes.
+  // Touch events rather than pointer events: Chrome cancels the pointer on a
+  // long hold but keeps the touch sequence alive. The toggle re-renders the
+  // tiles, so the click the browser fires afterwards lands on a new element:
+  // a shared flag swallows it.
+  let pressTimer = null;
+  tile.addEventListener("touchstart", () => {
+    state.tileLongPressed = false;
+    pressTimer = setTimeout(() => { pressTimer = null; state.tileLongPressed = true; toggle(); }, LONG_PRESS_MS);
+  }, { passive: true });
+  ["touchend", "touchmove", "touchcancel"].forEach((name) => tile.addEventListener(name, () => {
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+  }, { passive: true }));
+  tile.addEventListener("contextmenu", (event) => event.preventDefault());
+  tile.addEventListener("click", (event) => {
+    if (state.tileLongPressed) { state.tileLongPressed = false; return; }
+    if (event.ctrlKey || event.metaKey) toggle();
+    else solo();
+  });
+  tile.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) toggle();
+    else solo();
+  });
+}
+
+function pickOne(keys, hidden, key) {
+  // What a plain click means: this one alone, or everyone back when it already is.
+  const visible = keys.filter((item) => !hidden.has(item));
+  if (visible.length === 1 && visible[0] === key) return new Set();
+  return new Set(keys.filter((item) => item !== key));
+}
+
+function toggleOne(keys, hidden, key) {
+  // What Ctrl+click means: add or remove, and hiding the last brings all back.
+  const visible = keys.filter((item) => !hidden.has(item));
+  if (visible.length === keys.length) return new Set(keys.filter((item) => item !== key));
+  const result = new Set(hidden);
+  if (result.has(key)) result.delete(key);
+  else result.add(key);
+  return keys.every((item) => result.has(item)) ? new Set() : result;
 }
 
 function splitPrevious(seriesList, days, tMax) {
@@ -1451,28 +1500,6 @@ function showSensorsLoading() {
 function renderSensors() {
   const sensors = displaySensors(state.sensors || []);
   const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
-  if (!sensors.length) {
-    $("#sensor-content").classList.remove("loading");
-    const alone = waterCardMarkup(state.waterData) + powerCardMarkup(state.powerData) + batteryCardMarkup(state.powerData);
-    if (!alone) {
-      $("#sensor-content").innerHTML = `
-      <div class="card">
-        <p class="meta">No sensor yet. Once Home Assistant pushes readings with this house's sensor token
-          (Settings, Houses), the thermometers appear here on their own.</p>
-      </div>`;
-      return;
-    }
-    // A house with meters and not one thermometer: the period bar belongs to
-    // whichever of them is on, so it is read off the series that came back
-    // rather than off the water's, which a solar-only house never asks for.
-    const shown = state.waterData || state.powerData;
-    const until = shown.until ? Date.parse(shown.until) : Date.now();
-    const since = until - shown.days * 86400000;
-    const label = `${fmtPeriodEdge(since, shown.days)} – ${fmtPeriodEdge(until, shown.days)}`;
-    $("#sensor-content").innerHTML = periodBarMarkup(label, "Water drawn and power made per bucket.") + alone;
-    wirePeriodBar();
-    return;
-  }
   const colors = sensorColors(sensors);
   const activeIds = sensors.filter((sensor) => sensor.active).map((sensor) => sensor.id);
   // Tiles are "selected" while some sensors are hidden: the visible ones.
@@ -1493,78 +1520,63 @@ function renderSensors() {
           <div class="tile-when"><span class="tile-ago">${esc(fmtAgo(sensor.last_at))}</span>${batteryMarkup(sensor)}</div>
         </div>`;
     }).join("");
-  const tMax = data.until ? Date.parse(data.until) : Date.now();
-  const tMin = tMax - data.days * 86400000;
-  const allSeries = splitPrevious(displaySeries(data.series || []), data.days, tMax)
+
+  // Every graph of the view shares one window, so the period bar can be read off
+  // whichever series came back - a solar-only house never asks for the water's.
+  const frame = (sensors.length ? data : null) || state.waterData || state.powerData || data;
+  const days = frame.days || state.sensorDays;
+  const tMax = frame.until ? Date.parse(frame.until) : Date.now();
+  const tMin = tMax - days * 86400000;
+  const allSeries = splitPrevious(displaySeries(data.series || []), data.days, data.until ? Date.parse(data.until) : tMax)
     .map((item) => ({ ...item, color: colors.get(item.sensor_id) || SENSOR_DEFAULT_COLORS[0] }));
   const thresholds = sensorThresholds(allSeries);
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
-  const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
-  const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
-  const rangeLabel = `${fmtPeriodEdge(tMin, data.days)} – ${fmtPeriodEdge(tMax, data.days)}`;
-  const hint = `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click a tile for that sensor alone.`;
-  $("#sensor-content").classList.remove("loading");
-  $("#sensor-content").innerHTML = `
-    ${periodBarMarkup(rangeLabel, hint)}
+
+  const thermometers = sensors.length && showsCard("sensors")
+    ? `
     <div class="card graph-card">
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds.filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id))) || '<p class="meta">No reading in this period.</p>'}
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
-    </div>
-    ${waterCardMarkup(state.waterData)}
-    ${powerCardMarkup(state.powerData)}
-    ${batteryCardMarkup(state.powerData)}`;
+    </div>`
+    : "";
+  const water = showsCard("water") ? waterCardMarkup(state.waterData) : "";
+  const power = showsCard("power") ? powerCardMarkup(state.powerData) + batteryCardMarkup(state.powerData) : "";
+  const cards = thermometers + water + power;
+
+  $("#sensor-content").classList.remove("loading");
+  // Nothing collected at all is a different thing from everything turned off,
+  // and only one of them is the house's fault.
+  const collecting = sensors.length || state.waterData || state.powerData;
+  if (!collecting) {
+    $("#sensor-content").innerHTML = `
+      <div class="card">
+        <p class="meta">No sensor yet. Once Home Assistant pushes readings with this house's sensor token
+          (Settings, Houses), the thermometers appear here on their own.</p>
+      </div>`;
+    return;
+  }
+  const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
+  const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
+  const rangeLabel = `${fmtPeriodEdge(tMin, days)} – ${fmtPeriodEdge(tMax, days)}`;
+  const hint = thermometers
+    ? `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click a tile for that sensor alone.`
+    : "Click a tile for that series alone; the icons choose which graphs are on show.";
+  // The bar stays even with every card off, or there would be no way back.
+  $("#sensor-content").innerHTML = periodBarMarkup(rangeLabel, hint) + (cards || `
+    <div class="card">
+      <p class="meta">Every graph is hidden. The icons above the date bring them back.</p>
+    </div>`);
   wireSensorChartHover("#sensor-content");
   wirePeriodBar();
+  wirePowerTiles();
   // Whether this house has a live feed is only known once its series is in.
   if (state.sensorAutoRefreshId && state.sensorRefreshMs !== refreshCadence()) startSensorAutoRefresh();
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
-    const solo = () => {
-      // Plain click: only this sensor on the graph; again on the lone one: everyone back.
-      state.hiddenSensors = visibleIds.length === 1 && visibleIds[0] === sensorId
-        ? new Set()
-        : new Set(activeIds.filter((id) => id !== sensorId));
-      renderSensors();
-    };
-    const toggle = () => {
-      // Ctrl/Cmd+click, or a long press on a phone: add or remove this sensor
-      // from the selection. Removing the last one brings everyone back.
-      const hidden = new Set(state.hiddenSensors);
-      if (!selecting) {
-        state.hiddenSensors = new Set(activeIds.filter((id) => id !== sensorId));
-      } else if (hidden.has(sensorId)) {
-        hidden.delete(sensorId);
-        state.hiddenSensors = hidden;
-      } else {
-        hidden.add(sensorId);
-        state.hiddenSensors = activeIds.every((id) => hidden.has(id)) ? new Set() : hidden;
-      }
-      renderSensors();
-    };
-    let pressTimer = null;
-    // Touch events rather than pointer events: Chrome cancels the pointer on
-    // a long hold, but keeps the touch sequence alive. The toggle re-renders
-    // the tiles, so the click the browser fires after the touch lands on a
-    // new element: a shared flag swallows it.
-    tile.addEventListener("touchstart", () => {
-      state.tileLongPressed = false;
-      pressTimer = setTimeout(() => { pressTimer = null; state.tileLongPressed = true; toggle(); }, LONG_PRESS_MS);
-    }, { passive: true });
-    ["touchend", "touchmove", "touchcancel"].forEach((name) => tile.addEventListener(name, () => {
-      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    }, { passive: true }));
-    tile.addEventListener("contextmenu", (event) => event.preventDefault());
-    tile.addEventListener("click", (event) => {
-      if (state.tileLongPressed) { state.tileLongPressed = false; return; }
-      if (event.ctrlKey || event.metaKey) toggle();
-      else solo();
-    });
-    tile.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      if (event.ctrlKey || event.metaKey) toggle();
-      else solo();
-    });
+    // The same rule the solar tiles follow, and written once for both.
+    const solo = () => { state.hiddenSensors = pickOne(activeIds, state.hiddenSensors, sensorId); renderSensors(); };
+    const toggle = () => { state.hiddenSensors = toggleOne(activeIds, state.hiddenSensors, sensorId); renderSensors(); };
+    wireTileGestures(tile, solo, toggle);
   });
 }
 
@@ -1815,11 +1827,50 @@ const WATER_COLOR = "var(--viz-2)";
 const WATER_BUCKETS = { 15: "quarter-hour", 60: "hourly", 360: "6-hour", 1440: "daily" };
 const WATER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
 
+// The three halves of the view, and the icon that turns each one off. Pressed
+// is showing: the eye is open, the card is there.
+const REALTIME_CARDS = [
+  { key: "sensors", label: "Thermometers", icon: ICON_THERMOMETER, has: () => houseHasSensors() },
+  { key: "water", label: "Water", icon: ICON_DROP, has: () => houseHasWater() },
+  { key: "power", label: "Solar", icon: ICON_SUN, has: () => houseHasPower() },
+];
+
+function hiddenCards() {
+  // A viewer's choice, kept per browser like the unit switch: which of the
+  // graphs are worth the screen today is not a fact about the house.
+  return new Set((storedItem("usage-realtime-cards", "") || "").split(",").filter(Boolean));
+}
+
+function showsCard(key) {
+  return !hiddenCards().has(key);
+}
+
+function toggleCard(key) {
+  const hidden = hiddenCards();
+  if (hidden.has(key)) hidden.delete(key);
+  else hidden.add(key);
+  storeItem("usage-realtime-cards", [...hidden].join(","));
+  renderSensors();
+}
+
+function cardTogglesMarkup() {
+  // Only for the halves this house actually has: a switch for a graph that
+  // could never appear is just a puzzle.
+  return REALTIME_CARDS.filter((card) => card.has()).map((card) => {
+    const shown = showsCard(card.key);
+    return `<button class="ghost compact icon-button${shown ? " active" : ""}" data-card-toggle="${card.key}"
+      type="button" aria-pressed="${shown}" title="${esc(shown ? `Hide the ${card.label.toLowerCase()}` : `Show the ${card.label.toLowerCase()}`)}"
+      aria-label="${esc(card.label)}">${card.icon}</button>`;
+  }).join("");
+}
+
 function periodBarMarkup(rangeLabel, hint) {
-  // Shared by the thermometers and the water: both graphs of the view move together.
+  // Shared by every graph of the view: they all move together, and the icons
+  // on the left say which of them are on show at all.
   return `
     <div class="period-bar">
       <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
+      <span class="range-tabs card-toggles">${cardTogglesMarkup()}</span>
       <span class="range-tabs">
         <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
         ${state.sensorOffset
@@ -1830,6 +1881,8 @@ function periodBarMarkup(rangeLabel, hint) {
 }
 
 function wirePeriodBar() {
+  $$("[data-card-toggle]").forEach((button) =>
+    button.addEventListener("click", () => toggleCard(button.dataset.cardToggle)));
   $("#sensor-earlier").addEventListener("click", () => { state.sensorOffset += 1; loadSensors(true); });
   // On the current period there is nothing later to show: the arrow makes way
   // for a refresh, which reloads the readings and the tiles without touching
@@ -2096,6 +2149,7 @@ async function addWaterFeed(event) {
 
 const PRODUCTION_COLOR = "var(--viz-3)";
 const CONSUMPTION_COLOR = "var(--viz-4)";
+const POWER_COLORS = { production: "var(--viz-3)", consumption: "var(--viz-4)" };
 const BATTERY_COLOR = "var(--viz-5)";
 const WATT_HOURS_PER_KWH = 1000;
 const POWER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
@@ -2104,6 +2158,8 @@ const POWER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
 const LIVE_STALE_MS = 15 * 60 * 1000;
 const LIVE_REFRESH_MS = 60 * 1000;
 const WATTS_PER_KW = 1000;
+// The two halves of the solar graph, which the tiles turn on and off.
+const POWER_SERIES = ["production", "consumption"];
 
 function fmtPower(watts) {
   // What the panels are doing this second, which is the whole point of a local
@@ -2161,7 +2217,9 @@ function splitPower(data) {
   return { tMax, current, earlier };
 }
 
-function powerChartMarkup(current, earlier, days, bucketMinutes, tMax) {
+function powerChartMarkup(current, earlier, days, bucketMinutes, tMax, hidden = new Set()) {
+  const shown = POWER_SERIES.filter((field) => !hidden.has(field));
+  if (!shown.length) return "";
   // Two counters drawn as paired bars: what the panels made and what the house
   // drew, in the same bucket and on the same scale, because the whole question a
   // solar owner asks is which of the two was bigger at that moment.
@@ -2176,7 +2234,7 @@ function powerChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const all = [...current, ...earlier];
-  const high = Math.max(...all.map((point) => Math.max(point.production, point.consumption)), 0);
+  const high = Math.max(...all.map((point) => Math.max(...shown.map((field) => point[field]))), 0);
   const unit = energyUnit(high, true);
   const perKwh = unit === "Wh" ? WATT_HOURS_PER_KWH : 1;
   const stepShown = sensorStep(Math.max(high * perKwh, 1) / 4);
@@ -2205,13 +2263,17 @@ function powerChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   const titleAt = (time) => {
     const now = currentAt.get(time);
     const before = earlierAt.get(time);
-    const lines = [`${waterStamp(time)} · made ${fmtEnergy(now ? now.production : 0)} · drew ${fmtEnergy(now ? now.consumption : 0)}`];
+    const said = (point) => shown
+      .map((field) => `${field === "production" ? "made" : "drew"} ${fmtEnergy(point ? point[field] : 0)}`)
+      .join(" · ");
+    const lines = [`${waterStamp(time)} · ${said(now)}`];
     if (earlier.length) {
-      const when = before ? before.actual : time - days * 86400000;
-      lines.push(`${waterStamp(when)} · made ${fmtEnergy(before ? before.production : 0)} · drew ${fmtEnergy(before ? before.consumption : 0)}`);
+      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${said(before)}`);
     }
     return lines.join("\n");
   };
+  // One series on its own gets the whole bucket; two share it side by side.
+  const slot = shown.length > 1 ? half : full;
   const barsOf = (timed, field, color, className, barWidth, offset) => timed.map((point) => {
     const value = point[field];
     const y = yAt(value);
@@ -2226,10 +2288,8 @@ function powerChartMarkup(current, earlier, days, bucketMinutes, tMax) {
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
         <g class="bars">
-          ${barsOf(earlier, "production", PRODUCTION_COLOR, "previous", full, 0)}
-          ${barsOf(earlier, "consumption", CONSUMPTION_COLOR, "previous", full, 0)}
-          ${barsOf(current, "production", PRODUCTION_COLOR, "", half, 0)}
-          ${barsOf(current, "consumption", CONSUMPTION_COLOR, "", half, half)}
+          ${shown.map((field) => barsOf(earlier, field, POWER_COLORS[field], "previous", full, 0)).join("")}
+          ${shown.map((field, index) => barsOf(current, field, POWER_COLORS[field], "", slot, index * slot)).join("")}
         </g>
       </svg>
     </div>`;
@@ -2242,6 +2302,11 @@ function powerCardMarkup(data) {
   if (!current.length && !earlier.length && !latest.at) return "";
   const made = current.reduce((sum, point) => sum + point.production, 0);
   const drew = current.reduce((sum, point) => sum + point.consumption, 0);
+  const showing = POWER_SERIES.filter((field) => !state.hiddenPower.has(field));
+  const totals = [
+    showing.includes("production") ? `made ${fmtEnergy(made)}` : "",
+    showing.includes("consumption") ? `drew ${fmtEnergy(drew)}` : "",
+  ].filter(Boolean).join(" · ");
   // What the panels covered is the number an owner actually watches, and it is
   // only honest when both halves of it were reported over the same period.
   const covered = drew > 0 ? ` · ${Math.round(Math.min(100, (made / drew) * 100))}% of what the house drew` : "";
@@ -2256,8 +2321,8 @@ function powerCardMarkup(data) {
   const overlay = earlier.length ? ` Pale bars: the previous ${POWER_PERIODS[data.days] || "period"}.` : "";
   return `
     <div class="card graph-card">
-      <h3>Solar <span class="meta">· made ${esc(fmtEnergy(made))} · drew ${esc(fmtEnergy(drew))}${esc(covered)}</span></h3>
-      ${powerChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
+      <h3>Solar <span class="meta">· ${esc(totals)}${esc(showing.length > 1 ? covered : "")}</span></h3>
+      ${powerChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax, state.hiddenPower) || '<p class="meta">No reading in this period.</p>'}
       ${powerTilesMarkup(data, latest)}
       <p class="meta">${esc(bucket)} totals from the Enphase system. ${esc(freshness)}${esc(source)}${esc(overlay)}</p>
     </div>`;
@@ -2268,76 +2333,126 @@ function powerTilesMarkup(data, latest) {
   // push the tiles show power - what the panels are doing this second. Without
   // one they show the last interval's energy, which is the best the cloud API
   // can honestly offer at four hours behind.
+  //
+  // They are the graph's legend and its switch as well, like the thermometers':
+  // a click leaves one series on the chart, Ctrl+click or a long press adds and
+  // removes it.
   const live = liveReading(data);
   const when = live ? live.at : latest.at;
   const ago = when ? fmtAgo(when) : "";
-  const tile = (name, color, value, hint) => `
-        <div class="sensor-tile" style="border-left-color:${color}" title="${esc(hint)}">
-          <div class="tile-name">${esc(name)}</div>
+  const selecting = POWER_SERIES.some((field) => state.hiddenPower.has(field));
+  const names = { production: "Production", consumption: "Consumption" };
+  const doing = { production: "the panels are making", consumption: "the house is drawing" };
+  const made = { production: "the panels made", consumption: "the house drew" };
+  const tiles = POWER_SERIES.map((field) => {
+    const visible = !state.hiddenPower.has(field);
+    const value = live ? fmtPower(live[`${field}_power`]) : fmtEnergy(latest[field]);
+    const hint = live
+      ? `What ${doing[field]} right now, off the gateway`
+      : `What ${made[field]} in the last interval reported`;
+    const classes = ["sensor-tile", selecting && visible ? "selected" : "", selecting && !visible ? "dimmed" : ""];
+    return `
+        <div class="${classes.filter(Boolean).join(" ")}" data-power-tile="${field}" role="button" tabindex="0"
+          style="border-left-color:${POWER_COLORS[field]}"
+          title="${esc(hint)} - click: only this one · Ctrl+click or long press: add or remove it">
+          <div class="tile-name">${esc(names[field])}</div>
           <div class="tile-value">${esc(value)}</div>
           <div class="tile-when"><span class="tile-ago">${esc(ago)}</span></div>
         </div>`;
-  if (live) {
-    return `<div class="sensor-tiles">
-      ${tile("Production", PRODUCTION_COLOR, fmtPower(live.production_power), "What the panels are making right now, off the gateway")}
-      ${tile("Consumption", CONSUMPTION_COLOR, fmtPower(live.consumption_power), "What the house is drawing right now, off the gateway")}
-    </div>`;
-  }
-  return `<div class="sensor-tiles">
-    ${tile("Production", PRODUCTION_COLOR, fmtEnergy(latest.production), "What the panels made in the last interval reported")}
-    ${tile("Consumption", CONSUMPTION_COLOR, fmtEnergy(latest.consumption), "What the house drew in the last interval reported")}
-  </div>`;
+  }).join("");
+  return `<div class="sensor-tiles">${tiles}</div>`;
 }
 
-function batteryChartMarkup(current, earlier, days, tMax) {
+function wirePowerTiles() {
+  $$("[data-power-tile]").forEach((tile) => {
+    const field = tile.dataset.powerTile;
+    wireTileGestures(
+      tile,
+      () => { state.hiddenPower = pickOne(POWER_SERIES, state.hiddenPower, field); renderSensors(); },
+      () => { state.hiddenPower = toggleOne(POWER_SERIES, state.hiddenPower, field); renderSensors(); },
+    );
+  });
+}
+
+function batteryChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   // A level, not a counter: a line between nothing and full, on a scale that is
   // always the whole 0-100 so a flat week does not look like a cliff.
+  //
+  // It is built on the same holder the thermometers use, so the pointer gets
+  // the same circle on the curve and the same label beside it - one hover to
+  // maintain rather than two that drift apart.
   const tMin = tMax - days * 86400000;
+  const charged = (timed) => timed.filter((point) => point.battery !== null && point.battery !== undefined);
+  const shown = charged(current);
+  const before = charged(earlier);
+  if (!shown.length && !before.length) return "";
   const width = 720;
   const height = 150;
-  const left = 52;
+  const left = 44;
   const right = 16;
   const top = 12;
   const bottom = 28;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
+  const yMin = 0;
+  const yMax = 100;
   const xAt = (time) => left + ((time - tMin) / (tMax - tMin)) * plotWidth;
-  const yAt = (value) => top + plotHeight - (value / 100) * plotHeight;
+  const yAt = (value) => top + plotHeight - ((value - yMin) / (yMax - yMin)) * plotHeight;
+
   const gridLines = [];
   const yLabels = [];
-  for (let percent = 0; percent <= 100; percent += 25) {
+  for (let percent = yMin; percent <= yMax; percent += 25) {
     const y = yAt(percent);
     gridLines.push(`<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
     yLabels.push(`<text x="${left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${percent}%</text>`);
   }
   const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
     `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
-  const lineOf = (timed, className) => {
-    const charged = timed.filter((point) => point.battery !== null && point.battery !== undefined);
-    if (!charged.length) return "";
-    const path = charged.map((point, index) =>
-      `${index ? "L" : "M"}${xAt(point.time).toFixed(1)} ${yAt(point.battery).toFixed(1)}`).join(" ");
-    const dots = charged.map((point) =>
-      `<circle cx="${xAt(point.time).toFixed(1)}" cy="${yAt(point.battery).toFixed(1)}" r="6" fill="transparent"
-        ><title>${esc(`${waterStamp(point.actual || point.time)} · ${fmtPercent(point.battery)}`)}</title></circle>`).join("");
-    return `<path class="${className}" d="${path}" fill="none" stroke="${BATTERY_COLOR}" stroke-width="2"></path>${dots}`;
+  const lineOf = (timed) => timed.map((point, index) =>
+    `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.battery).toFixed(1)}`).join(" ");
+  const previousPath = before.length > 1
+    ? `<path class="previous" d="${lineOf(before)}" stroke="${BATTERY_COLOR}"></path>`
+    : "";
+  const path = shown.length > 1 ? `<path d="${lineOf(shown)}" stroke="${BATTERY_COLOR}"></path>` : "";
+
+  const config = {
+    tMin,
+    tMax,
+    days,
+    left,
+    plotWidth,
+    top,
+    plotHeight,
+    yMin,
+    yMax,
+    bucketMs: bucketMinutes * 60000,
+    series: [{
+      name: "Batteries",
+      unit: "%",
+      color: BATTERY_COLOR,
+      // low and high repeat the value: a level has no band to draw.
+      points: shown.map((point) => [point.time, point.battery, point.battery, point.battery]),
+      previous: before.map((point) => [point.time, point.battery, point.battery, point.battery]),
+    }],
   };
-  const lines = `${lineOf(earlier, "previous")}${lineOf(current, "")}`;
-  if (!lines) return "";
   return `
-    <div class="viz-holder">
+    <div class="viz-holder" data-battery-chart data-sensor-chart="${esc(JSON.stringify(config))}">
       <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Battery charge">
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
-        <g class="lines">${lines}</g>
+        <g class="series">${previousPath}${path}</g>
+        <g class="viz-hover" hidden>
+          <g class="hov-dots"></g>
+        </g>
       </svg>
+      <div class="viz-tip" hidden></div>
     </div>`;
 }
 
 function batteryCardMarkup(data) {
   if (!data) return "";
   const { tMax, current, earlier } = splitPower(data);
-  const chart = batteryChartMarkup(current, earlier, data.days, tMax);
+  const chart = batteryChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax);
   const live = liveReading(data);
   const latest = live && live.battery_level !== null && live.battery_level !== undefined
     ? live.battery_level
