@@ -11,6 +11,9 @@ class WaterFeed(NamedTuple):
     database and never leave the server; `backfill_from` is how far back the
     first import has walked, and `empty_chunks` how many barren months it has
     met in a row - two of those and the history is taken to be exhausted.
+
+    `daily_max` is the most this meter should draw in any rolling 24 hours,
+    in cubic metres like everything else here. It is opt-in: no limit, no alert.
     """
 
     feed_id: int
@@ -24,6 +27,7 @@ class WaterFeed(NamedTuple):
     backfill_from: date | None = None
     backfill_done: bool = False
     empty_chunks: int = 0
+    daily_max: float | None = None
     last_point_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +43,7 @@ class WaterFeed(NamedTuple):
             "backfill_from": self.backfill_from.isoformat() if self.backfill_from is not None else "",
             "backfill_done": self.backfill_done,
             "empty_chunks": self.empty_chunks,
+            "daily_max": self.daily_max,
             "last_point_at": self.last_point_at.isoformat() if self.last_point_at is not None else "",
         }
 
@@ -58,5 +63,6 @@ class WaterFeed(NamedTuple):
             backfill_from=date.fromisoformat(backfill_from) if backfill_from else None,
             backfill_done=bool(data.get("backfill_done")),
             empty_chunks=int(data.get("empty_chunks") or 0),
+            daily_max=None if data.get("daily_max") is None else float(data["daily_max"]),
             last_point_at=datetime.fromisoformat(last_point_at) if last_point_at else None,
         )

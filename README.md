@@ -56,7 +56,10 @@ rule, written once, for both sets of tiles. On a phone the view drops its
 heading — the bottom bar already names it — and the switches keep their sliders
 but trade their words for icons.
 
-**Previous** and **Thresholds** are icons rather than sliders, pressed for on, which is
+Each control above the view is offered to the houses it can do something for, which it says
+for itself (`data-needs`): the alert lines are the thermometers' alone, but the overlay redraws
+every graph and the unit switch governs volumes as well as degrees, so a water-only house gets
+both. **Previous** and **Thresholds** are icons rather than sliders, pressed for on, which is
 what the graph icons beside them already meant — three controls that do the same
 kind of thing now look like each other, and the row fits a phone.
 
@@ -190,7 +193,16 @@ enough and spread far enough apart to cover it. The feed remembers whether it is
 reported, so the email follows the crossing rather than every quarter of an hour, exactly as
 the thermometers' alerts do.
 
-Against four years of one real meter the rule fires seven times — stretches of 27, 29, 90,
+The same 24 hours answer a second question, because measuring them twice would leave two
+rules able to disagree about the window: **did too much go through?** A meter can carry a
+limit (Settings, Water, Edit), typed in whatever unit the viewer reads volumes in and stored
+in cubic metres like everything else. It is opt-in — no limit, no alert — because a house can
+run every tap it owns all afternoon without a drop of it being accidental, and because a slow
+leak can pass unnoticed while never adding up to much. The two rules catch different things
+and neither subsumes the other. This one is edge triggered as well, or a fortnight with the
+sprinklers on would mail every quarter of an hour.
+
+Against four years of one real meter the leak rule fires seven times — stretches of 27, 29, 90,
 385, 31, 120 and 260 hours. The two longest drew around twice the ordinary daily volume
 throughout. Grouping the same data by calendar day instead finds only five of the seven,
 which is the case for the rolling window in one line.

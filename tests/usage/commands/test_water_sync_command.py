@@ -12,12 +12,13 @@ from usage.libraries.email_texts import EmailTexts
 from usage.structures.app_exception import AppException
 from usage.structures.settings import Settings
 from usage.structures.water_feed import WaterFeed
-from usage.structures.water_leak import WaterLeak
+from usage.structures.water_window import WaterWindow
 from usage.structures.water_point import WaterPoint
 
 SQL_DUE = """
             SELECT id, house_id, hostname, username_sealed AS username, password_sealed AS password,
-                   meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done, empty_chunks
+                   meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done,
+                   empty_chunks, daily_max
             FROM water_feeds
             WHERE active AND (claimed_until IS NULL OR claimed_until < now())
               AND (last_sync_at IS NULL OR last_sync_at < now() - %s)
@@ -104,6 +105,7 @@ def helper_row() -> dict[str, Any]:
         "backfill_from": None,
         "backfill_done": False,
         "empty_chunks": 0,
+        "daily_max": None,
     }
 
 
@@ -259,7 +261,7 @@ def test_tick(
 
 
 @patch("usage.commands.water_sync_command.datetime", wraps=datetime)
-@patch.object(WaterSyncCommand, "_leak")
+@patch.object(WaterSyncCommand, "_alerts")
 @patch.object(WaterSyncCommand, "_record")
 @patch.object(WaterSyncCommand, "_chunk")
 @patch.object(WaterSyncCommand, "_store")
@@ -466,49 +468,114 @@ def test__chunk__unreadable(store: MagicMock, mock_logging: MagicMock) -> None:
     reset_mocks()
 
 
+@patch.object(WaterSyncCommand, "_surge")
+@patch.object(WaterSyncCommand, "_leak")
+@patch.object(WaterSyncCommand, "_window")
+def test__alerts(window: MagicMock, leak: MagicMock, surge: MagicMock) -> None:
+    def reset_mocks() -> None:
+        window.reset_mock()
+        leak.reset_mock()
+        surge.reset_mock()
+
+    feed = helper_feed()
+    measured = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+
+    # both rules read the same 24 hours, measured once
+    for found in [measured, None]:
+        window.side_effect = [found]
+        tested = helper_instance()
+        result = tested._alerts(feed)
+        assert result is None
+        assert window.mock_calls == [call(11)]
+        assert leak.mock_calls == [call(feed, found)]
+        assert surge.mock_calls == [call(feed, found)]
+        reset_mocks()
+
+
 @patch.object(WaterSyncCommand, "_send_leak")
-@patch.object(WaterSyncCommand, "_continuous_flow")
-def test__leak(reading_day: MagicMock, send_leak: MagicMock) -> None:
+def test__leak(send_leak: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
-        reading_day.reset_mock()
         send_leak.reset_mock()
         database.reset_mock()
 
     feed = helper_feed()
-    leak = WaterLeak(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+    running = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+    quiet = running._replace(smallest=0.0)
     sql = "UPDATE water_feeds SET leaking = %s WHERE id = %s AND leaking IS DISTINCT FROM %s RETURNING id"
 
     # a day that never went quiet, and the feed did not know it yet
-    reading_day.side_effect = [leak]
     database.execute.side_effect = [11]
-    result = tested._leak(feed)
+    result = tested._leak(feed, running)
     assert result is None
-    assert reading_day.mock_calls == [call(11)]
     assert database.mock_calls == [call.execute(sql, (True, 11, True))]
-    assert send_leak.mock_calls == [call(3, leak)]
+    assert send_leak.mock_calls == [call(3, running)]
     reset_mocks()
 
     # the same day again: the state has not moved, so nothing is sent
-    reading_day.side_effect = [leak]
     database.execute.side_effect = [0]
-    tested._leak(feed)
+    tested._leak(feed, running)
     assert database.mock_calls == [call.execute(sql, (True, 11, True))]
     assert send_leak.mock_calls == []
     reset_mocks()
 
-    # back to normal: the state is cleared quietly, with no email
-    reading_day.side_effect = [None]
+    # the water did stop at some point, and a window too thin to judge at all:
+    # the state is cleared quietly in both cases, with no email
+    for window in [quiet, None]:
+        database.execute.side_effect = [11]
+        tested._leak(feed, window)
+        assert database.mock_calls == [call.execute(sql, (False, 11, False))]
+        assert send_leak.mock_calls == []
+        reset_mocks()
+
+
+@patch.object(WaterSyncCommand, "_send_surge")
+def test__surge(send_surge: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        send_surge.reset_mock()
+        database.reset_mock()
+
+    limited = helper_feed()._replace(daily_max=0.4)
+    window = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+    sql = "UPDATE water_feeds SET over_daily = %s WHERE id = %s AND over_daily IS DISTINCT FROM %s RETURNING id"
+
+    # over the limit, and the feed did not know it yet
     database.execute.side_effect = [11]
-    tested._leak(feed)
-    assert database.mock_calls == [call.execute(sql, (False, 11, False))]
-    assert send_leak.mock_calls == []
+    result = tested._surge(limited, window)
+    assert result is None
+    assert database.mock_calls == [call.execute(sql, (True, 11, True))]
+    assert send_surge.mock_calls == [call(3, window, 0.4)]
     reset_mocks()
 
+    # over it again: the state has not moved, so nothing is sent
+    database.execute.side_effect = [0]
+    tested._surge(limited, window)
+    assert database.mock_calls == [call.execute(sql, (True, 11, True))]
+    assert send_surge.mock_calls == []
+    reset_mocks()
 
-def test__continuous_flow() -> None:
+    # under the limit, exactly on it, no limit set at all, and no window worth
+    # judging: all quiet, and the flag is cleared
+    tests = [
+        (limited, window._replace(total=0.2)),
+        (limited, window._replace(total=0.4)),
+        (helper_feed(), window),
+        (limited, None),
+    ]
+    for feed, measured in tests:
+        database.execute.side_effect = [11]
+        tested._surge(feed, measured)
+        assert database.mock_calls == [call.execute(sql, (False, 11, False))]
+        assert send_surge.mock_calls == []
+        reset_mocks()
+
+
+def test__window() -> None:
     tested = helper_instance()
     database = tested._database
 
@@ -535,50 +602,121 @@ def test__continuous_flow() -> None:
             "newest": newest,
         } | changes
 
-    # a full day of readings and not one of them zero
+    # a full day of readings, summed up for whoever asks
     database.fetch_one.side_effect = [row()]
-    result = tested._continuous_flow(11)
-    expected = WaterLeak(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+    result = tested._window(11)
+    expected = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
     assert result == expected
     assert database.mock_calls == exp_calls
     reset_mocks()
 
-    # every way a day says nothing is wrong, or says nothing at all
+    # a quiet quarter of an hour is still a perfectly good window: whether that
+    # means anything at all is the leak rule's business, not this one's
+    database.fetch_one.side_effect = [row(smallest=Decimal("0"))]
+    result = tested._window(11)
+    expected = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.0, total=0.412)
+    assert result == expected
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # every way a window is too thin to answer either question
     tests: list[dict[str, Any] | None] = [
         None,
         row(oldest=None),
         row(newest=None),
-        # one quiet quarter of an hour is all it takes
-        row(smallest=Decimal("0")),
         # too few readings, or too short a stretch, to be a day at all
         row(readings=19),
         row(newest=datetime(2026, 9, 14, 12, 0, tzinfo=UTC)),
     ]
     for answer in tests:
         database.fetch_one.side_effect = [answer]
-        result = tested._continuous_flow(11)
+        result = tested._window(11)
         assert result is None
         assert database.mock_calls == exp_calls
         reset_mocks()
 
 
-@patch("usage.commands.water_sync_command.logging")
+@patch.object(WaterSyncCommand, "_deliver")
+@patch.object(WaterSyncCommand, "_house_name")
+@patch.object(WaterSyncCommand, "_recipients")
 @patch.object(EmailTexts, "water_leak")
-def test__send_leak(water_leak: MagicMock, mock_logging: MagicMock) -> None:
-    logger = MagicMock()
-    tested = helper_instance()
-    database = tested._database
-    email_sender = tested._email_sender
-
+def test__send_leak(water_leak: MagicMock, recipients: MagicMock, house_name: MagicMock, deliver: MagicMock) -> None:
     def reset_mocks() -> None:
         water_leak.reset_mock()
-        mock_logging.reset_mock()
-        logger.reset_mock()
-        database.reset_mock()
-        email_sender.reset_mock()
+        recipients.reset_mock()
+        house_name.reset_mock()
+        deliver.reset_mock()
 
-    leak = WaterLeak(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
-    recipients_sql = """
+    window = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+
+    recipients.side_effect = [["jane@example.com"]]
+    house_name.side_effect = ["Dougmar"]
+    water_leak.side_effect = [("theSubject", ["theBody"])]
+    tested = helper_instance()
+    result = tested._send_leak(3, window)
+    assert result is None
+    assert recipients.mock_calls == [call(3)]
+    assert house_name.mock_calls == [call(3)]
+    assert water_leak.mock_calls == [call("Dougmar", window, "https://usage.example.com")]
+    assert deliver.mock_calls == [call(3, ["jane@example.com"], "theSubject", ["theBody"])]
+    reset_mocks()
+
+    # nobody asked for them: not even the house name is looked up
+    recipients.side_effect = [[]]
+    tested = helper_instance()
+    result = tested._send_leak(3, window)
+    assert result is None
+    assert recipients.mock_calls == [call(3)]
+    assert house_name.mock_calls == []
+    assert water_leak.mock_calls == []
+    assert deliver.mock_calls == []
+    reset_mocks()
+
+
+@patch.object(WaterSyncCommand, "_deliver")
+@patch.object(WaterSyncCommand, "_house_name")
+@patch.object(WaterSyncCommand, "_recipients")
+@patch.object(EmailTexts, "water_over")
+def test__send_surge(water_over: MagicMock, recipients: MagicMock, house_name: MagicMock, deliver: MagicMock) -> None:
+    def reset_mocks() -> None:
+        water_over.reset_mock()
+        recipients.reset_mock()
+        house_name.reset_mock()
+        deliver.reset_mock()
+
+    window = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.003, total=0.412)
+
+    recipients.side_effect = [["jane@example.com"]]
+    house_name.side_effect = ["Dougmar"]
+    water_over.side_effect = [("theSubject", ["theBody"])]
+    tested = helper_instance()
+    result = tested._send_surge(3, window, 0.4)
+    assert result is None
+    assert recipients.mock_calls == [call(3)]
+    assert house_name.mock_calls == [call(3)]
+    assert water_over.mock_calls == [call("Dougmar", window, 0.4, "https://usage.example.com")]
+    assert deliver.mock_calls == [call(3, ["jane@example.com"], "theSubject", ["theBody"])]
+    reset_mocks()
+
+    recipients.side_effect = [[]]
+    tested = helper_instance()
+    result = tested._send_surge(3, window, 0.4)
+    assert result is None
+    assert recipients.mock_calls == [call(3)]
+    assert house_name.mock_calls == []
+    assert water_over.mock_calls == []
+    assert deliver.mock_calls == []
+    reset_mocks()
+
+
+def test__recipients() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sql = """
             SELECT users.email_sealed AS email
             FROM water_alerts
             JOIN users ON users.id = water_alerts.user_id
@@ -588,44 +726,76 @@ def test__send_leak(water_leak: MagicMock, mock_logging: MagicMock) -> None:
             ORDER BY water_alerts.user_id
             """
 
-    # nobody asked for them: not even the house name is looked up
-    database.fetch_all.side_effect = [[]]
-    result = tested._send_leak(3, leak)
-    assert result is None
-    assert database.mock_calls == [call.fetch_all(recipients_sql, (3,))]
-    assert water_leak.mock_calls == []
-    assert email_sender.mock_calls == []
+    database.fetch_all.side_effect = [[{"email": "sealedJane"}, {"email": "sealedJohn"}]]
+    database.decrypt.side_effect = ["jane@example.com", "john@example.com"]
+    result = tested._recipients(3)
+    expected = ["jane@example.com", "john@example.com"]
+    assert result == expected
+    exp_calls = [call.fetch_all(sql, (3,)), call.decrypt("sealedJane"), call.decrypt("sealedJohn")]
+    assert database.mock_calls == exp_calls
     reset_mocks()
 
-    database.fetch_all.side_effect = [[{"email": "sealedJane"}]]
-    database.fetch_one.side_effect = [{"name": "sealedDougmar"}]
-    database.decrypt.side_effect = ["Dougmar", "jane@example.com"]
-    water_leak.side_effect = [("theSubject", ["theBody"])]
-    email_sender.send.side_effect = [True]
-    tested._send_leak(3, leak)
+    database.fetch_all.side_effect = [[]]
+    result = tested._recipients(3)
+    assert result == []
+    assert database.mock_calls == [call.fetch_all(sql, (3,))]
+    reset_mocks()
+
+
+@patch("usage.commands.water_sync_command.logging")
+def test__deliver(mock_logging: MagicMock) -> None:
+    logger = MagicMock()
+    tested = helper_instance()
+    email_sender = tested._email_sender
+
+    def reset_mocks() -> None:
+        mock_logging.reset_mock()
+        logger.reset_mock()
+        email_sender.reset_mock()
+
+    email_sender.send.side_effect = [True, True]
+    result = tested._deliver(3, ["jane@example.com", "john@example.com"], "theSubject", ["theBody"])
+    assert result is None
     exp_calls = [
-        call.fetch_all(recipients_sql, (3,)),
-        call.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (3,)),
-        call.decrypt("sealedDougmar"),
-        call.decrypt("sealedJane"),
+        call.send("jane@example.com", "theSubject", ["theBody"]),
+        call.send("john@example.com", "theSubject", ["theBody"]),
     ]
-    assert database.mock_calls == exp_calls
-    assert water_leak.mock_calls == [call("Dougmar", leak, "https://usage.example.com")]
-    assert email_sender.mock_calls == [call.send("jane@example.com", "theSubject", ["theBody"])]
+    assert email_sender.mock_calls == exp_calls
     assert mock_logging.mock_calls == []
     reset_mocks()
 
-    # a house that vanished under us still names its recipients
-    database.fetch_all.side_effect = [[{"email": "sealedJane"}]]
-    database.fetch_one.side_effect = [None]
-    database.decrypt.side_effect = ["jane@example.com"]
-    water_leak.side_effect = [("theSubject", ["theBody"])]
-    email_sender.send.side_effect = [False]
+    # the relay refused one of them: written down, and the other still goes
     mock_logging.getLogger.side_effect = [logger]
-    tested._send_leak(3, leak)
-    assert water_leak.mock_calls == [call("", leak, "https://usage.example.com")]
+    email_sender.send.side_effect = [False, True]
+    tested._deliver(3, ["jane@example.com", "john@example.com"], "theSubject", ["theBody"])
+    assert email_sender.mock_calls == exp_calls
     assert mock_logging.mock_calls == [call.getLogger("usage")]
-    assert logger.mock_calls == [call.warning("[WATER] leak email failed for %s of house %s", "jane@example.com", 3)]
+    exp_warning = [call.warning("[WATER] alert email failed for %s of house %s", "jane@example.com", 3)]
+    assert logger.mock_calls == exp_warning
+    reset_mocks()
+
+
+def test__house_name() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sql = "SELECT name_sealed AS name FROM houses WHERE id = %s"
+
+    database.fetch_one.side_effect = [{"name": "sealedDougmar"}]
+    database.decrypt.side_effect = ["Dougmar"]
+    result = tested._house_name(3)
+    assert result == "Dougmar"
+    assert database.mock_calls == [call.fetch_one(sql, (3,)), call.decrypt("sealedDougmar")]
+    reset_mocks()
+
+    # the house went away between the reading and the alert
+    database.fetch_one.side_effect = [None]
+    result = tested._house_name(3)
+    assert result == ""
+    assert database.mock_calls == [call.fetch_one(sql, (3,))]
     reset_mocks()
 
 

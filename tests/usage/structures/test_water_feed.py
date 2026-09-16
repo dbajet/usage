@@ -20,6 +20,7 @@ def helper_instance() -> WaterFeed:
         backfill_from=date(2021, 4, 1),
         backfill_done=False,
         empty_chunks=1,
+        daily_max=1.5,
         last_point_at=datetime(2026, 9, 14, 7, 14, tzinfo=UTC),
     )
 
@@ -38,6 +39,7 @@ def test_class() -> None:
         "backfill_from",
         "backfill_done",
         "empty_chunks",
+        "daily_max",
         "last_point_at",
     ]
     result = is_namedtuple(tested, fields)
@@ -60,6 +62,7 @@ def test_to_dict() -> None:
                 "backfill_from": "2021-04-01",
                 "backfill_done": False,
                 "empty_chunks": 1,
+                "daily_max": 1.5,
                 "last_point_at": "2026-09-14T07:14:00+00:00",
             },
         ),
@@ -85,6 +88,7 @@ def test_to_dict() -> None:
                 "backfill_from": "",
                 "backfill_done": False,
                 "empty_chunks": 0,
+                "daily_max": None,
                 "last_point_at": "",
             },
         ),
@@ -110,6 +114,7 @@ def test_from_dict() -> None:
                 "backfill_from": "2021-04-01",
                 "backfill_done": False,
                 "empty_chunks": "1",
+                "daily_max": "1.5",
                 "last_point_at": "2026-09-14T07:14:00+00:00",
             },
             helper_instance(),
@@ -128,6 +133,7 @@ def test_from_dict() -> None:
                 backfill_from=None,
                 backfill_done=False,
                 empty_chunks=0,
+                daily_max=None,
                 last_point_at=None,
             ),
         ),

@@ -11,4 +11,6 @@ class WaterFeedUpdateRequest(BaseModel):
     password: str = ""
     hostname: str = ""
     export_unit: str = ""
+    # Cubic metres; empty means no alert on the volume at all.
+    daily_max: float | None = None
     active: bool = True

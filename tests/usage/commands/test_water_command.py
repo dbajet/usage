@@ -14,20 +14,21 @@ from usage.structures.water_meter import WaterMeter
 
 SQL_FEEDS = """
                 SELECT id, hostname, username_sealed AS username, meter_uuid_sealed AS meter_uuid, export_unit,
-                       active, last_sync_at, last_point_at, last_error, backfill_from, backfill_done
+                       active, last_sync_at, last_point_at, last_error, backfill_from, backfill_done, daily_max
                 FROM water_feeds WHERE house_id = %s ORDER BY id
                 """
 SQL_COUNTS = "SELECT COUNT(*) AS points, MIN(measured_at) AS first_at FROM water_points WHERE feed_id = %s"
 SQL_INSERT = """
             INSERT INTO water_feeds(house_id, hostname, username_sealed, username_hash, password_sealed,
-                                    meter_uuid_sealed, meter_uuid_hash, export_unit)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                    meter_uuid_sealed, meter_uuid_hash, export_unit, daily_max)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """
 SQL_UPDATE = """
             UPDATE water_feeds
             SET hostname = %s, username_sealed = %s, username_hash = %s, password_sealed = %s,
-                meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s, last_error = ''
+                meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s,
+                daily_max = %s, last_error = ''
             WHERE id = %s
             """
 SQL_SERIES = """
@@ -98,6 +99,7 @@ def test_list_feeds(require_admin: MagicMock, require_house: MagicMock) -> None:
             "last_error": "",
             "backfill_from": date(2021, 4, 1),
             "backfill_done": True,
+            "daily_max": Decimal("1.5"),
         },
     ]
     require_admin.side_effect = [None]
@@ -120,6 +122,7 @@ def test_list_feeds(require_admin: MagicMock, require_house: MagicMock) -> None:
                 "last_error": "",
                 "backfill_from": "2021-04-01",
                 "backfill_done": True,
+                "daily_max": 1.5,
                 "points": 175200,
                 "first_point_at": "2021-04-01T07:00:00+00:00",
             },
@@ -154,6 +157,7 @@ def test_list_feeds(require_admin: MagicMock, require_house: MagicMock) -> None:
                 "last_error": "EyeOnWater could not be reached.",
                 "backfill_from": None,
                 "backfill_done": False,
+                "daily_max": None,
             },
         ],
     ]
@@ -173,6 +177,7 @@ def test_list_feeds(require_admin: MagicMock, require_house: MagicMock) -> None:
                 "last_error": "EyeOnWater could not be reached.",
                 "backfill_from": "",
                 "backfill_done": False,
+                "daily_max": None,
                 "points": 0,
                 "first_point_at": "",
             },
@@ -298,7 +303,7 @@ def test_create_feed(
         call.blind_index("1234567890123456789"),
         call.execute(
             SQL_INSERT,
-            (3, "eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons"),
+            (3, "eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons", None),
         ),
     ]
     assert database.mock_calls == exp_calls
@@ -405,7 +410,7 @@ def test_update_feed(
         call.blind_index("1234567890123456789"),
         call.execute(
             SQL_UPDATE,
-            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedNewPassword", "sealedUuid", "theUuidHash", "Gallons", True, 11),
+            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedNewPassword", "sealedUuid", "theUuidHash", "Gallons", True, None, 11),
         ),
     ]
     assert database.mock_calls == exp_calls
@@ -437,7 +442,7 @@ def test_update_feed(
         call.blind_index("1234567890123456789"),
         call.execute(
             SQL_UPDATE,
-            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons", False, 11),
+            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons", False, None, 11),
         ),
     ]
     assert database.mock_calls == exp_calls
@@ -913,3 +918,33 @@ def test__require_feed(visible_house_ids: MagicMock) -> None:
     assert visible_house_ids.mock_calls == [call(user)]
     assert database.mock_calls == exp_calls
     reset_mocks()
+
+
+def test__daily_max() -> None:
+    tested = helper_instance()
+    tests: list[tuple[dict[str, Any], float | None]] = [
+        ({"daily_max": 1.5}, 1.5),
+        ({"daily_max": "1.5"}, 1.5),
+        ({"daily_max": 0.5000004}, 0.5),
+        # the ordinary case: no limit set, and so no alert to send
+        ({}, None),
+        ({"daily_max": None}, None),
+        ({"daily_max": ""}, None),
+        ({"daily_max": "  "}, None),
+    ]
+    for data, expected in tests:
+        result = tested._daily_max(data)
+        assert result == expected
+
+    # zero would alert on every reading for ever, so it is refused rather than stored
+    for bad in [0, -1, "0"]:
+        with pytest.raises(AppException) as exc_info:
+            tested._daily_max({"daily_max": bad})
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message == "The daily limit must be more than zero, or empty for no alert."
+
+    for bad in ["a lot", []]:
+        with pytest.raises(AppException) as exc_info:
+            tested._daily_max({"daily_max": bad})
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message == "The daily limit must be a number."

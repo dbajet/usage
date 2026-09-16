@@ -14,8 +14,8 @@ from usage.libraries.eye_on_water_client import EyeOnWaterClient
 from usage.structures.app_exception import AppException
 from usage.structures.settings import Settings
 from usage.structures.water_feed import WaterFeed
-from usage.structures.water_leak import WaterLeak
 from usage.structures.water_point import WaterPoint
+from usage.structures.water_window import WaterWindow
 
 
 class WaterSyncCommand:
@@ -64,7 +64,8 @@ class WaterSyncCommand:
         rows = self._database.fetch_all(
             """
             SELECT id, house_id, hostname, username_sealed AS username, password_sealed AS password,
-                   meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done, empty_chunks
+                   meter_uuid_sealed AS meter_uuid, export_unit, active, backfill_from, backfill_done,
+                   empty_chunks, daily_max
             FROM water_feeds
             WHERE active AND (claimed_until IS NULL OR claimed_until < now())
               AND (last_sync_at IS NULL OR last_sync_at < now() - %s)
@@ -94,7 +95,7 @@ class WaterSyncCommand:
                 break
             walked = self._chunk(client, walked, today)
         self._record(feed.feed_id, "")
-        self._leak(feed)
+        self._alerts(feed)
 
     def _chunk(self, client: EyeOnWaterClient, feed: WaterFeed, today: date) -> WaterFeed:
         """One month further back; two barren ones in a row end the walk."""
@@ -144,20 +145,48 @@ class WaterSyncCommand:
             )
         return len(points)
 
-    def _leak(self, feed: WaterFeed) -> None:
+    def _alerts(self, feed: WaterFeed) -> None:
+        """Both rules read the same 24 hours, so they are measured once.
+
+        One asks whether the water ever stopped and the other whether too much
+        of it went through; the window they disagree about would be a bug.
+        """
+        window = self._window(feed.feed_id)
+        self._leak(feed, window)
+        self._surge(feed, window)
+
+    def _leak(self, feed: WaterFeed, window: WaterWindow | None) -> None:
         """Report 24 hours that never went quiet, once, when they start."""
-        leak = self._continuous_flow(feed.feed_id)
+        leaking = window is not None and window.smallest > 0
         crossed = self._database.execute(
             "UPDATE water_feeds SET leaking = %s WHERE id = %s AND leaking IS DISTINCT FROM %s RETURNING id",
-            (leak is not None, feed.feed_id, leak is not None),
+            (leaking, feed.feed_id, leaking),
         )
         # Edge triggered, like the thermometers': the crossing is the news, and
         # a leak left unfixed would otherwise mail every quarter of an hour.
-        if crossed and leak is not None:
-            self._send_leak(feed.house_id, leak)
+        if crossed and leaking and window is not None:
+            self._send_leak(feed.house_id, window)
 
-    def _continuous_flow(self, feed_id: int) -> WaterLeak | None:
-        """The last 24 hours of readings, when not one of them is zero.
+    def _surge(self, feed: WaterFeed, window: WaterWindow | None) -> None:
+        """Report a rolling 24 hours that drew more than the feed's limit.
+
+        A different question from the leak: a house can run every tap it owns
+        all afternoon without a drop of it being accidental, and a slow leak can
+        pass unnoticed while never adding up to much. So the limit is opt-in per
+        feed - no limit, no alert - and it is edge triggered like everything
+        else here, or a fortnight away with the sprinklers on would mail every
+        quarter of an hour.
+        """
+        over = window is not None and feed.daily_max is not None and window.total > feed.daily_max
+        crossed = self._database.execute(
+            "UPDATE water_feeds SET over_daily = %s WHERE id = %s AND over_daily IS DISTINCT FROM %s RETURNING id",
+            (over, feed.feed_id, over),
+        )
+        if crossed and over and window is not None and feed.daily_max is not None:
+            self._send_surge(feed.house_id, window, feed.daily_max)
+
+    def _window(self, feed_id: int) -> WaterWindow | None:
+        """What the last 24 hours of readings came to, when they cover it.
 
         A rolling window, not a calendar day: a stretch that runs from one
         afternoon to the next counts exactly as much as one from midnight to
@@ -168,7 +197,7 @@ class WaterSyncCommand:
 
         A window that is only partly reported proves nothing, so the readings
         must also be many enough and spread far enough apart to cover it - a
-        meter reporting a handful of times a day cannot answer this at all.
+        meter reporting a handful of times a day cannot answer either question.
         """
         row = self._database.fetch_one(
             """
@@ -186,9 +215,7 @@ class WaterSyncCommand:
         hours = (row["newest"] - row["oldest"]).total_seconds() / 3600
         if readings < Constants.water_leak_min_readings or hours < Constants.water_leak_span_hours:
             return None
-        if float(row["smallest"]) <= 0:
-            return None
-        return WaterLeak(
+        return WaterWindow(
             feed_id=feed_id,
             readings=readings,
             hours=round(hours, 1),
@@ -196,8 +223,32 @@ class WaterSyncCommand:
             total=float(row["total"]),
         )
 
-    def _send_leak(self, house_id: int, leak: WaterLeak) -> None:
-        recipients = self._database.fetch_all(
+    def _send_leak(self, house_id: int, window: WaterWindow) -> None:
+        recipients = self._recipients(house_id)
+        if not recipients:
+            return
+        subject, body_lines = EmailTexts.water_leak(self._house_name(house_id), window, self._settings.base_url or "")
+        self._deliver(house_id, recipients, subject, body_lines)
+
+    def _send_surge(self, house_id: int, window: WaterWindow, limit: float) -> None:
+        recipients = self._recipients(house_id)
+        if not recipients:
+            return
+        subject, body_lines = EmailTexts.water_over(
+            self._house_name(house_id),
+            window,
+            limit,
+            self._settings.base_url or "",
+        )
+        self._deliver(house_id, recipients, subject, body_lines)
+
+    def _recipients(self, house_id: int) -> list[str]:
+        """Whoever asked for this house's water alerts, and nobody else.
+
+        Asked for first, so a house nobody is watching costs one query and not
+        the house name, the email text and the rest of it as well.
+        """
+        rows = self._database.fetch_all(
             """
             SELECT users.email_sealed AS email
             FROM water_alerts
@@ -209,15 +260,16 @@ class WaterSyncCommand:
             """,
             (house_id,),
         )
-        if not recipients:
-            return
-        house = self._database.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (house_id,))
-        house_name = self._database.decrypt(str(house["name"])) if house is not None else ""
-        subject, body_lines = EmailTexts.water_leak(house_name, leak, self._settings.base_url or "")
-        for recipient in recipients:
-            email = self._database.decrypt(str(recipient["email"]))
+        return [self._database.decrypt(str(row["email"])) for row in rows]
+
+    def _deliver(self, house_id: int, recipients: list[str], subject: str, body_lines: list[str]) -> None:
+        for email in recipients:
             if not self._email_sender.send(email, subject, body_lines):
-                logging.getLogger("usage").warning("[WATER] leak email failed for %s of house %s", email, house_id)
+                logging.getLogger("usage").warning("[WATER] alert email failed for %s of house %s", email, house_id)
+
+    def _house_name(self, house_id: int) -> str:
+        row = self._database.fetch_one("SELECT name_sealed AS name FROM houses WHERE id = %s", (house_id,))
+        return self._database.decrypt(str(row["name"])) if row is not None else ""
 
     def _claim(self, feed_id: int) -> bool:
         claimed = self._database.execute(
@@ -255,4 +307,5 @@ class WaterSyncCommand:
             backfill_from=row["backfill_from"],
             backfill_done=bool(row["backfill_done"]),
             empty_chunks=int(row["empty_chunks"]),
+            daily_max=None if row["daily_max"] is None else float(row["daily_max"]),
         )

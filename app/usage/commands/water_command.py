@@ -43,7 +43,7 @@ class WaterCommand:
             self._database.fetch_all(
                 """
                 SELECT id, hostname, username_sealed AS username, meter_uuid_sealed AS meter_uuid, export_unit,
-                       active, last_sync_at, last_point_at, last_error, backfill_from, backfill_done
+                       active, last_sync_at, last_point_at, last_error, backfill_from, backfill_done, daily_max
                 FROM water_feeds WHERE house_id = %s ORDER BY id
                 """,
                 (house_id,),
@@ -69,6 +69,7 @@ class WaterCommand:
                     "last_error": str(feed["last_error"]),
                     "backfill_from": str(feed["backfill_from"] or ""),
                     "backfill_done": bool(feed["backfill_done"]),
+                    "daily_max": None if feed["daily_max"] is None else float(feed["daily_max"]),
                     "points": int(counts["points"]) if counts is not None else 0,
                     "first_point_at": self._moment(counts["first_at"]) if counts is not None else "",
                 },
@@ -99,8 +100,8 @@ class WaterCommand:
         feed_id = self._database.execute(
             """
             INSERT INTO water_feeds(house_id, hostname, username_sealed, username_hash, password_sealed,
-                                    meter_uuid_sealed, meter_uuid_hash, export_unit)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                    meter_uuid_sealed, meter_uuid_hash, export_unit, daily_max)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -112,6 +113,7 @@ class WaterCommand:
                 self._database.encrypt(meter_uuid),
                 self._database.blind_index(meter_uuid),
                 export_unit,
+                self._daily_max(data),
             ),
         )
         return {"id": feed_id, "message": "Water feed added. The first import starts within a minute."}
@@ -134,7 +136,8 @@ class WaterCommand:
             """
             UPDATE water_feeds
             SET hostname = %s, username_sealed = %s, username_hash = %s, password_sealed = %s,
-                meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s, last_error = ''
+                meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s,
+                daily_max = %s, last_error = ''
             WHERE id = %s
             """,
             (
@@ -146,6 +149,7 @@ class WaterCommand:
                 self._database.blind_index(meter_uuid),
                 export_unit,
                 bool(data.get("active")),
+                self._daily_max(data),
                 feed_id,
             ),
         )
@@ -278,6 +282,25 @@ class WaterCommand:
         """One day of export, thrown away: it is the account that is being tested."""
         today = datetime.now(UTC).date()
         client.export(meter_uuid, today - timedelta(days=Constants.water_recent_days), today)
+
+    @classmethod
+    def _daily_max(cls, data: dict[str, Any]) -> float | None:
+        """The most this meter may draw in a rolling 24 hours, in cubic metres.
+
+        Empty is the ordinary case and means no alert at all: a limit nobody
+        chose is not a limit worth mailing about. Zero would alert on every
+        reading for ever, which is why it is refused rather than stored.
+        """
+        raw = data.get("daily_max")
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            result = float(raw)
+        except (TypeError, ValueError):
+            raise AppException(400, "The daily limit must be a number.") from None
+        if result <= 0:
+            raise AppException(400, "The daily limit must be more than zero, or empty for no alert.")
+        return round(result, 6)
 
     @classmethod
     def _hostname(cls, data: dict[str, Any]) -> str:

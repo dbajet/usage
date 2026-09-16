@@ -2109,6 +2109,7 @@ def test__create_water_feed() -> None:
                 "meter_uuid": "1234567890123456789",
                 "hostname": "",
                 "export_unit": "",
+                "daily_max": None,
             },
         ),
     ]
@@ -2158,6 +2159,7 @@ def test__update_water_feed() -> None:
                 "password": "",
                 "hostname": "",
                 "export_unit": "",
+                "daily_max": None,
                 "active": True,
             },
         ),

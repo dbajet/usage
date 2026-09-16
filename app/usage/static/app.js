@@ -429,6 +429,14 @@ function houseHasWater() {
   return Boolean(current && current.has_water);
 }
 
+// What each half of the Realtime view is called, and how to ask whether this
+// house has it. The controls above the view name the halves they serve.
+const REALTIME_HALVES = {
+  sensors: () => houseHasSensors(),
+  water: () => houseHasWater(),
+  power: () => houseHasPower(),
+};
+
 function houseHasPower() {
   const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
   return Boolean(current && current.has_power);
@@ -1461,10 +1469,13 @@ async function loadSensors(seriesOnly = false) {
     $("#sensor-units").checked = wantsMetric();
     setToggle("#sensor-previous", wantsPrevious());
     setToggle("#sensor-thresholds", wantsThresholds());
-    // Celsius, the overlay and the alert lines are the thermometers': a house
-    // that only has the water meter would be offered three switches doing nothing.
-    $$("#view-sensors .sensor-controls .switch, #view-sensors .sensor-controls .sensor-only")
-      .forEach((control) => { control.hidden = !houseHasSensors(); });
+    // Each control is offered to the houses it can actually do something for.
+    // The alert lines are the thermometers' alone, but the overlay redraws every
+    // graph on the view and the unit switch governs volumes as well as degrees -
+    // a water-only house was being denied both for no reason.
+    $$("#view-sensors .sensor-controls [data-needs]").forEach((control) => {
+      control.hidden = !control.dataset.needs.split(" ").some((half) => REALTIME_HALVES[half]());
+    });
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     showSensorsLoading();
     // The list and both series leave together: one round trip, not three, and
@@ -2047,6 +2058,24 @@ function waterCardMarkup(data) {
     </div>`;
 }
 
+function limitUnit() {
+  // The limit is typed in whatever the viewer reads volumes in, and stored in
+  // cubic metres like every other volume here. Litres and gallons rather than
+  // the axis's sliding choice: a threshold wants one fixed unit to mean.
+  return wantsMetric() ? "L" : "gal";
+}
+
+function limitFromCubic(cubic) {
+  if (cubic === null || cubic === undefined) return "";
+  return Math.round(cubic * (wantsMetric() ? 1000 : GALLONS_PER_M3));
+}
+
+function limitToCubic(typed) {
+  const value = Number(typed);
+  if (typed === "" || typed === null || typed === undefined || !Number.isFinite(value)) return null;
+  return value / (wantsMetric() ? 1000 : GALLONS_PER_M3);
+}
+
 async function loadWaterSettings() {
   try {
     await ensureDashboard();
@@ -2076,6 +2105,8 @@ function waterFeedStatus(feed) {
   // Before the first check there is nothing to show but the wait itself, and a
   // feed with nothing in it and nothing said about it reads as a broken one.
   bits.push(feed.last_sync_at ? `checked ${fmtAgo(feed.last_sync_at)}` : "first check due within a minute");
+  // A limit nobody set is the ordinary case, and saying so every time would be noise.
+  if (feed.daily_max) bits.push(`alert above ${fmtVolume(feed.daily_max)} a day`);
   return bits.join(" · ");
 }
 
@@ -2106,12 +2137,16 @@ function renderWaterFeeds() {
         { name: "username", label: "Username", value: feed.username },
         { name: "password", label: "New password", type: "password", value: "" },
         { name: "meter_uuid", label: "Meter uuid", value: feed.meter_uuid },
+        { name: "daily_max", label: `Alert above (${limitUnit()} in any 24 hours)`, type: "number", value: limitFromCubic(feed.daily_max) },
         { name: "active", label: "Collecting", type: "checkbox", value: feed.active },
       ],
     });
     if (answers === null) return;
     try {
-      await api(`/api/water/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify(answers) });
+      await api(`/api/water/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
+        ...answers,
+        daily_max: limitToCubic(answers.daily_max),
+      }) });
       await loadWaterSettings();
     } catch (error) { showAppError(error); }
   }));

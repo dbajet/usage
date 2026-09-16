@@ -124,12 +124,12 @@
         <div class="view-heading">
           <h2>Realtime</h2>
           <div class="sensor-controls">
-            <label class="switch units-switch" title="US: Fahrenheit and gallons. FR: Celsius, litres and cubic metres.">
+            <label class="switch units-switch" data-needs="sensors water" title="US: Fahrenheit and gallons. FR: Celsius, litres and cubic metres.">
               <span>US</span><input id="sensor-units" type="checkbox"><span class="slider"></span><span>FR</span></label>
-            <button id="sensor-previous" class="ghost compact icon-button toggle-icon sensor-only" type="button"
+            <button id="sensor-previous" class="ghost compact icon-button toggle-icon" data-needs="sensors water power" type="button"
               aria-pressed="false" aria-label="Previous period"
               title="Overlay the previous day, week, month or year: dotted for the thermometers, pale bars for the water and the solar"><svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-120q-138 0-240.5-91.5T122-440h82q14 104 92.5 172T480-200q117 0 198.5-81.5T760-480q0-117-81.5-198.5T480-760q-69 0-129 32t-101 88h110v80H120v-240h80v94q51-64 124.5-99T480-840q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-480q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-120Zm112-192L440-464v-216h80v184l128 128-56 56Z"/></svg></button>
-            <button id="sensor-thresholds" class="ghost compact icon-button toggle-icon sensor-only" type="button"
+            <button id="sensor-thresholds" class="ghost compact icon-button toggle-icon" data-needs="sensors" type="button"
               aria-pressed="false" aria-label="Alert thresholds" title="Show min/max threshold lines"><svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M120-760h720v80H120v-80Zm0 560h720v80H120v-80Zm80-240h160v80H200v-80Zm240 0h160v80H440v-80Zm240 0h80v80h-80v-80Z"/></svg></button>
             <div class="range-tabs" id="sensor-ranges">
               <button class="ghost compact" data-sensor-days="1" type="button" title="Day"><span class="long">Day</span><span class="short">D</span></button>
@@ -228,8 +228,10 @@
               when the account carries several meters — the form will then list them for you to choose from.</p>
             <label class="switch">
               <input id="water-alert-toggle" type="checkbox"><span class="slider"></span>
-              <span>Email me when this house draws water for 24 hours running without ever stopping -
-                a house normally has some quiet stretch in any day, so that usually means a leak</span>
+              <span>Email me about this house's water. Two things get reported: 24 hours running without
+                the meter ever going quiet, which usually means a leak since a house normally has some
+                still moment in a day; and any rolling 24 hours drawing more than the limit set on the
+                meter below, which is off until you set one.</span>
             </label>
             <div id="water-feed-list"></div>
             <form id="water-feed-form" class="stack-form">

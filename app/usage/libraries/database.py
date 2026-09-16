@@ -312,6 +312,8 @@ class Database:
                 backfill_done BOOLEAN NOT NULL DEFAULT false,
                 empty_chunks INTEGER NOT NULL DEFAULT 0,
                 leaking BOOLEAN NOT NULL DEFAULT false,
+                daily_max NUMERIC(12,6),
+                over_daily BOOLEAN NOT NULL DEFAULT false,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, meter_uuid_hash)
             )
@@ -441,10 +443,18 @@ class Database:
             (19, "per minute api ceiling shared by both colours"),
             (20, "solar pushed live by home assistant"),
             (21, "remember which endpoint answers for production"),
+            (22, "a daily limit on what a water meter may draw"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 22:
+                    # A second question to ask of the same rolling 24 hours: not
+                    # only whether the water ever stopped, but whether too much
+                    # of it went through. Opt-in per meter - no limit, no alert -
+                    # and edge triggered like the rest, hence the flag beside it.
+                    connection.execute("ALTER TABLE water_feeds ADD COLUMN IF NOT EXISTS daily_max NUMERIC(12,6)")
+                    connection.execute("ALTER TABLE water_feeds ADD COLUMN IF NOT EXISTS over_daily BOOLEAN NOT NULL DEFAULT false")
                 if version == 21:
                     # A system without production CTs is answered by the meter
                     # endpoint with an empty day rather than a refusal, which is

@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Any, NamedTuple
 
 
-class WaterLeak(NamedTuple):
-    """A day of water that never stopped running: what the alert email reports.
+class WaterWindow(NamedTuple):
+    """What a rolling 24 hours of the meter came to, which both alerts read.
 
-    `smallest` is the quietest interval of the day - the point of the whole test
-    is that it is above zero, so it says how much was still flowing at the
-    house's quietest moment.
+    Rolling, never a calendar day: a stretch from one afternoon to the next
+    counts exactly as much as one from midnight to midnight. `smallest` is the
+    quietest interval in it, which answers whether the water ever stopped, and
+    `total` is everything drawn, which answers whether too much was.
     """
 
     feed_id: int
@@ -27,7 +28,7 @@ class WaterLeak(NamedTuple):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WaterLeak:
+    def from_dict(cls, data: dict[str, Any]) -> WaterWindow:
         return cls(
             feed_id=int(data.get("feed_id") or 0),
             readings=int(data.get("readings") or 0),

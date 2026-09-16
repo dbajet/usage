@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from usage.libraries.email_texts import EmailTexts
 from usage.structures.sensor_breach import SensorBreach
-from usage.structures.water_leak import WaterLeak
+from usage.structures.water_window import WaterWindow
 
 
 def test_sign_in_link() -> None:
@@ -86,7 +86,7 @@ def test_sensor_alert() -> None:
 
 def test_water_leak() -> None:
     tested = EmailTexts
-    leak = WaterLeak(feed_id=11, readings=96, hours=23.8, smallest=0.0034, total=0.4123)
+    leak = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.0034, total=0.4123)
 
     result = tested.water_leak("Dougmar", leak, "https://usage.example.com")
     expected = (
@@ -115,6 +115,40 @@ def test_water_leak() -> None:
     result = tested.water_leak("Dougmar", leak, "")
     assert "https://usage.example.com" not in result[1]
     assert result[1][-4] == "It is worth shutting every tap and watching whether the meter still moves."
+
+
+def test_water_over() -> None:
+    tested = EmailTexts
+    window = WaterWindow(feed_id=11, readings=96, hours=23.8, smallest=0.0034, total=0.9123)
+
+    result = tested.water_over("Dougmar", window, 0.5, "https://usage.example.com")
+    expected = (
+        "Usage: Dougmar used more water than usual",
+        [
+            "Hello,",
+            "",
+            "The water meter of Dougmar drew 912 L over the last 23.8 hours,",
+            "which is above the 500 L you set as this meter's limit for any 24 hours.",
+            "",
+            "- drawn in that time: 0.912 m3",
+            "- the limit: 0.500 m3",
+            "- readings counted: 96",
+            "",
+            "A run of watering or a houseful of guests will do this quite innocently.",
+            "Worth a look if neither applies.",
+            "",
+            "https://usage.example.com",
+            "",
+            "You receive this alert because you turned water alerts on for this house;",
+            "you can turn them off in Settings > Water at any time.",
+        ],
+    )
+    assert result == expected
+
+    # without a public URL there is no link to give, and no blank line for it either
+    result = tested.water_over("Dougmar", window, 0.5, "")
+    assert "https://usage.example.com" not in result[1]
+    assert result[1][-4] == "Worth a look if neither applies."
 
 
 def test_footer() -> None:

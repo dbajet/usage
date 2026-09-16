@@ -760,6 +760,8 @@ def test__create_schema() -> None:
                 backfill_done BOOLEAN NOT NULL DEFAULT false,
                 empty_chunks INTEGER NOT NULL DEFAULT 0,
                 leaking BOOLEAN NOT NULL DEFAULT false,
+                daily_max NUMERIC(12,6),
+                over_daily BOOLEAN NOT NULL DEFAULT false,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, meter_uuid_hash)
             )
@@ -888,7 +890,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 21
+    connection.execute.return_value.fetchone.side_effect = [None] * 22
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1118,12 +1120,23 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (21, 'remember which endpoint answers for production'),
         ),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (22,),
+        ),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE water_feeds ADD COLUMN IF NOT EXISTS daily_max NUMERIC(12,6)"),
+        call.execute("ALTER TABLE water_feeds ADD COLUMN IF NOT EXISTS over_daily BOOLEAN NOT NULL DEFAULT false"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (22, 'a daily limit on what a water meter may draw'),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 21
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 22
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1230,6 +1243,11 @@ def test__migrate() -> None:
         call.execute(
             "SELECT 1 FROM schema_migrations WHERE version = %s",
             (21,),
+        ),
+        call.execute().fetchone(),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (22,),
         ),
         call.execute().fetchone(),
     ]

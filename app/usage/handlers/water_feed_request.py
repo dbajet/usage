@@ -11,3 +11,5 @@ class WaterFeedRequest(BaseModel):
     meter_uuid: str = ""
     hostname: str = ""
     export_unit: str = ""
+    # Cubic metres; empty means no alert on the volume at all.
+    daily_max: float | None = None

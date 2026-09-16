@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from usage.constants.constants import Constants
 from usage.structures.sensor_breach import SensorBreach
-from usage.structures.water_leak import WaterLeak
+from usage.structures.water_window import WaterWindow
 
 
 class EmailTexts:
@@ -63,7 +63,34 @@ class EmailTexts:
         return subject, body_lines
 
     @classmethod
-    def water_leak(cls, house: str, leak: WaterLeak, link: str) -> tuple[str, list[str]]:
+    def water_over(cls, house: str, window: WaterWindow, limit: float, link: str) -> tuple[str, list[str]]:
+        """The alert sent when a rolling 24 hours draws more than the meter's limit."""
+        subject = f"{Constants.app_name}: {house} used more water than usual"
+        body_lines = [
+            "Hello,",
+            "",
+            f"The water meter of {house} drew {window.total * 1000:.0f} L over the last {window.hours:g} hours,",
+            f"which is above the {limit * 1000:.0f} L you set as this meter's limit for any 24 hours.",
+            "",
+            f"- drawn in that time: {window.total:.3f} m3",
+            f"- the limit: {limit:.3f} m3",
+            f"- readings counted: {window.readings}",
+            "",
+            "A run of watering or a houseful of guests will do this quite innocently.",
+            "Worth a look if neither applies.",
+        ]
+        # Without a public URL configured there is no link to give, and an empty
+        # line in its place would read as a missing one.
+        body_lines.extend(["", link] if link else [])
+        body_lines.extend([
+            "",
+            "You receive this alert because you turned water alerts on for this house;",
+            "you can turn them off in Settings > Water at any time.",
+        ])
+        return subject, body_lines
+
+    @classmethod
+    def water_leak(cls, house: str, leak: WaterWindow, link: str) -> tuple[str, list[str]]:
         """The alert sent when 24 hours pass without the water ever stopping."""
         subject = f"{Constants.app_name}: the water never stopped running in {house}"
         body_lines = [
