@@ -106,8 +106,16 @@ class AdminCommand:
         if row is None:
             raise AppException(404, "The house was not found.")
         self._database.execute(
-            "UPDATE houses SET name_sealed = %s, timezone = %s, shows_sensors = %s, shows_water = %s WHERE id = %s",
-            (self._database.encrypt(name), timezone, bool(data.get("shows_sensors")), bool(data.get("shows_water")), house_id),
+            "UPDATE houses SET name_sealed = %s, timezone = %s, shows_sensors = %s, shows_water = %s, "
+            "shows_power = %s WHERE id = %s",
+            (
+                self._database.encrypt(name),
+                timezone,
+                bool(data.get("shows_sensors")),
+                bool(data.get("shows_water")),
+                bool(data.get("shows_power")),
+                house_id,
+            ),
         )
         return {"message": "House updated."}
 
@@ -142,7 +150,7 @@ class AdminCommand:
     def _houses(self) -> list[dict[str, Any]]:
         return self._database.decrypt_rows(
             self._database.fetch_all(
-                "SELECT id, name_sealed AS name, timezone, shows_sensors, shows_water, "
+                "SELECT id, name_sealed AS name, timezone, shows_sensors, shows_water, shows_power, "
                 "(ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
             ),
             ("name",),

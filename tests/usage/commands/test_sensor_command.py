@@ -72,9 +72,9 @@ def test___init__() -> None:
 @patch.object(SensorCommand, "_store_batteries")
 @patch.object(SensorCommand, "_find_or_create_sensor")
 @patch.object(SensorCommand, "_parse_sample")
-@patch.object(SensorCommand, "_house_from_token")
+@patch("usage.commands.sensor_command.IngestToken")
 def test_ingest(
-    house_from_token: MagicMock,
+    token_class: MagicMock,
     parse_sample: MagicMock,
     find_or_create_sensor: MagicMock,
     store_batteries: MagicMock,
@@ -84,7 +84,7 @@ def test_ingest(
     database = tested._database
 
     def reset_mocks() -> None:
-        house_from_token.reset_mock()
+        token_class.reset_mock()
         parse_sample.reset_mock()
         find_or_create_sensor.reset_mock()
         store_batteries.reset_mock()
@@ -97,12 +97,12 @@ def test_ingest(
                     """
 
     # too many samples
-    house_from_token.side_effect = [3]
+    token_class.return_value.house_id.side_effect = [3]
     with pytest.raises(AppException) as exc_info:
         tested.ingest("Bearer the-token", {"samples": [{"entity_id": "sensor.x", "value": 1}] * 1001})
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "At most 1000 samples per request."
-    assert house_from_token.mock_calls == [call("Bearer the-token")]
+    assert token_class.mock_calls == [call(database), call().house_id("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == []
@@ -111,13 +111,13 @@ def test_ingest(
     reset_mocks()
 
     # empty batch
-    house_from_token.side_effect = [3]
+    token_class.return_value.house_id.side_effect = [3]
     store_batteries.side_effect = [None]
     alert.side_effect = [None]
     result = tested.ingest("Bearer the-token", {})
     expected = {"accepted": 0, "created": 0}
     assert result == expected
-    assert house_from_token.mock_calls == [call("Bearer the-token")]
+    assert token_class.mock_calls == [call(database), call().house_id("Bearer the-token")]
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == [call([], {})]
@@ -131,7 +131,7 @@ def test_ingest(
     garage_later = helper_sample(value=85.1)
     freezer = helper_sample(entity_id="sensor.freezer_temperature", value=-0.58)
     raw = [{"entity_id": "garage"}, {"entity_id": "freezer"}, {"entity_id": "garage-later"}]
-    house_from_token.side_effect = [3]
+    token_class.return_value.house_id.side_effect = [3]
     parse_sample.side_effect = [garage, freezer, garage_later]
     find_or_create_sensor.side_effect = [(9, False), (10, True)]
     store_batteries.side_effect = [None]
@@ -140,7 +140,7 @@ def test_ingest(
     result = tested.ingest("Bearer the-token", {"samples": raw})
     expected = {"accepted": 3, "created": 1}
     assert result == expected
-    assert house_from_token.mock_calls == [call("Bearer the-token")]
+    assert token_class.mock_calls == [call(database), call().house_id("Bearer the-token")]
     assert parse_sample.mock_calls == [call(raw[0]), call(raw[1]), call(raw[2])]
     assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
     exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
@@ -158,15 +158,15 @@ def test_ingest(
     reset_mocks()
 
 
-@patch.object(SensorCommand, "_hash")
+@patch("usage.commands.sensor_command.IngestToken")
 @patch("usage.commands.sensor_command.secrets")
-def test_issue_token(secrets: MagicMock, hash_method: MagicMock) -> None:
+def test_issue_token(secrets: MagicMock, token_class: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         secrets.reset_mock()
-        hash_method.reset_mock()
+        token_class.reset_mock()
         database.reset_mock()
 
     # not an admin
@@ -175,7 +175,7 @@ def test_issue_token(secrets: MagicMock, hash_method: MagicMock) -> None:
     assert exc_info.value.status_code == 403
     assert exc_info.value.message == "Only admins can do this."
     assert secrets.mock_calls == []
-    assert hash_method.mock_calls == []
+    assert token_class.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -186,7 +186,7 @@ def test_issue_token(secrets: MagicMock, hash_method: MagicMock) -> None:
     assert exc_info.value.status_code == 404
     assert exc_info.value.message == "The house was not found."
     assert secrets.mock_calls == []
-    assert hash_method.mock_calls == []
+    assert token_class.mock_calls == []
     assert database.mock_calls == [call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,))]
     reset_mocks()
 
@@ -194,12 +194,12 @@ def test_issue_token(secrets: MagicMock, hash_method: MagicMock) -> None:
     database.fetch_one.side_effect = [{"id": 3}]
     database.execute.side_effect = [0]
     secrets.token_urlsafe.side_effect = ["the-token"]
-    hash_method.side_effect = ["the-hash"]
+    token_class.hashed.side_effect = ["the-hash"]
     result = tested.issue_token(helper_user(is_admin=True), 3)
     expected = {"token": "the-token"}
     assert result == expected
     assert secrets.mock_calls == [call.token_urlsafe(32)]
-    assert hash_method.mock_calls == [call("the-token")]
+    assert token_class.mock_calls == [call.hashed("the-token")]
     exp_calls = [
         call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
         call.execute("UPDATE houses SET ingest_token_hash = %s WHERE id = %s", ("the-hash", 3)),
@@ -867,57 +867,6 @@ def test__parse_instant(mock_datetime: MagicMock) -> None:
         assert result == expected
         assert mock_datetime.mock_calls == [call.fromisoformat(text.strip())]
         reset_mocks()
-
-
-@patch.object(SensorCommand, "_hash")
-def test__house_from_token(hash_method: MagicMock) -> None:
-    tested = helper_instance()
-    database = tested._database
-
-    def reset_mocks() -> None:
-        hash_method.reset_mock()
-        database.reset_mock()
-
-    exp_query = "SELECT id FROM houses WHERE ingest_token_hash = %s AND ingest_token_hash <> ''"
-
-    # no token
-    for authorization in ["", "  ", "Bearer", "bearer  "]:
-        with pytest.raises(AppException) as exc_info:
-            tested._house_from_token(authorization)
-        assert exc_info.value.status_code == 401
-        assert exc_info.value.message == "A sensor token is required."
-        assert hash_method.mock_calls == []
-        assert database.mock_calls == []
-        reset_mocks()
-
-    # unknown token
-    hash_method.side_effect = ["the-hash"]
-    database.fetch_one.side_effect = [None]
-    with pytest.raises(AppException) as exc_info:
-        tested._house_from_token("Bearer the-token")
-    assert exc_info.value.status_code == 401
-    assert exc_info.value.message == "The sensor token is not valid."
-    assert hash_method.mock_calls == [call("the-token")]
-    assert database.mock_calls == [call.fetch_one(exp_query, ("the-hash",))]
-    reset_mocks()
-
-    # known token, with or without the scheme
-    for authorization in ["Bearer the-token", "bearer  the-token ", " the-token"]:
-        hash_method.side_effect = ["the-hash"]
-        database.fetch_one.side_effect = [{"id": 3}]
-        result = tested._house_from_token(authorization)
-        expected = 3
-        assert result == expected
-        assert hash_method.mock_calls == [call("the-token")]
-        assert database.mock_calls == [call.fetch_one(exp_query, ("the-hash",))]
-        reset_mocks()
-
-
-def test__hash() -> None:
-    tested = SensorCommand
-    result = tested._hash("the-token")
-    expected = "c2a73fcf61dfbdcadc79a10ba330b2ef5eb66fc0a6735ed69b796bb3c97b97ae"
-    assert result == expected
 
 
 def test__visible_house_ids() -> None:

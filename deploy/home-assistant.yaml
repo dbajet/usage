@@ -59,6 +59,63 @@ rest_command:
       {% endfor %}
       {{ {"samples": ns.samples} | to_json }}
 
+  # ---------------------------------------------------------------------------
+  # Solar: the Enphase gateway, pushed every minute.
+  #
+  # The gateway only answers on the house's own network and the app runs on a VPS,
+  # so this is the only way its live readings can reach it - the same arrangement
+  # as the thermometers, on the same token. Add the "Enphase Envoy" integration in
+  # Home Assistant first (Settings, Devices & Services); it finds the gateway on
+  # the LAN and handles the token its firmware wants.
+  #
+  # The entity names carry the gateway's serial. These are this house's, read off
+  # its own registry; another gateway means another serial. Check with Developer
+  # Tools, States, filtered on "envoy".
+  #
+  # What is sent and why:
+  #   *_lifetime_energy_*  the counters. The app differences two consecutive
+  #                        pushes to get the energy between them, exactly as it
+  #                        does with a meter reading, so a push that goes missing
+  #                        costs nothing: the next one simply spans longer.
+  #   *_current_power_*    what the panels and the house are doing this second.
+  #                        This is what the tiles show, and it is the whole reason
+  #                        for pushing at all rather than waiting on the cloud API.
+  #   *_unit               every reading names its own unit and the app converts.
+  #                        This Envoy reports kW and MWh, not W and Wh, and Home
+  #                        Assistant lets a display unit be overridden from the
+  #                        interface - so a factor baked in here would be one
+  #                        settings change away from being wrong by a thousand.
+  #   battery              state of charge, in percent. A system without batteries
+  #                        simply has no such entity and sends none.
+  #
+  # The house needs its "Solar panels and batteries" switch on (Settings, Houses,
+  # Edit) before any of this appears on the Realtime page.
+  usage_power_push:
+    url: "https://usage.edgy.world/api/ingest/power"
+    method: post
+    timeout: 30
+    content_type: "application/json"
+    headers:
+      authorization: !secret usage_sensor_auth
+    payload: >-
+      {% set produced = 'sensor.envoy_202329053381_lifetime_energy_production' %}
+      {% set consumed = 'sensor.envoy_202329053381_lifetime_energy_consumption' %}
+      {% set making = 'sensor.envoy_202329053381_current_power_production' %}
+      {% set drawing = 'sensor.envoy_202329053381_current_power_consumption' %}
+      {% set charge = 'sensor.envoy_202329053381_battery' %}
+      {{ {
+        "measured_at": now().isoformat(),
+        "production_lifetime": states(produced) | float if is_number(states(produced)) else none,
+        "production_lifetime_unit": state_attr(produced, 'unit_of_measurement') | default('', true),
+        "consumption_lifetime": states(consumed) | float if is_number(states(consumed)) else none,
+        "consumption_lifetime_unit": state_attr(consumed, 'unit_of_measurement') | default('', true),
+        "production_power": states(making) | float if is_number(states(making)) else none,
+        "production_power_unit": state_attr(making, 'unit_of_measurement') | default('', true),
+        "consumption_power": states(drawing) | float if is_number(states(drawing)) else none,
+        "consumption_power_unit": state_attr(drawing, 'unit_of_measurement') | default('', true),
+        "battery_level": states(charge) | float if is_number(states(charge)) else none,
+      } | to_json }}
+
 automation:
   - alias: "Usage: push the thermometers"
     id: usage_push_thermometers
@@ -68,3 +125,12 @@ automation:
         minutes: "/10"
     actions:
       - action: rest_command.usage_sensor_samples
+
+  - alias: "Usage: push the solar"
+    id: usage_push_solar
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    actions:
+      - action: rest_command.usage_power_push

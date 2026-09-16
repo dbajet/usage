@@ -8,12 +8,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from usage.commands.enphase_sync_command import EnphaseSyncCommand
 from usage.commands.reminder_command import ReminderCommand
 from usage.commands.water_sync_command import WaterSyncCommand
+from usage.constants.constants import Constants
 from usage.handlers.api_router import ApiRouter
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.libraries.settings_loader import SettingsLoader
+from usage.libraries.rate_limiter import RateLimiter
 from usage.libraries.static_page import StaticPage
 from usage.structures.app_exception import AppException
 
@@ -24,6 +27,15 @@ class AppFactory:
         self._database = Database(self._settings)
         self._static_dir = Path(__file__).parent / "static"
         self._static_page = StaticPage(self._static_dir)
+        # One window for every process, not merely for every thread: the sync,
+        # an admin setting up a feed, and the other colour mid-deploy all spend
+        # the same API key's per-minute allowance, so the window they share has
+        # to be the database.
+        self._enphase_limiter = RateLimiter(
+            self._database,
+            Constants.enphase_calls_per_minute,
+            Constants.enphase_rate_window_seconds,
+        )
 
     def create(self) -> FastAPI:
         @asynccontextmanager
@@ -31,11 +43,12 @@ class AppFactory:
             self._database.initialize()
             ReminderCommand(self._database, self._settings, EmailSender(self._settings)).start()
             WaterSyncCommand(self._database, self._settings, EmailSender(self._settings)).start()
+            EnphaseSyncCommand(self._database, self._enphase_limiter).start()
             yield
 
         result = FastAPI(title="Usage", lifespan=lifespan)
         self._register_middleware(result)
-        result.include_router(ApiRouter(self._database, self._settings).router)
+        result.include_router(ApiRouter(self._database, self._settings, self._enphase_limiter).router)
         result.mount("/static", StaticFiles(directory=self._static_dir.as_posix()), name="static")
         result.add_api_route("/", self._index, methods=["GET"], response_class=HTMLResponse)
         # The service worker lives at the root so its scope covers the whole app.

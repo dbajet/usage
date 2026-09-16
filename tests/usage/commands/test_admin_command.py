@@ -330,11 +330,12 @@ def test_update_house(require_admin: MagicMock) -> None:
 
     # happy path - the Realtime switches travel with the name and the time zone
     tests = [
-        ({"shows_sensors": True, "shows_water": True}, True, True),
-        ({"shows_water": True}, False, True),
-        ({}, False, False),
+        ({"shows_sensors": True, "shows_water": True, "shows_power": True}, True, True, True),
+        ({"shows_water": True}, False, True, False),
+        ({"shows_power": True}, False, False, True),
+        ({}, False, False, False),
     ]
-    for switches, exp_sensors, exp_water in tests:
+    for switches, exp_sensors, exp_water, exp_power in tests:
         database.fetch_one.side_effect = [{"id": 3}]
         database.encrypt.side_effect = ["sealedName"]
         database.execute.side_effect = [0]
@@ -346,8 +347,9 @@ def test_update_house(require_admin: MagicMock) -> None:
             call.fetch_one("SELECT id FROM houses WHERE id = %s", (3,)),
             call.encrypt("Fremur"),
             call.execute(
-                "UPDATE houses SET name_sealed = %s, timezone = %s, shows_sensors = %s, shows_water = %s WHERE id = %s",
-                ("sealedName", "America/Los_Angeles", exp_sensors, exp_water, 3),
+                "UPDATE houses SET name_sealed = %s, timezone = %s, shows_sensors = %s, shows_water = %s, "
+                "shows_power = %s WHERE id = %s",
+                ("sealedName", "America/Los_Angeles", exp_sensors, exp_water, exp_power, 3),
             ),
         ]
         assert database.mock_calls == exp_calls
@@ -467,7 +469,7 @@ def test__houses() -> None:
     assert result == expected
     exp_calls = [
         call.fetch_all(
-            "SELECT id, name_sealed AS name, timezone, shows_sensors, shows_water, "
+            "SELECT id, name_sealed AS name, timezone, shows_sensors, shows_water, shows_power, "
             "(ingest_token_hash <> '') AS has_sensor_token FROM houses ORDER BY id",
         ),
         call.decrypt_rows(rows, ("name",)),

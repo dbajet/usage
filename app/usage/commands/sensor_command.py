@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
 import re
@@ -12,6 +11,7 @@ from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.libraries.email_texts import EmailTexts
+from usage.libraries.ingest_token import IngestToken
 from usage.structures.app_exception import AppException
 from usage.structures.sensor_breach import SensorBreach
 from usage.structures.sensor_sample import SensorSample
@@ -44,7 +44,7 @@ class SensorCommand:
         self._email_sender = email_sender
 
     def ingest(self, authorization: str, data: dict[str, Any]) -> dict[str, int]:
-        house_id = self._house_from_token(authorization)
+        house_id = IngestToken(self._database).house_id(authorization)
         samples = list(data.get("samples") or [])
         if len(samples) > Constants.ingest_max_samples:
             raise AppException(400, f"At most {Constants.ingest_max_samples} samples per request.")
@@ -79,7 +79,7 @@ class SensorCommand:
         token = secrets.token_urlsafe(Constants.ingest_token_bytes)
         self._database.execute(
             "UPDATE houses SET ingest_token_hash = %s WHERE id = %s",
-            (self._hash(token), house_id),
+            (IngestToken.hashed(token), house_id),
         )
         return {"token": token}
 
@@ -352,25 +352,6 @@ class SensorCommand:
         if result.tzinfo is None:
             result = result.replace(tzinfo=UTC)
         return result
-
-    def _house_from_token(self, authorization: str) -> int:
-        scheme, _, token = authorization.strip().partition(" ")
-        if scheme.lower() != "bearer":
-            token = authorization
-        token = token.strip()
-        if not token:
-            raise AppException(401, "A sensor token is required.")
-        row = self._database.fetch_one(
-            "SELECT id FROM houses WHERE ingest_token_hash = %s AND ingest_token_hash <> ''",
-            (self._hash(token),),
-        )
-        if row is None:
-            raise AppException(401, "The sensor token is not valid.")
-        return int(row["id"])
-
-    @classmethod
-    def _hash(cls, value: str) -> str:
-        return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     def _visible_house_ids(self, user: SessionUser) -> list[int]:
         # Everyone, admins included, only sees the houses they are linked to.

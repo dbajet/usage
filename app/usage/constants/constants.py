@@ -113,6 +113,117 @@ class _Constants:
     # Water is a counter, so its buckets are sums - and the day view keeps the
     # meter's own quarter-hour rather than inventing emptier buckets.
     water_ranges: tuple[tuple[int, int], ...] = ((1, 15), (7, 60), (30, 360), (365, 1440))
+    # Enphase Enlighten, developer API v4. Unlike the water portal this one is
+    # metered: every request counts against the plan's monthly allowance, which
+    # is what shapes the whole design below.
+    enphase_host: str = "api.enphaseenergy.com"
+    enphase_authorize_path: str = "/oauth/authorize"
+    enphase_token_path: str = "/oauth/token"
+    # Enphase's own landing page, which prints the authorisation code for the
+    # person to paste back. Registering a redirect that points at this app would
+    # mean a public unauthenticated route whose only job is to catch one code a
+    # year: the paste costs the admin ten seconds and costs the app nothing.
+    enphase_redirect_uri: str = "https://api.enphaseenergy.com/oauth/redirect_uri"
+    enphase_systems_path: str = "/api/v4/systems"
+    enphase_production_path: str = "/api/v4/systems/{system_id}/telemetry/production_meter"
+    # The fallback for a system with no production CTs: the microinverters always
+    # report what they made, whether or not a meter was fitted to measure it.
+    enphase_production_micro_path: str = "/api/v4/systems/{system_id}/telemetry/production_micro"
+    enphase_consumption_path: str = "/api/v4/systems/{system_id}/telemetry/consumption_meter"
+    enphase_battery_path: str = "/api/v4/systems/{system_id}/telemetry/battery"
+    enphase_energy_lifetime_path: str = "/api/v4/systems/{system_id}/energy_lifetime"
+    enphase_consumption_lifetime_path: str = "/api/v4/systems/{system_id}/consumption_lifetime"
+    enphase_granularity: str = "day"
+    # Only for telemetry that carries a single interval, where there is no
+    # gap to measure the resolution from.
+    enphase_default_span_minutes: int = 15
+    enphase_page_size: int = 100
+    enphase_timeout_seconds: int = 60
+    # An access token lasts about a day and a refresh token about a month, so a
+    # feed left paused for a month has to be authorised again by hand. The skew
+    # refreshes a little early rather than letting a call fail on the boundary.
+    enphase_token_skew_seconds: int = 300
+    enphase_tick_seconds: int = 60
+    enphase_claim_minutes: int = 30
+    # The pace is derived from what is left of the month's allowance, never
+    # hard-coded, but it is held between these two: fast enough that the page is
+    # worth calling Realtime, slow enough that a generous plan cannot be spent
+    # in an afternoon.
+    enphase_sync_min_seconds: int = 900
+    enphase_sync_max_seconds: int = 21_600
+    # The free "Watt" plan. An account on a larger plan raises this per feed,
+    # and the pace opens up on its own.
+    enphase_calls_budget: int = 1000
+    # The per-minute ceiling is a second, independent limit: the plan allows ten
+    # a minute, and one slot is left spare because the window is measured on our
+    # clock and enforced on theirs. A backfill tick asks for far more than ten in
+    # a row, so this is what actually keeps it out of a 429.
+    enphase_calls_per_minute: int = 9
+    enphase_rate_window_seconds: float = 60.0
+    # A whole window: the sync sleeps off a full minute rather than giving up,
+    # since nobody is waiting on it. The feed form passes the same budget and
+    # only ever reaches it if a backfill is bursting at that exact moment.
+    enphase_rate_wait_seconds: float = 60.0
+    # The window is shared through the database, so the count is taken under a
+    # Postgres advisory lock; the namespace keeps it clear of anyone else's.
+    # Where a house's solar came from. The cloud feed owns the years and is
+    # metered; the local one is Home Assistant reading the gateway on the house's
+    # own network, which is free, live, and has no history at all. A house may
+    # well have both, and then they describe the same panels - so the two are
+    # never summed, only preferred one over the other, bucket by bucket.
+    enphase_source_cloud: str = "cloud"
+    enphase_source_local: str = "local"
+    # The local feed stands in for a system id it does not have; one per house.
+    enphase_local_system_id: str = "local"
+    # A push carries the gateway's lifetime counters and the app differences
+    # them, so a value re-sent unchanged is a zero and never a double count.
+    # A gap longer than this is a restart rather than an interval, and its
+    # delta is dropped rather than drawn as one enormous bar.
+    enphase_push_max_gap_minutes: int = 60
+    enphase_push_min_gap_seconds: float = 1.0
+    # The tiles show what the panels are doing this second, which is the whole
+    # point of a local feed; after this long with no push they stop claiming it.
+    enphase_live_stale_minutes: int = 15
+    # A push says what unit it is in and the app converts, rather than the
+    # template doing arithmetic on the way out. Home Assistant lets a sensor's
+    # display unit be overridden from the interface - an Envoy reports kW and
+    # MWh by default - so a factor baked into the template is one settings
+    # change away from being silently wrong by a thousand. Same rule as the
+    # water CSV: convert from the unit the data itself names.
+    enphase_power_watts: tuple[tuple[str, float], ...] = (
+        ("W", 1.0),
+        ("KW", 1_000.0),
+        ("MW", 1_000_000.0),
+    )
+    enphase_energy_watt_hours: tuple[tuple[str, float], ...] = (
+        ("WH", 1.0),
+        ("KWH", 1_000.0),
+        ("MWH", 1_000_000.0),
+        ("GWH", 1_000_000_000.0),
+    )
+    rate_limit_lock_namespace: int = 8421
+    rate_limit_retry_seconds: float = 0.05
+    enphase_recent_days: int = 2
+    # Production, consumption and the batteries: one call each per day of
+    # telemetry, which is what a tick costs and so what paces the feed.
+    enphase_streams: int = 3
+    # Quarter-hourly history costs three calls per day walked, so it is worth a
+    # fortnight - enough to fill the day and week views - and no more. The daily
+    # pass below covers the years for two calls in total.
+    enphase_fine_days: int = 14
+    enphase_fine_days_per_tick: int = 2
+    enphase_watt_hours_per_kwh: float = 1000.0
+    enphase_battery_max_percent: float = 100.0
+    enphase_message_max: int = 300
+    # Telemetry we cannot read will not become readable on the next tick: the
+    # walk counts it and moves past, rather than pinning itself on one bad day.
+    enphase_unreadable_status: int = 422
+    # Production and consumption are counters and so are summed; the battery is
+    # a level and is averaged. The month and the year are served by the daily
+    # rows, which is the only resolution the lifetime endpoints have - and the
+    # only one whose whole history fits in the allowance.
+    enphase_daily_bucket_minutes: int = 1440
+    enphase_ranges: tuple[tuple[int, int], ...] = ((1, 15), (7, 60), (30, 1440), (365, 1440))
     email_test_suffixes: tuple[str, ...] = (
         "@example.com", ".example.com", "@example.org", ".example.org", "@example.net", ".example.net",
         ".test", ".invalid", ".example", ".localhost",

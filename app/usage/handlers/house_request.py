@@ -10,3 +10,4 @@ class HouseRequest(BaseModel):
     # its settings panels are worth showing.
     shows_sensors: bool = False
     shows_water: bool = False
+    shows_power: bool = False

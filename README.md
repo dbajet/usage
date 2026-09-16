@@ -53,17 +53,21 @@ sensor alone and Ctrl+click (or a long press) adds and removes them. On a phone
 the view drops its heading — the bottom bar already names it — and the switches
 keep their sliders but trade their words for icons.
 
+The solar tiles show **power** - what the panels are making this second - whenever Home
+Assistant is pushing, and fall back to the last interval's energy when only the cloud feed is
+running, which is the best a four-hourly feed can honestly offer.
+
 One switch over the view picks the unit system for everything on it: **US** shows
 Fahrenheit and gallons, **FR** shows Celsius, litres and cubic metres. It is a viewer's
 choice, kept per browser, and it changes nothing that is stored — temperatures arrive as
 the thermometer reports them and water is always held in cubic metres. **Previous**
-overlays the period before the one on show, across both graphs: dotted curves for the
-thermometers, pale bars behind the water — and a water bar's tooltip then carries both
+overlays the period before the one on show, across every graph: dotted curves for the
+thermometers, pale bars behind the water and the solar — and a bar's tooltip then carries both
 readings under their own dates, since comparing them is the whole point of the overlay.
 
 What a house measures is a decision, not a guess from the data: Settings, Houses, Edit
-carries a switch for the thermometers and one for the water meter. Between them they
-decide whether the Realtime page appears for that house at all, and which of the two
+carries a switch for the thermometers, one for the water meter and one for the solar. Between
+them they decide whether the Realtime page appears for that house at all, and which of the
 settings panels are worth showing — a house with a water meter and no thermometer is
 not offered thermometer settings. Existing houses were seeded from what they already
 collect, so a new house needs its switches ticked once.
@@ -181,6 +185,152 @@ gap, not a dip — under the same range tabs, offset and overlay as the thermome
 graphs always show the same window. The axis ladder is built in the unit it will be read in
 rather than in the cubic metres underneath, since a step that is round in m³ lands on 26 and
 53 gallons.
+
+## Realtime: solar (Enphase)
+
+A house's solar arrives two ways at once, and they are good at opposite things. The **cloud
+feed** talks to Enphase's developer API (v4) and owns the years: it is the only one that can
+answer for 2022, and it is metered, slow and rationed. The **push feed** is Home Assistant
+reading the gateway on the house's own network every minute: it is free, live, and knows
+nothing that happened before it was switched on.
+
+Neither is sufficient alone. An Envoy only answers on the LAN and this app runs on a VPS that
+has never been on it, so without the push there is nothing live; and a gateway remembers no
+history worth the name, so without the cloud there is nothing behind today. A house can run
+either or both, and most will want both.
+
+A feed is one system of one Enphase application, added by an admin in Settings, Solar. Three
+secrets identify the application — client id, client secret, API key — and the fourth is
+short-lived: **Authorise** opens Enphase, the owner approves the application there, and the
+code it prints is pasted back. It is exchanged for a token pair while the form is still open,
+because those codes expire in minutes; the same call then asks the account which systems it has
+and reads a day, so a wrong key is refused in the form rather than hours later in `last_error`.
+
+```
+POST /oauth/token?grant_type=authorization_code&code=...   Basic client_id:client_secret
+POST /oauth/token?grant_type=refresh_token&refresh_token=...  the pair rotates every time
+GET  /api/v4/systems                                       key= + Bearer
+GET  /api/v4/systems/{id}/telemetry/production_meter        ?start_at=&granularity=day
+GET  /api/v4/systems/{id}/telemetry/production_micro        only if there are no production CTs
+GET  /api/v4/systems/{id}/telemetry/consumption_meter
+GET  /api/v4/systems/{id}/telemetry/battery
+GET  /api/v4/systems/{id}/energy_lifetime                   daily totals, whole system life
+GET  /api/v4/systems/{id}/consumption_lifetime
+```
+
+Two credentials guard every call and they are not interchangeable: the API key says which plan
+the request is billed to, the bearer token says whose account it may read. Both fail with a 401
+and they are fixed differently, so Enphase's own words are passed straight through into
+`last_error`. A 401 is answered exactly once, by refreshing and retrying.
+
+**The refresh token rotates on every use.** The pair that comes back replaces the one that was
+sent, and the old one is dead the moment it is used. So the tokens are written back whether the
+pull succeeded or not — the save sits in a `finally`, not on the happy path, because a rotated
+token thrown away by a later failure locks the account out until a person authorises it again by
+hand. A refresh token also lasts about a month, so a feed left paused for longer needs a fresh
+code; that is what the panel means when it says the authorisation has lapsed.
+
+Unlike the water portal, **this API is metered**, and that one fact shapes everything else. The
+free tier is a thousand calls a month, a tick costs six, and running hourly would spend the
+month by the eighth. So the feed has no fixed interval: it works out its own from what is left
+of the allowance and how much of the month is left to spend it over, held between a quarter of
+an hour and six. An account on a larger plan raises the budget on the feed and the pace opens up
+on its own; a spent one waits for the turn of the month rather than knocking on a door that
+answers 429.
+
+There is a **second, independent limit underneath it**: ten calls a minute. Pacing the ticks
+does nothing for that one, because the burst happens inside a single tick — a first tick asks for
+six calls for the recent days, two for the history and three per day of the fine walk, close to
+twenty in a row. So a sliding window sits under the client and simply will not let the burst out:
+the call that would be the tenth in a minute waits for the first to age out instead. The window
+slides rather than resetting on the minute, since a fixed bucket lets through twice the ceiling
+across a boundary — ten calls at 11:59:59 and ten more at 12:00:01 — which is exactly the shape
+of a backfill tick.
+
+**The window lives in the database** (`api_calls`), not in memory, because the ceiling belongs to
+the API key and this app runs as two processes: during a blue/green deploy both colours are up
+at once, and a window each would let exactly twice the ceiling through. The background sync and
+an admin submitting the feed form are two more claimants on the same allowance. The database is
+the only thing all of them share.
+
+That makes the count a read-modify-write two processes can race — both read "eight taken", both
+decide there is room, both go — so it is taken inside one transaction behind a Postgres advisory
+lock. Every time involved is `clock_timestamp()` and never `now()`: `now()` is the transaction's
+*start* time and holds still for its whole length, and this transaction may have spent seconds
+queueing for the lock, so stamping a call with the moment its transaction began would age it out
+of the window early and let the ceiling drift upwards under load. That was not theoretical — it
+let ten through in a nine-call window the first time it was measured.
+
+The ceiling is set to nine rather than ten, which buys the margin that covers the gap between
+our clock and theirs: we stamp a call when the slot is granted, and Enphase counts it when the
+request lands a moment later. Against four processes racing on a compressed window the
+timestamps enforcement uses never exceeded nine, and arrival times never exceeded ten — the
+plan's actual limit. The effect in normal running: a steady tick of six calls never waits at
+all, a first tick spends about a minute mostly asleep, and nothing ever comes back 429. The feed
+form passes the same wait budget and only reaches it if a backfill happens to be bursting at
+that exact moment, in which case it says so instead of hanging.
+
+None of that ceiling matters much once the push feed is running: the live edge comes free off
+the LAN, and the cloud feed is left doing the one job only it can do - the years - for a couple
+of calls a month.
+
+### The push feed, and why the two are never added together
+
+Home Assistant posts to `/api/ingest/power` on the same house token the thermometers use
+(`deploy/home-assistant.yaml` carries both). What it sends is **readings, not rates**: the
+gateway's lifetime counters in watt-hours, which the app differences to get the energy of the
+interval between two pushes - the same trick it uses on a meter reading. That is what makes a
+dropped push cost nothing, where a reported rate would turn every one into a hole. It also
+sends instantaneous power, which is what the tiles show and the whole reason for pushing at all.
+
+Two things it refuses to draw. A counter that has gone backwards is a replaced or reset gateway,
+not a house that generated negative electricity, so it starts a fresh baseline and charts
+nothing. And a gap longer than an hour is an outage rather than an interval: charting it would
+put one enormous bar where a quiet night belongs.
+
+Both feeds describe the same panels, so **the series never sums them**. Adding them would double
+every reading a house collects both ways. Preferring one source wholesale would be wrong too:
+Home Assistant only knows what it has been up for, and the cloud is exactly what covers the
+hours it was not. So the two are bucketed separately and the live one is laid over the cloud's,
+a bucket at a time - live where there is live, cloud underneath. That is the `FULL OUTER JOIN`
+in `_series_query`, and it is why they must be grouped before they meet.
+
+The push feed appears as a second row in Settings, Solar, with nothing to configure and only
+its own pulse to report - a silent typo in the automation otherwise looks exactly like a working
+one. And when a live reading is arriving, the Realtime page reloads every minute instead of
+every five, because a feed worth that name deserves a page that keeps up.
+
+### The cloud feed's history
+
+The same arithmetic decides the resolution of the history, which is why there are two passes.
+The lifetime endpoints answer a multi-year range in **one call each**, so the daily totals of the
+whole system's life are bought on the first tick and never asked for again. Quarter-hourly
+telemetry costs **three calls for every single day** walked, so it walks back a fortnight — enough
+to fill the day and week views — and then stops for good. Both resolutions live in
+`enphase_points` and `span_minutes` keeps them apart: the day and week views read the
+quarter-hours, the month and year views read the daily rows, and no query ever reads both, or an
+hour would be counted inside its own day twice.
+
+Production CTs are usual but not universal, and a system without them refuses the meter
+endpoint rather than answering an empty day — so a refusal there falls through to the
+microinverters, which always know what they made. Only a refusal falls through: an empty day is
+a perfectly good answer at night, and retrying it would double the cost of every tick after
+sunset.
+
+Production and consumption are counters, so their buckets are sums and the graph draws them as
+paired bars — what the panels made beside what the house drew, on one scale, since that
+comparison is the whole question. The battery is a level, not a counter: it is averaged over a
+bucket and drawn as a line across the full 0–100, so a flat week does not look like a cliff. It
+is also the one thing the lifetime endpoints cannot supply, so the battery card goes back only
+as far as this app has been collecting — on the month and year views it says so rather than
+showing an empty graph.
+
+Everything is stored in kilowatt-hours, as the rest of the app stores electricity, converted from
+the watt-hours Enphase reports at the client boundary. An interval is filed under the instant it
+*started*, since Enphase reports the far end and a bar covering 10:00–10:15 belongs at 10:00. The
+length of an interval is measured from the gap between consecutive ends rather than assumed:
+`granularity` names the range asked for, not the resolution answered, and the same shape carries
+five-minute microinverter data and quarter-hourly meter data.
 
 ## Historical data
 

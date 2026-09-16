@@ -126,7 +126,7 @@
           <div class="sensor-controls">
             <label class="switch units-switch" title="US: Fahrenheit and gallons. FR: Celsius, litres and cubic metres.">
               <span>US</span><input id="sensor-units" type="checkbox"><span class="slider"></span><span>FR</span></label>
-            <label class="switch" title="Overlay the previous day, week, month or year: dotted for the thermometers, pale bars for the water">
+            <label class="switch" title="Overlay the previous day, week, month or year: dotted for the thermometers, pale bars for the water and the solar">
               <input id="sensor-previous" type="checkbox"><span class="slider"></span>
               <span class="long">Previous</span><span class="short"><svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-120q-138 0-240.5-91.5T122-440h82q14 104 92.5 172T480-200q117 0 198.5-81.5T760-480q0-117-81.5-198.5T480-760q-69 0-129 32t-101 88h110v80H120v-240h80v94q51-64 124.5-99T480-840q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-480q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-120Zm112-192L440-464v-216h80v184l128 128-56 56Z"/></svg></span></label>
             <label class="switch" title="Show min/max threshold lines">
@@ -157,6 +157,10 @@
           <button class="ghost" data-settings-tab="water" type="button" title="Water" hidden>
             <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-133 0-226.5-92T160-396q0-65 26.5-124t72.5-103l221-212 221 212q46 44 72.5 103T800-396q0 132-93.5 224T480-80Zm0-80q100 0 170-69t70-167q0-49-19.5-93T645-567L480-726 315-567q-36 34-55.5 78T240-396q0 98 70 167t170 69Z"/></svg>
             <span>Water</span>
+          </button>
+          <button class="ghost" data-settings-tab="enphase" type="button" title="Solar" hidden>
+            <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-800v-120h80v120h-80Zm0 760v-120h80v120h-80Zm360-400v-80h120v80H800ZM40-440v-80h120v80H40Zm708-252-56-56 70-72 58 58-72 70Zm-580 580-58-58 72-70 56 56-70 72Zm622 0-70-72 56-56 72 70-58 58ZM168-692l-72-70 58-58 70 72-56 56Zm312 452q-100 0-170-70t-70-170q0-100 70-170t170-70q100 0 170 70t70 170q0 100-70 170t-170 70Zm0-80q66 0 113-47t47-113q0-66-47-113t-113-47q-66 0-113 47t-47 113q0 66 47 113t113 47Zm0-160Z"/></svg>
+            <span>Solar</span>
           </button>
           <button class="ghost" data-settings-tab="houses" type="button" title="Houses" hidden>
             <svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M240-200h120v-240h240v240h120v-360L480-740 240-560v360Zm-80 80v-480l320-240 320 240v480H520v-240h-80v240H160Zm320-350Z"/></svg>
@@ -246,6 +250,41 @@
           </div>
         </div>
 
+        <div data-settings-panel="enphase" hidden>
+          <div class="card">
+            <h3>Solar &middot; <span id="enphase-house-name"></span></h3>
+            <p class="meta">Enphase counts every request against the plan's monthly allowance, so the feed works out
+              its own pace from what is left of it rather than asking on a fixed clock. The panels and the house's
+              draw arrive quarter-hourly for the last fortnight and as daily totals for the whole life of the system;
+              the batteries' charge only goes back as far as this app has been collecting it.</p>
+            <p class="meta">Home Assistant can also push the gateway's own readings every minute over the
+              house's sensor token — free, live, and with no call budget at all. The two sit together: the cloud
+              feed owns the years of history, the push owns the last minute, and the graph prefers the live one
+              wherever it has something to say. The Envoy block is in <code>deploy/home-assistant.yaml</code>.</p>
+            <p class="meta">Create an application at <strong>developer.enphase.com</strong>, then paste its client id,
+              client secret and API key below. <strong>Authorise</strong> opens Enphase in a new tab: approve the
+              application there and paste back the code it shows you. Codes expire within minutes.</p>
+            <div id="enphase-feed-list"></div>
+            <form id="enphase-feed-form" class="stack-form">
+              <div class="inline-form">
+                <input id="enphase-client-id" placeholder="Client id" autocomplete="off">
+                <input id="enphase-client-secret" type="password" placeholder="Client secret" autocomplete="new-password">
+                <input id="enphase-api-key" type="password" placeholder="API key" autocomplete="new-password">
+              </div>
+              <div class="inline-form">
+                <button id="enphase-authorize" class="ghost" type="button"
+                  title="Open Enphase to approve this application">Authorise</button>
+                <input id="enphase-code" placeholder="Authorisation code from Enphase" autocomplete="off">
+              </div>
+              <div class="inline-form">
+                <input id="enphase-system-id" placeholder="System id (optional &mdash; detected)">
+                <input id="enphase-calls-budget" type="number" min="1" step="1"
+                  placeholder="Calls per month (1000 on the free plan)">
+                <button class="primary" type="submit">Add solar feed</button>
+              </div>
+            </form>
+          </div>
+        </div>
         <div data-settings-panel="houses" hidden>
           <div class="card">
             <h3>Houses</h3>

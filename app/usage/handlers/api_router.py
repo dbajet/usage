@@ -7,6 +7,8 @@ from fastapi import APIRouter, Cookie, Header, Request, Response
 
 from usage.commands.admin_command import AdminCommand
 from usage.commands.auth_command import AuthCommand
+from usage.commands.enphase_command import EnphaseCommand
+from usage.commands.enphase_ingest_command import EnphaseIngestCommand
 from usage.commands.meter_command import MeterCommand
 from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
@@ -18,6 +20,8 @@ from usage.handlers.api_message import ApiMessage
 from usage.handlers.auth_link_request import AuthLinkRequest
 from usage.handlers.auth_link_response import AuthLinkResponse
 from usage.handlers.auth_verify_link_request import AuthVerifyLinkRequest
+from usage.handlers.enphase_feed_request import EnphaseFeedRequest
+from usage.handlers.enphase_feed_update_request import EnphaseFeedUpdateRequest
 from usage.handlers.extract_request import ExtractRequest
 from usage.handlers.house_request import HouseRequest
 from usage.handlers.ingest_request import IngestRequest
@@ -26,6 +30,7 @@ from usage.handlers.meter_color_request import MeterColorRequest
 from usage.handlers.meter_order_request import MeterOrderRequest
 from usage.handlers.meter_request import MeterRequest
 from usage.handlers.meter_update_request import MeterUpdateRequest
+from usage.handlers.power_ingest_request import PowerIngestRequest
 from usage.handlers.passkey_assertion_request import PasskeyAssertionRequest
 from usage.handlers.passkey_options_request import PasskeyOptionsRequest
 from usage.handlers.passkey_register_request import PasskeyRegisterRequest
@@ -46,12 +51,13 @@ from usage.handlers.water_feed_update_request import WaterFeedUpdateRequest
 from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.libraries.meter_reader import MeterReader
+from usage.libraries.rate_limiter import RateLimiter
 from usage.structures.app_exception import AppException
 from usage.structures.settings import Settings
 
 
 class ApiRouter:
-    def __init__(self, database: Database, settings: Settings) -> None:
+    def __init__(self, database: Database, settings: Settings, enphase_limiter: RateLimiter) -> None:
         self._database = database
         self._settings = settings
         self._router = APIRouter(prefix="/api")
@@ -64,6 +70,8 @@ class ApiRouter:
         self._stats_command = StatsCommand(database)
         self._sensor_command = SensorCommand(database, settings, email_sender)
         self._water_command = WaterCommand(database)
+        self._enphase_command = EnphaseCommand(database, enphase_limiter)
+        self._enphase_ingest_command = EnphaseIngestCommand(database)
         self._register()
 
     @property
@@ -127,6 +135,14 @@ class ApiRouter:
         self._router.add_api_route("/water/feeds/{feed_id}", self._update_water_feed, methods=["PUT"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds/{feed_id}", self._delete_water_feed, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds/{feed_id}/backfill", self._restart_water_backfill, methods=["POST"], response_model=ApiMessage)
+        self._router.add_api_route("/ingest/power", self._ingest_power, methods=["POST"])
+        self._router.add_api_route("/enphase/authorize-url", self._enphase_authorize_url, methods=["GET"])
+        self._router.add_api_route("/enphase/feeds", self._list_enphase_feeds, methods=["GET"])
+        self._router.add_api_route("/enphase/feeds", self._create_enphase_feed, methods=["POST"])
+        self._router.add_api_route("/enphase/series", self._enphase_series, methods=["GET"])
+        self._router.add_api_route("/enphase/feeds/{feed_id}", self._update_enphase_feed, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/enphase/feeds/{feed_id}", self._delete_enphase_feed, methods=["DELETE"], response_model=ApiMessage)
+        self._router.add_api_route("/enphase/feeds/{feed_id}/backfill", self._restart_enphase_backfill, methods=["POST"], response_model=ApiMessage)
 
     def _version(self) -> dict[str, str]:
         return {
@@ -597,6 +613,73 @@ class ApiRouter:
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
         return self._water_command.series(user, house_id, days, previous, offset)
+
+    def _ingest_power(self, body: PowerIngestRequest, authorization: str = Header(default="")) -> dict[str, Any]:
+        # Home Assistant, not a signed-in user: the bearer token identifies the house.
+        return self._enphase_ingest_command.ingest(authorization, body.model_dump())
+
+    def _enphase_authorize_url(
+        self,
+        client_id: str,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, str]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._enphase_command.authorize_url(user, client_id)
+
+    def _list_enphase_feeds(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._enphase_command.list_feeds(user, house_id)
+
+    def _create_enphase_feed(
+        self,
+        body: EnphaseFeedRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._enphase_command.create_feed(user, body.model_dump())
+
+    def _update_enphase_feed(
+        self,
+        feed_id: int,
+        body: EnphaseFeedUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._enphase_command.update_feed(user, feed_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_enphase_feed(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._enphase_command.delete_feed(user, feed_id)
+        return ApiMessage(message=message["message"])
+
+    def _restart_enphase_backfill(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._enphase_command.restart_backfill(user, feed_id)
+        return ApiMessage(message=message["message"])
+
+    def _enphase_series(
+        self,
+        house_id: int,
+        days: int = 1,
+        previous: bool = False,
+        offset: int = 0,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._enphase_command.series(user, house_id, days, previous, offset)
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"

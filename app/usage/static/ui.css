@@ -570,6 +570,12 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 .viz-chart .bars rect:hover { opacity: 1; }
 /* Last period, drawn underneath: pale enough to read past, solid enough to compare. */
 .viz-chart .bars rect.previous { opacity: 0.28; }
+
+/* The battery is a level, so it is a line rather than bars - and its overlay is
+   pale in the same way the water's and the solar's are. */
+.viz-chart .lines path { stroke-linejoin: round; stroke-linecap: round; }
+.viz-chart .lines path.previous { stroke-dasharray: 1.5 3; opacity: 0.4; }
+.viz-chart .lines circle { cursor: crosshair; }
 .units-switch span { font-size: 0.8rem; letter-spacing: 0.04em; }
 .meta.warn { color: var(--danger); }
 .token-box {

@@ -25,7 +25,8 @@ class ReadingCommand:
                 self._database.fetch_all(
                     """
                     SELECT houses.id, houses.name_sealed AS name,
-                           houses.shows_sensors AS has_sensors, houses.shows_water AS has_water
+                           houses.shows_sensors AS has_sensors, houses.shows_water AS has_water,
+                           houses.shows_power AS has_power
                     FROM houses ORDER BY houses.id
                     """,
                 ),

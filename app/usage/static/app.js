@@ -20,6 +20,10 @@ let state = {
   sensorAutoRefreshId: null,
   waterData: null,
   waterFeeds: null,
+  powerData: null,
+  enphaseFeeds: null,
+  enphaseLocal: null,
+  sensorRefreshMs: 0,
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -192,12 +196,13 @@ function showView(name) {
   $$(".app-main > section").forEach((section) => { section.hidden = section.id !== `view-${name}`; });
   if (name === "settings") {
     let tab = storedItem("usage-settings-tab", "meters");
-    if (!state.me.is_admin && (tab === "houses" || tab === "users" || tab === "water")) tab = "meters";
+    if (!state.me.is_admin && ["houses", "users", "water", "enphase"].includes(tab)) tab = "meters";
     showSettingsTab(tab);
     loadPasskeys();
     loadMeters();
     loadSensorSettings();
     loadWaterSettings();
+    loadEnphaseSettings();
     loadReminder();
     if (state.me && state.me.is_admin) loadAdmin();
   }
@@ -211,7 +216,7 @@ async function chooseHouseView() {
   // After the house changes, a view or tab the new house cannot show falls
   // back. Returns the view to open, so the caller loads it exactly once.
   await ensureDashboard();
-  if (currentView() === "sensors" && !houseHasSensors() && !houseHasWater()) return "stats";
+  if (currentView() === "sensors" && !houseHasRealtime()) return "stats";
   return currentView();
 }
 
@@ -395,16 +400,21 @@ async function ensureDashboard() {
   // nav item and the two settings tabs follow that, not the data.
   const hasSensors = Boolean(current && current.has_sensors);
   const hasWater = Boolean(current && current.has_water);
-  $('[data-nav="sensors"]').hidden = !hasSensors && !hasWater;
+  const hasPower = Boolean(current && current.has_power);
+  $('[data-nav="sensors"]').hidden = !hasSensors && !hasWater && !hasPower;
   $('[data-settings-tab="sensors"]').hidden = !hasSensors;
-  // Both halves are per house, and the water one is an admin's to set up.
-  const showsWater = hasWater && Boolean(state.me && state.me.is_admin);
+  // Every half is per house, and the two feeds are an admin's to set up.
+  const admin = Boolean(state.me && state.me.is_admin);
+  const showsWater = hasWater && admin;
+  const showsPower = hasPower && admin;
   $('[data-settings-tab="water"]').hidden = !showsWater;
+  $('[data-settings-tab="enphase"]').hidden = !showsPower;
   // A tab that has just been hidden cannot stay the selected one. This waits for
   // the dashboard on purpose: deciding earlier would answer "no" for every house,
   // and a restored Water tab would fall back to Meters on the way in.
   const tab = storedItem("usage-settings-tab", "meters");
-  const gone = (tab === "sensors" && !hasSensors) || (tab === "water" && !showsWater);
+  const gone = (tab === "sensors" && !hasSensors) || (tab === "water" && !showsWater)
+    || (tab === "enphase" && !showsPower);
   if (gone && currentView() === "settings") showSettingsTab("meters");
 }
 
@@ -416,6 +426,15 @@ function houseHasSensors() {
 function houseHasWater() {
   const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
   return Boolean(current && current.has_water);
+}
+
+function houseHasPower() {
+  const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
+  return Boolean(current && current.has_power);
+}
+
+function houseHasRealtime() {
+  return houseHasSensors() || houseHasWater() || houseHasPower();
 }
 
 function currentView() {
@@ -1262,15 +1281,22 @@ function storeThresholds(show) {
   storeItem("usage-sensor-thresholds", show ? "1" : "0");
 }
 
+function refreshCadence() {
+  // A gateway pushing every minute is worth watching every minute; a house on
+  // thermometers and the cloud API alone changes far too slowly to bother.
+  return liveReading(state.powerData) ? LIVE_REFRESH_MS : SENSOR_REFRESH_MS;
+}
+
 function startSensorAutoRefresh() {
   // The thermometers push every few minutes, so the last range goes stale on its
   // own: it reloads like the refresh button, readings and tiles together. An
   // earlier period cannot change - there the arrows, not a timer, move the view.
   stopSensorAutoRefresh();
+  state.sensorRefreshMs = refreshCadence();
   state.sensorAutoRefreshId = setInterval(() => {
     if ($("#view-sensors").hidden || state.sensorOffset !== 0) return;
-    loadSensors();
-  }, SENSOR_REFRESH_MS);
+    loadSensors(true);
+  }, state.sensorRefreshMs);
 }
 
 function stopSensorAutoRefresh() {
@@ -1372,7 +1398,7 @@ async function loadSensors(seriesOnly = false) {
         $("#sensor-content").innerHTML = '<p class="meta">No house is linked to your account yet.</p>';
         return;
       }
-      if (!houseHasSensors() && !houseHasWater()) { showView("stats"); return; }
+      if (!houseHasRealtime()) { showView("stats"); return; }
     }
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
     $("#sensor-units").checked = wantsMetric();
@@ -1386,7 +1412,7 @@ async function loadSensors(seriesOnly = false) {
     // The list and both series leave together: one round trip, not three, and
     // both follow the same range, offset and overlay so the two graphs of the
     // view always show the same window.
-    const [list, series, water] = await Promise.all([
+    const [list, series, water, power] = await Promise.all([
       reuse
         ? Promise.resolve({ sensors: state.sensors })
         : api(`/api/sensors?house_id=${state.houseId}`),
@@ -1396,11 +1422,15 @@ async function loadSensors(seriesOnly = false) {
       houseHasWater()
         ? api(`/api/water/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
         : Promise.resolve(null),
+      houseHasPower()
+        ? api(`/api/enphase/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
+        : Promise.resolve(null),
     ]);
     state.sensors = list.sensors || [];
     state.sensorsHouseId = state.houseId;
     state.sensorData = series;
     state.waterData = water;
+    state.powerData = power;
     renderSensors();
   } catch (error) {
     $("#sensor-content").classList.remove("loading");
@@ -1423,7 +1453,7 @@ function renderSensors() {
   const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
   if (!sensors.length) {
     $("#sensor-content").classList.remove("loading");
-    const alone = waterCardMarkup(state.waterData);
+    const alone = waterCardMarkup(state.waterData) + powerCardMarkup(state.powerData) + batteryCardMarkup(state.powerData);
     if (!alone) {
       $("#sensor-content").innerHTML = `
       <div class="card">
@@ -1432,11 +1462,14 @@ function renderSensors() {
       </div>`;
       return;
     }
-    // Water without a single thermometer: the period bar still belongs to it.
-    const until = state.waterData.until ? Date.parse(state.waterData.until) : Date.now();
-    const since = until - state.waterData.days * 86400000;
-    const label = `${fmtPeriodEdge(since, state.waterData.days)} – ${fmtPeriodEdge(until, state.waterData.days)}`;
-    $("#sensor-content").innerHTML = periodBarMarkup(label, "Water drawn per bucket.") + alone;
+    // A house with meters and not one thermometer: the period bar belongs to
+    // whichever of them is on, so it is read off the series that came back
+    // rather than off the water's, which a solar-only house never asks for.
+    const shown = state.waterData || state.powerData;
+    const until = shown.until ? Date.parse(shown.until) : Date.now();
+    const since = until - shown.days * 86400000;
+    const label = `${fmtPeriodEdge(since, shown.days)} – ${fmtPeriodEdge(until, shown.days)}`;
+    $("#sensor-content").innerHTML = periodBarMarkup(label, "Water drawn and power made per bucket.") + alone;
     wirePeriodBar();
     return;
   }
@@ -1477,9 +1510,13 @@ function renderSensors() {
       ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds.filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id))) || '<p class="meta">No reading in this period.</p>'}
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
     </div>
-    ${waterCardMarkup(state.waterData)}`;
+    ${waterCardMarkup(state.waterData)}
+    ${powerCardMarkup(state.powerData)}
+    ${batteryCardMarkup(state.powerData)}`;
   wireSensorChartHover("#sensor-content");
   wirePeriodBar();
+  // Whether this house has a live feed is only known once its series is in.
+  if (state.sensorAutoRefreshId && state.sensorRefreshMs !== refreshCadence()) startSensorAutoRefresh();
   $$("[data-sensor-tile]").forEach((tile) => {
     const sensorId = Number(tile.dataset.sensorTile);
     const solo = () => {
@@ -2055,6 +2092,431 @@ async function addWaterFeed(event) {
   } catch (error) { showAppError(error); }
 }
 
+// ---------- Solar (Enphase production, consumption and batteries) ----------
+
+const PRODUCTION_COLOR = "var(--viz-3)";
+const CONSUMPTION_COLOR = "var(--viz-4)";
+const BATTERY_COLOR = "var(--viz-5)";
+const WATT_HOURS_PER_KWH = 1000;
+const POWER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
+// A push every minute off the gateway goes stale in minutes, not hours: past
+// this the tiles stop claiming to be live and fall back to the last interval.
+const LIVE_STALE_MS = 15 * 60 * 1000;
+const LIVE_REFRESH_MS = 60 * 1000;
+const WATTS_PER_KW = 1000;
+
+function fmtPower(watts) {
+  // What the panels are doing this second, which is the whole point of a local
+  // feed: watts while they are small, kilowatts once they are not.
+  if (watts === null || watts === undefined) return "—";
+  if (Math.abs(watts) < WATTS_PER_KW) return `${Math.round(watts)} W`;
+  return `${(watts / WATTS_PER_KW).toFixed(2)} kW`;
+}
+
+function liveReading(data) {
+  // Present, and recent enough to still be true.
+  const live = data && data.live;
+  if (!live || !live.at) return null;
+  return Date.now() - Date.parse(live.at) < LIVE_STALE_MS ? live : null;
+}
+
+function energyUnit(highest, axis = false) {
+  // Watt-hours while the numbers are small, kilowatt-hours once they are not.
+  // An axis decides from its top so every rung lands in the same unit: a ladder
+  // reading "750 Wh, 1.0 kWh" is arithmetic the reader should not have to do.
+  return Math.abs(highest) < (axis ? 2 : 1) ? "Wh" : "kWh";
+}
+
+function fmtEnergy(value, unit = null) {
+  // Everything is stored in kilowatt-hours; this is only how it is shown.
+  if (value === null || value === undefined) return "—";
+  const shown = unit || energyUnit(value);
+  if (shown === "Wh") return `${Math.round(value * WATT_HOURS_PER_KWH).toLocaleString("en-US")} Wh`;
+  return `${value.toFixed(value < 10 ? 2 : 1)} kWh`;
+}
+
+function fmtPercent(value) {
+  if (value === null || value === undefined) return "—";
+  return `${Math.round(value)}%`;
+}
+
+function splitPower(data) {
+  // The server sends both periods in one flat list when the overlay is on; the
+  // earlier one is shifted forward by the range so it lines up under the shown
+  // one, exactly as the thermometers' curves and the water's bars are.
+  const tMax = data.until ? Date.parse(data.until) : Date.now();
+  const span = data.days * 86400000;
+  const current = [];
+  const earlier = [];
+  for (const point of data.points || []) {
+    const time = Date.parse(point.at);
+    const values = {
+      production: point.production || 0,
+      consumption: point.consumption || 0,
+      battery: point.battery_level,
+    };
+    if (time >= tMax - span) current.push({ time, ...values });
+    else if (data.previous) earlier.push({ time: time + span, actual: time, ...values });
+  }
+  return { tMax, current, earlier };
+}
+
+function powerChartMarkup(current, earlier, days, bucketMinutes, tMax) {
+  // Two counters drawn as paired bars: what the panels made and what the house
+  // drew, in the same bucket and on the same scale, because the whole question a
+  // solar owner asks is which of the two was bigger at that moment.
+  const tMin = tMax - days * 86400000;
+  if (!current.length && !earlier.length) return "";
+  const width = 720;
+  const height = 200;
+  const left = 52;
+  const right = 16;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const all = [...current, ...earlier];
+  const high = Math.max(...all.map((point) => Math.max(point.production, point.consumption)), 0);
+  const unit = energyUnit(high, true);
+  const perKwh = unit === "Wh" ? WATT_HOURS_PER_KWH : 1;
+  const stepShown = sensorStep(Math.max(high * perKwh, 1) / 4);
+  const topShown = Math.max(stepShown, Math.ceil((high * perKwh) / stepShown) * stepShown);
+  const yMax = topShown / perKwh;
+  const xAt = (time) => left + ((time - tMin) / (tMax - tMin)) * plotWidth;
+  const yAt = (value) => top + plotHeight - (value / yMax) * plotHeight;
+
+  const gridLines = [];
+  const yLabels = [];
+  for (let shown = 0; shown <= topShown + stepShown / 2; shown += stepShown) {
+    const y = yAt(shown / perKwh);
+    gridLines.push(`<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
+    yLabels.push(`<text x="${left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${esc(fmtEnergy(shown / perKwh, unit))}</text>`);
+  }
+  const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
+    `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
+
+  const bucketMs = bucketMinutes * 60000;
+  const full = Math.max(1, (plotWidth * bucketMs) / (tMax - tMin) - 1);
+  // Made and drawn sit side by side inside their bucket; the overlay sits behind
+  // them at full width, so four bar sets never fight over the same pixels.
+  const half = Math.max(1, full / 2);
+  const currentAt = new Map(current.map((point) => [point.time, point]));
+  const earlierAt = new Map(earlier.map((point) => [point.time, point]));
+  const titleAt = (time) => {
+    const now = currentAt.get(time);
+    const before = earlierAt.get(time);
+    const lines = [`${waterStamp(time)} · made ${fmtEnergy(now ? now.production : 0)} · drew ${fmtEnergy(now ? now.consumption : 0)}`];
+    if (earlier.length) {
+      const when = before ? before.actual : time - days * 86400000;
+      lines.push(`${waterStamp(when)} · made ${fmtEnergy(before ? before.production : 0)} · drew ${fmtEnergy(before ? before.consumption : 0)}`);
+    }
+    return lines.join("\n");
+  };
+  const barsOf = (timed, field, color, className, barWidth, offset) => timed.map((point) => {
+    const value = point[field];
+    const y = yAt(value);
+    const barHeight = Math.max(value > 0 ? 1 : 0, top + plotHeight - y);
+    if (!barHeight) return "";
+    return `<rect class="${className}" x="${(xAt(point.time) + offset).toFixed(1)}" y="${(top + plotHeight - barHeight).toFixed(1)}"
+      width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" fill="${color}"><title>${esc(titleAt(point.time))}</title></rect>`;
+  }).join("");
+  return `
+    <div class="viz-holder">
+      <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Solar production and consumption">
+        <g class="grid">${gridLines.join("")}</g>
+        <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        <g class="bars">
+          ${barsOf(earlier, "production", PRODUCTION_COLOR, "previous", full, 0)}
+          ${barsOf(earlier, "consumption", CONSUMPTION_COLOR, "previous", full, 0)}
+          ${barsOf(current, "production", PRODUCTION_COLOR, "", half, 0)}
+          ${barsOf(current, "consumption", CONSUMPTION_COLOR, "", half, half)}
+        </g>
+      </svg>
+    </div>`;
+}
+
+function powerCardMarkup(data) {
+  if (!data) return "";
+  const { tMax, current, earlier } = splitPower(data);
+  const latest = data.latest || {};
+  if (!current.length && !earlier.length && !latest.at) return "";
+  const made = current.reduce((sum, point) => sum + point.production, 0);
+  const drew = current.reduce((sum, point) => sum + point.consumption, 0);
+  // What the panels covered is the number an owner actually watches, and it is
+  // only honest when both halves of it were reported over the same period.
+  const covered = drew > 0 ? ` · ${Math.round(Math.min(100, (made / drew) * 100))}% of what the house drew` : "";
+  const bucket = data.daily ? "daily" : WATER_BUCKETS[data.bucket_minutes] || `${data.bucket_minutes}-minute`;
+  const live = liveReading(data);
+  const freshness = live
+    ? `Live from the gateway, ${fmtAgo(live.at)}.`
+    : latest.at ? `Last reading ${fmtAgo(latest.at)}.` : "Nothing collected yet.";
+  // Beyond the fortnight of quarter-hourly telemetry the graph is drawn from the
+  // daily totals, which is the only resolution the whole history fits in.
+  const source = data.daily ? " Daily totals, from the whole life of the system." : "";
+  const overlay = earlier.length ? ` Pale bars: the previous ${POWER_PERIODS[data.days] || "period"}.` : "";
+  return `
+    <div class="card graph-card">
+      <h3>Solar <span class="meta">· made ${esc(fmtEnergy(made))} · drew ${esc(fmtEnergy(drew))}${esc(covered)}</span></h3>
+      ${powerChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
+      ${powerTilesMarkup(data, latest)}
+      <p class="meta">${esc(bucket)} totals from the Enphase system. ${esc(freshness)}${esc(source)}${esc(overlay)}</p>
+    </div>`;
+}
+
+function powerTilesMarkup(data, latest) {
+  // Home Assistant reads the gateway every minute, so where there is a live
+  // push the tiles show power - what the panels are doing this second. Without
+  // one they show the last interval's energy, which is the best the cloud API
+  // can honestly offer at four hours behind.
+  const live = liveReading(data);
+  const when = live ? live.at : latest.at;
+  const ago = when ? fmtAgo(when) : "";
+  const tile = (name, color, value, hint) => `
+        <div class="sensor-tile" style="border-left-color:${color}" title="${esc(hint)}">
+          <div class="tile-name">${esc(name)}</div>
+          <div class="tile-value">${esc(value)}</div>
+          <div class="tile-when"><span class="tile-ago">${esc(ago)}</span></div>
+        </div>`;
+  if (live) {
+    return `<div class="sensor-tiles">
+      ${tile("Production", PRODUCTION_COLOR, fmtPower(live.production_power), "What the panels are making right now, off the gateway")}
+      ${tile("Consumption", CONSUMPTION_COLOR, fmtPower(live.consumption_power), "What the house is drawing right now, off the gateway")}
+    </div>`;
+  }
+  return `<div class="sensor-tiles">
+    ${tile("Production", PRODUCTION_COLOR, fmtEnergy(latest.production), "What the panels made in the last interval reported")}
+    ${tile("Consumption", CONSUMPTION_COLOR, fmtEnergy(latest.consumption), "What the house drew in the last interval reported")}
+  </div>`;
+}
+
+function batteryChartMarkup(current, earlier, days, tMax) {
+  // A level, not a counter: a line between nothing and full, on a scale that is
+  // always the whole 0-100 so a flat week does not look like a cliff.
+  const tMin = tMax - days * 86400000;
+  const width = 720;
+  const height = 150;
+  const left = 52;
+  const right = 16;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const xAt = (time) => left + ((time - tMin) / (tMax - tMin)) * plotWidth;
+  const yAt = (value) => top + plotHeight - (value / 100) * plotHeight;
+  const gridLines = [];
+  const yLabels = [];
+  for (let percent = 0; percent <= 100; percent += 25) {
+    const y = yAt(percent);
+    gridLines.push(`<line x1="${left}" y1="${y.toFixed(1)}" x2="${width - right}" y2="${y.toFixed(1)}"></line>`);
+    yLabels.push(`<text x="${left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${percent}%</text>`);
+  }
+  const xLabels = sensorTicks(tMin, tMax, days).map((tick) =>
+    `<text x="${xAt(tick.time).toFixed(1)}" y="${height - 8}" text-anchor="middle">${esc(tick.label)}</text>`);
+  const lineOf = (timed, className) => {
+    const charged = timed.filter((point) => point.battery !== null && point.battery !== undefined);
+    if (!charged.length) return "";
+    const path = charged.map((point, index) =>
+      `${index ? "L" : "M"}${xAt(point.time).toFixed(1)} ${yAt(point.battery).toFixed(1)}`).join(" ");
+    const dots = charged.map((point) =>
+      `<circle cx="${xAt(point.time).toFixed(1)}" cy="${yAt(point.battery).toFixed(1)}" r="6" fill="transparent"
+        ><title>${esc(`${waterStamp(point.actual || point.time)} · ${fmtPercent(point.battery)}`)}</title></circle>`).join("");
+    return `<path class="${className}" d="${path}" fill="none" stroke="${BATTERY_COLOR}" stroke-width="2"></path>${dots}`;
+  };
+  const lines = `${lineOf(earlier, "previous")}${lineOf(current, "")}`;
+  if (!lines) return "";
+  return `
+    <div class="viz-holder">
+      <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Battery charge">
+        <g class="grid">${gridLines.join("")}</g>
+        <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
+        <g class="lines">${lines}</g>
+      </svg>
+    </div>`;
+}
+
+function batteryCardMarkup(data) {
+  if (!data) return "";
+  const { tMax, current, earlier } = splitPower(data);
+  const chart = batteryChartMarkup(current, earlier, data.days, tMax);
+  const live = liveReading(data);
+  const latest = live && live.battery_level !== null && live.battery_level !== undefined
+    ? live.battery_level
+    : (data.latest || {}).battery_level;
+  // A system with no batteries never answers the third call, and a month or a
+  // year is drawn from daily totals that carry no charge at all: in both cases
+  // the honest thing is no card rather than an empty one.
+  if (!chart && (latest === null || latest === undefined)) return "";
+  const level = latest === null || latest === undefined ? "" : ` <span class="meta">· ${esc(fmtPercent(latest))} now</span>`;
+  const shallow = data.daily
+    ? "The charge is only collected quarter-hourly, so it does not reach back over this range."
+    : "Average charge per bucket.";
+  return `
+    <div class="card graph-card">
+      <h3>Batteries${level}</h3>
+      ${chart || `<p class="meta">${esc(shallow)}</p>`}
+      ${chart ? `<p class="meta">${esc(shallow)}${earlier.length ? " Pale line: the previous period." : ""}</p>` : ""}
+    </div>`;
+}
+
+async function loadEnphaseSettings() {
+  try {
+    await ensureDashboard();
+    const houses = state.dashboard.houses || [];
+    const current = houses.find((house) => house.id === state.houseId);
+    $("#enphase-house-name").textContent = current ? current.name : "";
+    $("#enphase-feed-form").hidden = !state.houseId;
+    if (!state.me || !state.me.is_admin || !state.houseId || !houseHasPower()) return;
+    const data = await api(`/api/enphase/feeds?house_id=${state.houseId}`);
+    state.enphaseFeeds = data.feeds || [];
+    state.enphaseLocal = { live: data.live || {}, local: data.local || {} };
+    renderEnphaseFeeds();
+  } catch (error) { showAppError(error); }
+}
+
+function enphaseFeedStatus(feed) {
+  const bits = [feed.points ? `${feed.points.toLocaleString()} readings` : "nothing collected yet"];
+  if (feed.first_point_at) bits.push(`from ${new Date(feed.first_point_at).toLocaleDateString()}`);
+  bits.push(feed.backfill_done ? "daily history complete" : "daily history pending");
+  // The fortnight of quarter-hourly history is the expensive half, so how far it
+  // has reached is worth saying while it is still walking.
+  bits.push(feed.fine_done ? "quarter-hours complete" : `quarter-hours still walking back${feed.fine_from ? ` (at ${feed.fine_from})` : ""}`);
+  if (feed.last_point_at) bits.push(`last reading ${fmtAgo(feed.last_point_at)}`);
+  bits.push(feed.last_sync_at ? `checked ${fmtAgo(feed.last_sync_at)}` : "first check due within a minute");
+  // The allowance is the thing that decides how often this feed may ask at all.
+  bits.push(`${feed.calls_used.toLocaleString()} of ${feed.calls_budget.toLocaleString()} calls used this month`);
+  return bits.join(" · ");
+}
+
+function localFeedMarkup() {
+  // The push feed has nothing to configure, but somebody setting Home Assistant
+  // up needs to see whether anything is arriving - otherwise a silent typo in
+  // the automation looks exactly like a working one.
+  const state_ = state.enphaseLocal || { live: {}, local: {} };
+  const live = state_.live || {};
+  const local = state_.local || {};
+  if (!local.points && !live.at) {
+    return `<div class="mini-row wrap-row"><span>
+      <strong>Home Assistant</strong> <span class="badge">not pushing</span><br>
+      <span class="meta">Nothing has arrived on this house's sensor token yet.
+        The Envoy block in <code>deploy/home-assistant.yaml</code> is what sends it.</span>
+    </span></div>`;
+  }
+  const bits = [local.points ? `${local.points.toLocaleString()} intervals` : "no interval yet"];
+  if (local.first_point_at) bits.push(`from ${new Date(local.first_point_at).toLocaleDateString()}`);
+  bits.push(live.at ? `last push ${fmtAgo(live.at)}` : "no push yet");
+  if (live.production_power !== null && live.production_power !== undefined) {
+    bits.push(`making ${fmtPower(live.production_power)}`);
+  }
+  if (live.battery_level !== null && live.battery_level !== undefined) {
+    bits.push(`batteries ${fmtPercent(live.battery_level)}`);
+  }
+  return `<div class="mini-row wrap-row"><span>
+    <strong>Home Assistant</strong> <span class="badge">live</span><br>
+    <span class="meta">${esc(bits.join(" · "))}</span>
+  </span></div>`;
+}
+
+function renderEnphaseFeeds() {
+  const feeds = state.enphaseFeeds || [];
+  $("#enphase-feed-list").innerHTML = feeds.map((feed) => `
+    <div class="mini-row wrap-row${feed.active ? "" : " inactive"}">
+      <span>
+        <strong>system ${esc(feed.system_id)}</strong>${feed.active ? "" : ' <span class="badge">paused</span>'}
+        <br>
+        <span class="meta">${esc(enphaseFeedStatus(feed))}</span>
+        ${feed.last_error ? `<br><span class="meta warn">${esc(feed.last_error)}</span>` : ""}
+      </span>
+      <span class="icon-actions">
+        <button class="ghost compact" data-edit-enphase="${feed.id}" type="button">Edit</button>
+        <button class="ghost compact" data-backfill-enphase="${feed.id}" type="button"
+          title="Walk both histories again">Import history</button>
+        <button class="ghost compact" data-delete-enphase="${feed.id}" type="button">Delete</button>
+      </span>
+    </div>`).join("") + localFeedMarkup();
+  $$("[data-edit-enphase]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.editEnphase));
+    const answers = await openModal({
+      title: `Edit solar feed · system ${feed.system_id}`,
+      message: "Leave the secret, the key and the code empty to keep what is already stored. "
+        + "A fresh code is only needed when the authorisation has lapsed - a refresh token lasts about a month.",
+      fields: [
+        { name: "client_id", label: "Client id", value: feed.client_id },
+        { name: "client_secret", label: "New client secret", type: "password", value: "" },
+        { name: "api_key", label: "New API key", type: "password", value: "" },
+        { name: "code", label: "New authorisation code", value: "" },
+        { name: "system_id", label: "System id", value: feed.system_id },
+        { name: "calls_budget", label: "Calls per month", type: "number", value: feed.calls_budget },
+        { name: "active", label: "Collecting", type: "checkbox", value: feed.active },
+      ],
+    });
+    if (answers === null) return;
+    try {
+      await api(`/api/enphase/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
+        ...answers,
+        calls_budget: Number(answers.calls_budget) || 0,
+      }) });
+      await loadEnphaseSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-backfill-enphase]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.backfillEnphase));
+    if (!await confirmModal("Import the history again",
+      `Walk system ${feed.system_id}'s history again. Readings already stored are kept and refreshed, `
+      + "and the walk costs calls out of this month's allowance.", "Import")) return;
+    try {
+      await api(`/api/enphase/feeds/${feed.id}/backfill`, { method: "POST" });
+      await loadEnphaseSettings();
+    } catch (error) { showAppError(error); }
+  }));
+  $$("[data-delete-enphase]").forEach((button) => button.addEventListener("click", async () => {
+    const feed = feeds.find((item) => item.id === Number(button.dataset.deleteEnphase));
+    if (!await confirmModal("Delete this solar feed",
+      `Everything collected for system ${feed.system_id} goes with it. The history would have to be imported again.`)) return;
+    try {
+      await api(`/api/enphase/feeds/${feed.id}`, { method: "DELETE" });
+      invalidateDashboard();
+      await loadEnphaseSettings();
+    } catch (error) { showAppError(error); }
+  }));
+}
+
+async function openEnphaseAuthorization() {
+  // Enphase wants a person in a browser, once. The window is opened before the
+  // await so the click is still what opened it: a popup blocker would eat a
+  // window opened after a round trip to our own server.
+  const clientId = $("#enphase-client-id").value.trim();
+  const opened = window.open("", "_blank");
+  try {
+    const data = await api(`/api/enphase/authorize-url?client_id=${encodeURIComponent(clientId)}`);
+    if (opened) opened.location = data.url;
+    else window.location.href = data.url;
+  } catch (error) {
+    if (opened) opened.close();
+    showAppError(error);
+  }
+}
+
+async function addEnphaseFeed(event) {
+  event.preventDefault();
+  try {
+    // The server exchanges the code, asks the account for its systems and reads a
+    // day before storing anything, so a stale code or a wrong key is refused here
+    // rather than hours later in the log.
+    await api("/api/enphase/feeds", { method: "POST", body: JSON.stringify({
+      house_id: state.houseId,
+      client_id: $("#enphase-client-id").value.trim(),
+      client_secret: $("#enphase-client-secret").value,
+      api_key: $("#enphase-api-key").value,
+      code: $("#enphase-code").value.trim(),
+      system_id: $("#enphase-system-id").value.trim(),
+      calls_budget: Number($("#enphase-calls-budget").value) || 0,
+    }) });
+    ["client-secret", "api-key", "code", "system-id"].forEach((field) => { $(`#enphase-${field}`).value = ""; });
+    invalidateDashboard();
+    await loadEnphaseSettings();
+  } catch (error) { showAppError(error); }
+}
+
 function sensorPayload(sensor) {
   // Every sensor write sends the whole sensor: a partial one would clear the rest.
   return {
@@ -2256,13 +2718,19 @@ function timezoneOptions() {
   try { return Intl.supportedValuesOf("timeZone"); } catch (_) { return ["Europe/Paris", "America/Los_Angeles", "UTC"]; }
 }
 
+function houseMeasures(house) {
+  return [
+    house.shows_sensors ? "thermometers" : "",
+    house.shows_water ? "water" : "",
+    house.shows_power ? "solar" : "",
+  ].filter(Boolean).join(", ");
+}
+
 function renderHouses() {
   $("#house-list").innerHTML = (state.admin.houses || []).map((house) => `
     <div class="mini-row">
       <span><strong>${esc(house.name)}</strong> <span class="meta">· ${esc(house.timezone || "")}${
-        [house.shows_sensors ? "thermometers" : "", house.shows_water ? "water" : ""].filter(Boolean).join(", ")
-          ? ` · ${[house.shows_sensors ? "thermometers" : "", house.shows_water ? "water" : ""].filter(Boolean).join(", ")}`
-          : ""}</span></span>
+        houseMeasures(house) ? ` · ${houseMeasures(house)}` : ""}</span></span>
       <span>
         <button class="ghost compact" data-rename-house="${house.id}" type="button">Edit</button>
         <button class="ghost compact danger" data-delete-house="${house.id}" type="button">Delete</button>
@@ -2282,6 +2750,7 @@ function renderHouses() {
           title="${house.has_sensor_token ? "Replace the Home Assistant sensor token" : "Create the Home Assistant sensor token"}">
           Sensor token${house.has_sensor_token ? ' <span class="badge">set</span>' : ""}</button>` },
         { name: "shows_water", label: "Water meter (EyeOnWater)", type: "checkbox", value: house.shows_water },
+        { name: "shows_power", label: "Solar panels and batteries (Enphase)", type: "checkbox", value: house.shows_power },
       ],
     });
     // The token is what Home Assistant pushes with, so it belongs beside that
@@ -2303,6 +2772,7 @@ function renderHouses() {
         timezone: answers.timezone,
         shows_sensors: answers.shows_sensors,
         shows_water: answers.shows_water,
+        shows_power: answers.shows_power,
       }) });
       // The switches decide a nav item and two settings tabs: the cached
       // dashboard would keep showing yesterday's answer.
@@ -2643,6 +3113,8 @@ addEventListener("DOMContentLoaded", () => {
   $("#user-form").addEventListener("submit", addUser);
   $("#meter-form").addEventListener("submit", addMeter);
   $("#water-feed-form").addEventListener("submit", addWaterFeed);
+  $("#enphase-feed-form").addEventListener("submit", addEnphaseFeed);
+  $("#enphase-authorize").addEventListener("click", openEnphaseAuthorization);
   // A monthly meter has no counter: the start-value row would only mislead.
   $("#meter-monthly").addEventListener("change", () => {
     $("#meter-register-row").hidden = $("#meter-monthly").checked;

@@ -66,6 +66,50 @@ def test_class() -> None:
         "water_leak_min_readings",
         "water_cubic_meters",
         "water_ranges",
+        "enphase_host",
+        "enphase_authorize_path",
+        "enphase_token_path",
+        "enphase_redirect_uri",
+        "enphase_systems_path",
+        "enphase_production_path",
+        "enphase_production_micro_path",
+        "enphase_consumption_path",
+        "enphase_battery_path",
+        "enphase_energy_lifetime_path",
+        "enphase_consumption_lifetime_path",
+        "enphase_granularity",
+        "enphase_default_span_minutes",
+        "enphase_page_size",
+        "enphase_timeout_seconds",
+        "enphase_token_skew_seconds",
+        "enphase_tick_seconds",
+        "enphase_claim_minutes",
+        "enphase_sync_min_seconds",
+        "enphase_sync_max_seconds",
+        "enphase_calls_budget",
+        "enphase_calls_per_minute",
+        "enphase_rate_window_seconds",
+        "enphase_rate_wait_seconds",
+        "enphase_source_cloud",
+        "enphase_source_local",
+        "enphase_local_system_id",
+        "enphase_push_max_gap_minutes",
+        "enphase_push_min_gap_seconds",
+        "enphase_live_stale_minutes",
+        "enphase_power_watts",
+        "enphase_energy_watt_hours",
+        "rate_limit_lock_namespace",
+        "rate_limit_retry_seconds",
+        "enphase_recent_days",
+        "enphase_streams",
+        "enphase_fine_days",
+        "enphase_fine_days_per_tick",
+        "enphase_watt_hours_per_kwh",
+        "enphase_battery_max_percent",
+        "enphase_message_max",
+        "enphase_unreadable_status",
+        "enphase_daily_bucket_minutes",
+        "enphase_ranges",
         "email_test_suffixes",
         "first_admin_email",
         "first_admin_name",
@@ -505,6 +549,328 @@ def test_water_ranges() -> None:
     tested = Constants
     result = tested.water_ranges
     expected = ((1, 15), (7, 60), (30, 360), (365, 1440))
+    assert result == expected
+
+
+def test_enphase_host() -> None:
+    tested = Constants
+    result = tested.enphase_host
+    expected = "api.enphaseenergy.com"
+    assert result == expected
+
+
+def test_enphase_authorize_path() -> None:
+    tested = Constants
+    result = tested.enphase_authorize_path
+    expected = "/oauth/authorize"
+    assert result == expected
+
+
+def test_enphase_token_path() -> None:
+    tested = Constants
+    result = tested.enphase_token_path
+    expected = "/oauth/token"
+    assert result == expected
+
+
+def test_enphase_redirect_uri() -> None:
+    tested = Constants
+    result = tested.enphase_redirect_uri
+    expected = "https://api.enphaseenergy.com/oauth/redirect_uri"
+    assert result == expected
+
+
+def test_enphase_systems_path() -> None:
+    tested = Constants
+    result = tested.enphase_systems_path
+    expected = "/api/v4/systems"
+    assert result == expected
+
+
+def test_enphase_production_path() -> None:
+    tested = Constants
+    result = tested.enphase_production_path
+    expected = "/api/v4/systems/{system_id}/telemetry/production_meter"
+    assert result == expected
+
+
+def test_enphase_production_micro_path() -> None:
+    tested = Constants
+    result = tested.enphase_production_micro_path
+    expected = "/api/v4/systems/{system_id}/telemetry/production_micro"
+    assert result == expected
+
+
+def test_enphase_consumption_path() -> None:
+    tested = Constants
+    result = tested.enphase_consumption_path
+    expected = "/api/v4/systems/{system_id}/telemetry/consumption_meter"
+    assert result == expected
+
+
+def test_enphase_battery_path() -> None:
+    tested = Constants
+    result = tested.enphase_battery_path
+    expected = "/api/v4/systems/{system_id}/telemetry/battery"
+    assert result == expected
+
+
+def test_enphase_energy_lifetime_path() -> None:
+    tested = Constants
+    result = tested.enphase_energy_lifetime_path
+    expected = "/api/v4/systems/{system_id}/energy_lifetime"
+    assert result == expected
+
+
+def test_enphase_consumption_lifetime_path() -> None:
+    tested = Constants
+    result = tested.enphase_consumption_lifetime_path
+    expected = "/api/v4/systems/{system_id}/consumption_lifetime"
+    assert result == expected
+
+
+def test_enphase_granularity() -> None:
+    tested = Constants
+    result = tested.enphase_granularity
+    expected = "day"
+    assert result == expected
+
+
+def test_enphase_default_span_minutes() -> None:
+    tested = Constants
+    result = tested.enphase_default_span_minutes
+    expected = 15
+    assert result == expected
+
+
+def test_enphase_page_size() -> None:
+    tested = Constants
+    result = tested.enphase_page_size
+    expected = 100
+    assert result == expected
+
+
+def test_enphase_timeout_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_timeout_seconds
+    expected = 60
+    assert result == expected
+
+
+def test_enphase_token_skew_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_token_skew_seconds
+    expected = 300
+    assert result == expected
+
+
+def test_enphase_tick_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_tick_seconds
+    expected = 60
+    assert result == expected
+
+
+def test_enphase_claim_minutes() -> None:
+    tested = Constants
+    result = tested.enphase_claim_minutes
+    expected = 30
+    assert result == expected
+
+
+def test_enphase_sync_min_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_sync_min_seconds
+    expected = 900
+    assert result == expected
+
+
+def test_enphase_sync_max_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_sync_max_seconds
+    expected = 21600
+    assert result == expected
+
+
+def test_enphase_calls_budget() -> None:
+    tested = Constants
+    result = tested.enphase_calls_budget
+    expected = 1000
+    assert result == expected
+
+
+def test_enphase_recent_days() -> None:
+    tested = Constants
+    result = tested.enphase_recent_days
+    expected = 2
+    assert result == expected
+
+
+def test_enphase_streams() -> None:
+    tested = Constants
+    result = tested.enphase_streams
+    expected = 3
+    assert result == expected
+
+
+def test_enphase_fine_days() -> None:
+    tested = Constants
+    result = tested.enphase_fine_days
+    expected = 14
+    assert result == expected
+
+
+def test_enphase_fine_days_per_tick() -> None:
+    tested = Constants
+    result = tested.enphase_fine_days_per_tick
+    expected = 2
+    assert result == expected
+
+
+def test_enphase_watt_hours_per_kwh() -> None:
+    tested = Constants
+    result = tested.enphase_watt_hours_per_kwh
+    expected = 1000.0
+    assert result == expected
+
+
+def test_enphase_battery_max_percent() -> None:
+    tested = Constants
+    result = tested.enphase_battery_max_percent
+    expected = 100.0
+    assert result == expected
+
+
+def test_enphase_message_max() -> None:
+    tested = Constants
+    result = tested.enphase_message_max
+    expected = 300
+    assert result == expected
+
+
+def test_enphase_unreadable_status() -> None:
+    tested = Constants
+    result = tested.enphase_unreadable_status
+    expected = 422
+    assert result == expected
+
+
+def test_enphase_daily_bucket_minutes() -> None:
+    tested = Constants
+    result = tested.enphase_daily_bucket_minutes
+    expected = 1440
+    assert result == expected
+
+
+def test_enphase_ranges() -> None:
+    tested = Constants
+    result = tested.enphase_ranges
+    expected = (
+        (1, 15),
+        (7, 60),
+        (30, 1440),
+        (365, 1440),
+    )
+    assert result == expected
+
+
+def test_enphase_calls_per_minute() -> None:
+    tested = Constants
+    result = tested.enphase_calls_per_minute
+    expected = 9
+    assert result == expected
+
+
+def test_enphase_rate_window_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_rate_window_seconds
+    expected = 60.0
+    assert result == expected
+
+
+def test_enphase_rate_wait_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_rate_wait_seconds
+    expected = 60.0
+    assert result == expected
+
+
+def test_rate_limit_lock_namespace() -> None:
+    tested = Constants
+    result = tested.rate_limit_lock_namespace
+    expected = 8421
+    assert result == expected
+
+
+def test_rate_limit_retry_seconds() -> None:
+    tested = Constants
+    result = tested.rate_limit_retry_seconds
+    expected = 0.05
+    assert result == expected
+
+
+def test_enphase_source_cloud() -> None:
+    tested = Constants
+    result = tested.enphase_source_cloud
+    expected = "cloud"
+    assert result == expected
+
+
+def test_enphase_source_local() -> None:
+    tested = Constants
+    result = tested.enphase_source_local
+    expected = "local"
+    assert result == expected
+
+
+def test_enphase_local_system_id() -> None:
+    tested = Constants
+    result = tested.enphase_local_system_id
+    expected = "local"
+    assert result == expected
+
+
+def test_enphase_push_max_gap_minutes() -> None:
+    tested = Constants
+    result = tested.enphase_push_max_gap_minutes
+    expected = 60
+    assert result == expected
+
+
+def test_enphase_push_min_gap_seconds() -> None:
+    tested = Constants
+    result = tested.enphase_push_min_gap_seconds
+    expected = 1.0
+    assert result == expected
+
+
+def test_enphase_live_stale_minutes() -> None:
+    tested = Constants
+    result = tested.enphase_live_stale_minutes
+    expected = 15
+    assert result == expected
+
+
+def test_enphase_power_watts() -> None:
+    tested = Constants
+    result = tested.enphase_power_watts
+    expected = (
+        ("W", 1.0),
+        ("KW", 1000.0),
+        ("MW", 1000000.0),
+    )
+    assert result == expected
+
+
+def test_enphase_energy_watt_hours() -> None:
+    tested = Constants
+    result = tested.enphase_energy_watt_hours
+    expected = (
+        ("WH", 1.0),
+        ("KWH", 1000.0),
+        ("MWH", 1000000.0),
+        ("GWH", 1000000000.0),
+    )
     assert result == expected
 
 
