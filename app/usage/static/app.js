@@ -1285,6 +1285,14 @@ function storeThresholds(show) {
   storeItem("usage-sensor-thresholds", show ? "1" : "0");
 }
 
+function setToggle(selector, on) {
+  // Pressed is on, for the icon toggles that replaced the sliders: the state
+  // has to reach the assistive label as well as the eye.
+  const button = $(selector);
+  button.classList.toggle("active", on);
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+}
+
 function refreshCadence() {
   // A gateway pushing every minute is worth watching every minute; a house on
   // thermometers and the cloud API alone changes far too slowly to bother.
@@ -1451,11 +1459,12 @@ async function loadSensors(seriesOnly = false) {
     }
     state.sensorDays = Number(storedItem("usage-sensor-days", "1")) || 1;
     $("#sensor-units").checked = wantsMetric();
-    $("#sensor-previous").checked = wantsPrevious();
-    $("#sensor-thresholds").checked = wantsThresholds();
+    setToggle("#sensor-previous", wantsPrevious());
+    setToggle("#sensor-thresholds", wantsThresholds());
     // Celsius, the overlay and the alert lines are the thermometers': a house
     // that only has the water meter would be offered three switches doing nothing.
-    $$("#view-sensors .sensor-controls .switch").forEach((control) => { control.hidden = !houseHasSensors(); });
+    $$("#view-sensors .sensor-controls .switch, #view-sensors .sensor-controls .sensor-only")
+      .forEach((control) => { control.hidden = !houseHasSensors(); });
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
     showSensorsLoading();
     // The list and both series leave together: one round trip, not three, and
@@ -3268,12 +3277,17 @@ addEventListener("DOMContentLoaded", () => {
     storeItem("usage-temp-unit", $("#sensor-units").checked ? "C" : "F");
     renderSensors();
   });
-  $("#sensor-previous").addEventListener("change", () => {
-    storeItem("usage-sensor-previous", $("#sensor-previous").checked ? "1" : "0");
+  $("#sensor-previous").addEventListener("click", () => {
+    const on = !wantsPrevious();
+    storeItem("usage-sensor-previous", on ? "1" : "0");
+    setToggle("#sensor-previous", on);
+    // The overlay is a second period from the server, not a redraw of this one.
     loadSensors(true);
   });
-  $("#sensor-thresholds").addEventListener("change", () => {
-    storeThresholds($("#sensor-thresholds").checked);
+  $("#sensor-thresholds").addEventListener("click", () => {
+    const on = !wantsThresholds();
+    storeThresholds(on);
+    setToggle("#sensor-thresholds", on);
     renderSensors();
   });
   // On narrow screens the version hides behind the info icon: a tap reveals it.

@@ -482,8 +482,6 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .range-tabs button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .range-tabs button[disabled] { opacity: 0.35; cursor: default; }
 .range-tabs .short { display: none; }
-.sensor-controls .switch .short { display: none; }
-.sensor-controls .switch .short .msym { display: block; width: 18px; height: 18px; }
 .sensor-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -543,9 +541,13 @@ label.switch input:focus-visible + .slider { outline: 2px solid var(--accent); o
 .graph-card .sensor-tiles { margin-top: 0.85rem; }
 .period-label { font-weight: 600; margin-right: auto; }
 /* The two button groups sit together on the right, with the date holding the
-   left: which graphs are on show, then which period they show. */
-.card-toggles button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.card-toggles button:not(.active) { opacity: 0.45; }
+   left: which graphs are on show, then which period they show.
+   Every icon toggle on this view reads the same way: pressed is on, and the
+   ones that are off step back rather than disappear. */
+.card-toggles button.active,
+.toggle-icon.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.card-toggles button:not(.active),
+.toggle-icon:not(.active) { opacity: 0.45; }
 /* On a phone (the device, not the window width - see theme.js) the tiles are
    one line each, two per row: the name on the left, the value on the right. */
 html.device-mobile .sensor-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
@@ -627,14 +629,16 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
   /* The controls take their own row and wrap; the heading stays on the left. */
   #view-sensors .view-heading { flex-wrap: wrap; }
   .sensor-controls { flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem 0.6rem; margin-left: auto; }
+  /* The date now shares its line with the graph icons and the period arrows:
+     it gives way first rather than wrapping onto a second line. */
+  .period-bar { gap: 0.4rem; }
+  .period-label { font-size: 0.74rem; white-space: nowrap; }
   .range-tabs button { padding: 0.3rem 0.45rem; font-size: 0.78rem; }
   .range-tabs .long { display: none; }
   .range-tabs .short { display: inline; }
   /* The bottom bar already names the view; the heading would only repeat it. */
   #view-sensors .view-heading h2 { display: none; }
   #view-sensors .view-heading { justify-content: flex-end; }
-  .sensor-controls .switch .long { display: none; }
-  .sensor-controls .switch .short { display: inline-flex; }
   /* The build stamp shrinks to an info icon; a tap reveals it in a bubble. */
   .version-tag { cursor: pointer; }
   .version-tag > .msym { display: block; }

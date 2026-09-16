@@ -56,6 +56,10 @@ rule, written once, for both sets of tiles. On a phone the view drops its
 heading — the bottom bar already names it — and the switches keep their sliders
 but trade their words for icons.
 
+**Previous** and **Thresholds** are icons rather than sliders, pressed for on, which is
+what the graph icons beside them already meant — three controls that do the same
+kind of thing now look like each other, and the row fits a phone.
+
 The date bar carries an icon for each half the house actually has: thermometer,
 drop, sun. Pressed is showing. They are a viewer's choice kept per browser, like
 the unit switch, and they decide which graphs get the screen rather than what is
