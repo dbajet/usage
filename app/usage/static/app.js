@@ -2026,6 +2026,17 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
     </div>`;
 }
 
+function waterLimitMarkup(alert) {
+  // A limit nobody set says nothing at all. One that is set is worth seeing
+  // beside the total, and one currently broken is worth seeing loudly - the
+  // email announces the crossing, but the page is where it is looked into.
+  if (!alert || !alert.daily_max) return "";
+  if (alert.over) {
+    return ` <span class="meta warn">· over the ${esc(fmtVolume(alert.daily_max))} daily limit</span>`;
+  }
+  return ` <span class="meta">· alert above ${esc(fmtVolume(alert.daily_max))} a day</span>`;
+}
+
 function waterCardMarkup(data) {
   if (!data) return "";
   const points = data.points || [];
@@ -2052,7 +2063,7 @@ function waterCardMarkup(data) {
   const overlay = earlier.length ? ` Pale bars: the previous ${WATER_PERIODS[data.days] || "period"}.` : "";
   return `
     <div class="card graph-card">
-      <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span></h3>
+      <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span>${waterLimitMarkup(data.alert)}</h3>
       ${waterChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
       <p class="meta">${esc(bucket)} totals from the water meter. ${esc(freshness)}${esc(overlay)}</p>
     </div>`;
@@ -2480,7 +2491,7 @@ function batteryChartMarkup(current, earlier, days, bucketMinutes, tMax) {
     }],
   };
   return `
-    <div class="viz-holder" data-battery-chart data-sensor-chart="${esc(JSON.stringify(config))}">
+    <div class="viz-holder" data-sensor-chart="${esc(JSON.stringify(config))}">
       <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Battery charge">
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>

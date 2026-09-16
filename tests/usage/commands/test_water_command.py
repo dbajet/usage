@@ -508,15 +508,17 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
 
 
 @patch("usage.commands.water_command.datetime", wraps=datetime)
+@patch.object(WaterCommand, "_alert")
 @patch.object(WaterCommand, "_latest")
 @patch.object(WaterCommand, "_require_house")
-def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: MagicMock) -> None:
+def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, mock_datetime: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         require_house.reset_mock()
         latest.reset_mock()
+        alert.reset_mock()
         mock_datetime.reset_mock()
         database.reset_mock()
 
@@ -531,6 +533,7 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
     assert exc_info.value.message == "The range must be one of 1, 7, 30, 365 days."
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
+    assert alert.mock_calls == []
     assert mock_datetime.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
@@ -543,6 +546,7 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
     assert exc_info.value.message == "The offset counts periods back from now."
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
+    assert alert.mock_calls == []
     assert mock_datetime.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
@@ -552,6 +556,7 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
         {"bucket": datetime(2026, 9, 15, 11, 15, tzinfo=UTC), "volume": Decimal("0.000000")},
     ]
     exp_latest = {"at": "2026-09-14T22:29:00+00:00", "volume": 0.0096, "reading": 516.2863}
+    exp_alert = {"daily_max": 0.5, "over": True}
     tests = [
         (1, 15, False, 0, "2026-09-14T12:00:00+00:00", "2026-09-15T12:00:00+00:00"),
         (1, 15, True, 0, "2026-09-13T12:00:00+00:00", "2026-09-15T12:00:00+00:00"),
@@ -561,6 +566,7 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
         require_house.side_effect = [None]
         mock_datetime.now.side_effect = [now]
         latest.side_effect = [exp_latest]
+        alert.side_effect = [exp_alert]
         database.fetch_all.side_effect = [rows]
         result = tested.series(user, 3, days, previous, offset)
         expected = {
@@ -575,10 +581,12 @@ def test_series(require_house: MagicMock, latest: MagicMock, mock_datetime: Magi
                 {"at": "2026-09-15T11:15:00+00:00", "volume": 0.0},
             ],
             "latest": exp_latest,
+            "alert": exp_alert,
         }
         assert result == expected
         assert require_house.mock_calls == [call(user, 3)]
         assert latest.mock_calls == [call(3)]
+        assert alert.mock_calls == [call(3)]
         assert mock_datetime.mock_calls == [call.now(UTC)]
         exp_calls = [call.fetch_all(SQL_SERIES, (timedelta(minutes=bucket_minutes), 3, exp_since, exp_until))]
         assert database.mock_calls == exp_calls
@@ -948,3 +956,33 @@ def test__daily_max() -> None:
             tested._daily_max({"daily_max": bad})
         assert exc_info.value.status_code == 400
         assert exc_info.value.message == "The daily limit must be a number."
+
+
+def test__alert() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sql = """
+            SELECT SUM(daily_max) AS daily_max, BOOL_OR(over_daily) AS over
+            FROM water_feeds WHERE house_id = %s AND active
+            """
+    exp_calls = [call.fetch_one(sql, (3,))]
+
+    tests: list[tuple[dict[str, Any] | None, dict[str, Any]]] = [
+        ({"daily_max": Decimal("0.5"), "over": True}, {"daily_max": 0.5, "over": True}),
+        ({"daily_max": Decimal("0.5"), "over": False}, {"daily_max": 0.5, "over": False}),
+        # two meters with a limit each make one number for the house
+        ({"daily_max": Decimal("0.9"), "over": True}, {"daily_max": 0.9, "over": True}),
+        # nobody set one: no number at all, rather than a zero that reads as none
+        ({"daily_max": None, "over": None}, {"daily_max": None, "over": False}),
+        (None, {"daily_max": None, "over": False}),
+    ]
+    for row, expected in tests:
+        database.fetch_one.side_effect = [row]
+        result = tested._alert(3)
+        assert result == expected
+        assert database.mock_calls == exp_calls
+        reset_mocks()

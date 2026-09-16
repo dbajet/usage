@@ -213,6 +213,7 @@ class WaterCommand:
             "unit": "m³",
             "points": [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows],
             "latest": self._latest(house_id),
+            "alert": self._alert(house_id),
         }
 
     def alerts(self, user: SessionUser, house_id: int) -> dict[str, bool]:
@@ -237,6 +238,25 @@ class WaterCommand:
         )
         result = "Leak alerts enabled for this house." if enabled else "Leak alerts disabled for this house."
         return {"message": result}
+
+    def _alert(self, house_id: int) -> dict[str, Any]:
+        """The house's daily limit, and whether it is over it right now.
+
+        Summed across the active meters, because the limit belongs to a meter
+        and the graph is the house: two meters with a limit each make one number
+        the whole house is measured against. A house where nobody set one gets
+        no number at all rather than a zero, which would read as a limit of none.
+        """
+        row = self._database.fetch_one(
+            """
+            SELECT SUM(daily_max) AS daily_max, BOOL_OR(over_daily) AS over
+            FROM water_feeds WHERE house_id = %s AND active
+            """,
+            (house_id,),
+        )
+        if row is None or row["daily_max"] is None:
+            return {"daily_max": None, "over": False}
+        return {"daily_max": round(float(row["daily_max"]), 4), "over": bool(row["over"])}
 
     def _latest(self, house_id: int) -> dict[str, Any]:
         row = self._database.fetch_one(

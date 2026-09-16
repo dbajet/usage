@@ -71,8 +71,8 @@ once. Turning every one of them off leaves the bar behind, since otherwise there
 would be no way back.
 
 The battery graph is drawn on the same holder the thermometers use, so the pointer gets the
-same circle on the curve and the same label beside it; one hover to maintain rather than two
-that drift apart.
+same circle on the curve, the same label beside it and the same hairline stroke; one hover and
+one line style to maintain rather than two that drift apart.
 
 The solar tiles show **power** - what the panels are making this second - whenever Home
 Assistant is pushing, and fall back to the last interval's energy when only the cloud feed is
@@ -200,7 +200,9 @@ in cubic metres like everything else. It is opt-in — no limit, no alert — be
 run every tap it owns all afternoon without a drop of it being accidental, and because a slow
 leak can pass unnoticed while never adding up to much. The two rules catch different things
 and neither subsumes the other. This one is edge triggered as well, or a fortnight with the
-sprinklers on would mail every quarter of an hour.
+sprinklers on would mail every quarter of an hour. The limit rides along in the Realtime title
+beside the period's total — quietly while the house is under it, and in the warning colour once
+it is not, since the email announces the crossing but the page is where it gets looked into.
 
 Against four years of one real meter the leak rule fires seven times — stretches of 27, 29, 90,
 385, 31, 120 and 260 hours. The two longest drew around twice the ordinary daily volume
