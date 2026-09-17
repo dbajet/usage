@@ -576,11 +576,11 @@ html.device-mobile .sensor-tile .tile-value .meta { font-size: 0.7rem; }
 .viz-chart .bars rect:hover { opacity: 1; }
 /* Last period, drawn underneath: pale enough to read past, solid enough to compare. */
 .viz-chart .bars rect.previous { opacity: 0.28; }
-/* The running total rides over the bars it sums, on a halo of the card's own
-   colour so it stays readable wherever it crosses one. */
-.viz-chart .totals path { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.viz-chart .totals path.halo { stroke: var(--card); stroke-width: 5; }
-.viz-chart .totals path.previous { opacity: 0.5; stroke-dasharray: 5 4; }
+/* The running total is one of the view's curves and wears the same weight; the
+   halo under it is the only thing it needs of its own, so a line as thin as the
+   thermometers' still reads where it crosses a bar of its own colour. */
+[data-sensor-chart] .viz-chart .series path.halo,
+.viz-chart .series path.halo { stroke: var(--card); stroke-width: 3; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem 0.9rem; flex-wrap: wrap; }
 .card-head .card-switch { align-self: center; }
 .card-head .card-switch .short { display: none; }

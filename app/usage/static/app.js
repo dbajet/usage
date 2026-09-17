@@ -1920,6 +1920,9 @@ function wireSensorChartHover(rootSelector) {
     const hover = svg.querySelector(".viz-hover");
     const dots = hover.querySelector(".hov-dots");
     const tip = holder.querySelector(".viz-tip");
+    // Volumes carry their own unit and choose it per value, so a water chart
+    // asks for them by name rather than through the one-decimal default.
+    const fmtHovered = config.format === "volume" ? fmtVolume : fmtTemp;
     const xAt = (time) => config.left + ((time - config.tMin) / (config.tMax - config.tMin)) * config.plotWidth;
     const yAt = (value) => config.top + config.plotHeight - ((value - config.yMin) / (config.yMax - config.yMin)) * config.plotHeight;
     const nearest = (points, time) => {
@@ -1941,7 +1944,7 @@ function wireSensorChartHover(rootSelector) {
         const before = nearest(series.previous, time);
         if (!point && !before) return;
         if (shown === null) shown = (point || before)[0];
-        const previous = before ? ` · prev ${fmtTemp(before[1])}` : "";
+        const previous = before ? ` · prev ${fmtHovered(before[1])}` : "";
         if (!point) {
           rows.push(`${esc(series.name)}: –${previous}`);
           return;
@@ -1953,8 +1956,8 @@ function wireSensorChartHover(rootSelector) {
         dot.setAttribute("r", "4.5");
         dot.setAttribute("stroke", series.color);
         dots.appendChild(dot);
-        const range = point[2] !== point[3] ? ` (${fmtTemp(point[2])} – ${fmtTemp(point[3])})` : "";
-        rows.push(`${esc(series.name)}: ${fmtTemp(point[1])}${series.unit ? ` ${esc(series.unit)}` : ""}${range}${previous}`);
+        const range = point[2] !== point[3] ? ` (${fmtHovered(point[2])} – ${fmtHovered(point[3])})` : "";
+        rows.push(`${esc(series.name)}: ${fmtHovered(point[1])}${series.unit ? ` ${esc(series.unit)}` : ""}${range}${previous}`);
       });
       if (shown === null) {
         hover.setAttribute("hidden", "");
@@ -2203,7 +2206,10 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
     let sum = 0;
     return timed.map((point) => ({ time: point.time, volume: (sum += point.volume) }));
   };
-  const showTotal = wantsWaterTotal();
+  // Only on the day. Over a week or longer every bar is already an aggregate and
+  // the climb says nothing the period's own total did not - while the shared
+  // axis still flattens the bars to pay for it.
+  const showTotal = days <= 1 && wantsWaterTotal();
   const currentTotal = showTotal ? running(current) : [];
   const earlierTotal = showTotal ? running(earlier) : [];
   const high = Math.max(...[...current, ...earlier, ...currentTotal, ...earlierTotal].map((point) => point.volume), 0);
@@ -2234,16 +2240,12 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   // so whichever one the pointer lands on answers the same question.
   const currentAt = new Map(current.map((point) => [point.time, point]));
   const earlierAt = new Map(earlier.map((point) => [point.time, point]));
-  const runningAt = new Map(currentTotal.map((point) => [point.time, point.volume]));
-  const earlierRunningAt = new Map(earlierTotal.map((point) => [point.time, point.volume]));
   const titleAt = (time) => {
     const now = currentAt.get(time);
     const before = earlierAt.get(time);
-    const so_far = runningAt.has(time) ? ` (${fmtVolume(runningAt.get(time))} so far)` : "";
-    const lines = [`${waterStamp(time)} · ${fmtVolume(now ? now.volume : 0)}${so_far}`];
+    const lines = [`${waterStamp(time)} · ${fmtVolume(now ? now.volume : 0)}`];
     if (earlier.length) {
-      const earlierSoFar = earlierRunningAt.has(time) ? ` (${fmtVolume(earlierRunningAt.get(time))} so far)` : "";
-      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${fmtVolume(before ? before.volume : 0)}${earlierSoFar}`);
+      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${fmtVolume(before ? before.volume : 0)}`);
     }
     return lines.join("\n");
   };
@@ -2253,9 +2255,9 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
     if (!barHeight) return "";
     return `<rect class="${className}" x="${xAt(point.time).toFixed(1)}" y="${(top + plotHeight - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" fill="${WATER_COLOR}"><title>${esc(titleAt(point.time))}</title></rect>`;
   }).join("");
-  // Drawn twice: once thickly in the card's own colour so the line reads over
-  // the bars it crosses, then the line itself. It starts at nothing, at the
-  // left edge, so the climb begins where the period does.
+  // Drawn twice: once in the card's own colour so the thin line reads over the
+  // bars it crosses, then the line itself. It starts at nothing, at the left
+  // edge, so the climb begins where the period does.
   const totalOf = (timed, className) => {
     if (timed.length < 2) return "";
     const steps = [{ time: tMin, volume: 0 }, ...timed]
@@ -2263,14 +2265,40 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
       .join(" ");
     return `<path class="halo" d="${steps}"></path><path class="${className}" d="${steps}" stroke="${WATER_COLOR}"></path>`;
   };
+  // The same hover the thermometers and the solar use, told to read its values
+  // as volumes: one crosshair dot and one floating label, in one place.
+  const config = showTotal ? {
+    tMin,
+    tMax,
+    days,
+    left,
+    plotWidth,
+    top,
+    plotHeight,
+    yMin: 0,
+    yMax,
+    bucketMs,
+    format: "volume",
+    series: [{
+      name: "Running total",
+      unit: "",
+      color: WATER_COLOR,
+      points: currentTotal.map((point) => [point.time, point.volume, point.volume, point.volume]),
+      previous: earlierTotal.map((point) => [point.time, point.volume, point.volume, point.volume]),
+    }],
+  } : null;
   return `
-    <div class="viz-holder">
+    <div class="viz-holder"${config ? ` data-sensor-chart="${esc(JSON.stringify(config))}"` : ""}>
       <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Water consumption">
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
         <g class="bars">${barsOf(earlier, "previous")}${barsOf(current, "")}</g>
-        <g class="totals">${totalOf(earlierTotal, "previous")}${totalOf(currentTotal, "")}</g>
+        <g class="series">${totalOf(earlierTotal, "previous")}${totalOf(currentTotal, "")}</g>
+        <g class="viz-hover" hidden>
+          <g class="hov-dots"></g>
+        </g>
       </svg>
+      <div class="viz-tip" hidden></div>
     </div>`;
 }
 
@@ -2312,17 +2340,18 @@ function waterCardMarkup(data) {
   const overlay = earlier.length ? ` Pale bars: the previous ${period}.` : "";
   // Saying what the line is stops it reading as a second measurement: it is the
   // same water added up, which is why it can share the bars' own axis.
-  const climbing = wantsWaterTotal()
+  const totalOffered = data.days <= 1;
+  const climbing = totalOffered && wantsWaterTotal()
     ? ` The climbing line is that water added up${earlier.length ? ", one line per period" : ""}, ending at the total above.`
     : "";
   return `
     <div class="card graph-card">
       <div class="card-head">
       <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span>${waterLimitMarkup(data.alert)}</h3>
-        <label class="switch card-switch" title="Draw the water added up as the period goes, ending at its total">
+        ${totalOffered ? `<label class="switch card-switch" title="Draw the water added up as the day goes, ending at its total">
           <input type="checkbox" data-water-total${wantsWaterTotal() ? " checked" : ""}><span class="slider"></span>
           <span class="long">Running total</span><span class="short">Total</span>
-        </label>
+        </label>` : ""}
       </div>
       ${waterChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
       <p class="meta">${esc(bucket)} totals from the water meter. ${freshness}${esc(overlay)}${esc(climbing)}</p>
@@ -2332,6 +2361,7 @@ function waterCardMarkup(data) {
 function wireWaterCard(root) {
   // Redrawn where it stands: the running total is only the points added up, so
   // nothing is fetched and no other graph on the view is disturbed.
+  wireSensorChartHover(root);
   const toggle = $(`${root} [data-water-total]`);
   if (!toggle) return;
   toggle.addEventListener("change", () => {

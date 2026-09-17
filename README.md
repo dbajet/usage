@@ -86,15 +86,19 @@ overlays the period before the one on show, across every graph: dotted curves fo
 thermometers, pale bars behind the water and the solar — and a bar's tooltip then carries both
 readings under their own dates, since comparing them is the whole point of the overlay.
 
-The water card carries its own **Running total** switch, which draws the water added up as
-the period goes, ending at the figure in the heading — one line per period when the overlay
-is on, so a week can be read against the week before it at every point rather than only at
-the end. It shares the bars' axis rather than taking a second one: the line *is* the bars
-added up, so a scale of its own would invite the reader to compare two heights whose
-alignment we had invented. The honest price is that the ladder then climbs to the period's
-total and the bars shrink under it, which is why it is a switch and why it is off by default.
-It exists because a day's total is not legible from its bars: one quarter-hour can hold a
-third of it, and the rest arrives in bars too short to see, let alone add up.
+The water card carries its own **Running total** switch, on the day only, which draws the
+water added up as the day goes, ending at the figure in the heading — with a second line for
+the day before when the overlay is on. It exists because a day's total is not legible from
+its bars: one quarter-hour can hold a third of it, and the rest arrives in bars too short to
+see, let alone add up. It is a curve like any other on the view, in the same weight, with the
+same hover dot and label, and the previous day's is dotted exactly as a thermometer's is.
+
+It shares the bars' axis rather than taking a second one: the line *is* the bars added up, so
+a scale of its own would invite the reader to compare two heights whose alignment we had
+invented. The price of that is real — the ladder climbs to the day's total and the bars
+shrink under it — which is why it is a switch, and why it is offered on the day alone. Over a
+week or longer every bar is already an aggregate, the climb says nothing the period's total
+did not, and the flattening would be paid for nothing.
 
 What a house measures is a decision, not a guess from the data: Settings, Houses, Edit
 carries a switch for the thermometers, one for the water meter and one for the solar. Between
