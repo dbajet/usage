@@ -13,12 +13,17 @@
 # A sample is keyed by the instant the value last changed (`last_changed`), so
 # an unchanged value re-sent ten minutes later is not a duplicate.
 #
-# Each sample also carries `last_updated`, which is when Home Assistant last
-# heard the value confirmed rather than when it last moved. The two are far
-# apart for anything slow: an outdoor thermometer resolving to a fifth of a
-# degree sits half an hour on one number while reporting every minute, and its
-# `last_changed` would have the tile claim it had not been heard from since.
-# The tile counts its age from `last_updated`; the graph is still keyed by
+# Each sample also carries `last_reported`, which is when the thermometer was
+# last heard from rather than when its reading last moved. Home Assistant keeps
+# three instants and only this one answers that question: `last_changed` moves
+# when the value changes, `last_updated` when the value or an attribute does,
+# and `last_reported` on every write, changed or not. A thermometer re-sending
+# the same number is a no-op for the first two, so both would have the tile
+# claim it had not been heard from since it last moved - half an hour ago for
+# an outdoor sensor that only resolves to a fifth of a degree, and indefinitely
+# for a room holding steady.
+#
+# The tile counts its age from `last_reported`; the graph is still keyed by
 # `last_changed`, so the de-duplication above is untouched.
 #
 # Each sample also carries the charge of the thermometer that took it, shown on
@@ -61,7 +66,7 @@ rest_command:
             "unit": entry.attributes.unit_of_measurement | default(""),
             "value": entry.state | float,
             "measured_at": entry.last_changed.isoformat(),
-            "reported_at": entry.last_updated.isoformat(),
+            "reported_at": entry.last_reported.isoformat(),
             "battery": (charge.state | float | round | int) if (charge is not none and is_number(charge.state)) else none,
           }] %}
         {% endif %}

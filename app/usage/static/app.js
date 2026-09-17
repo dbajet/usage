@@ -1529,7 +1529,7 @@ function heardFrom(sensor) {
   // an hour on the same number while reporting every minute.
   //
   // Falls back to the reading's own instant, which is all there is to go on
-  // until the Home Assistant template sends `last_updated` too.
+  // until the Home Assistant template sends `last_reported` too.
   return sensor.reported_at || sensor.last_at;
 }
 
