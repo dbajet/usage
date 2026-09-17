@@ -727,11 +727,20 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
     reset_mocks()
 
 
+@patch("usage.commands.enphase_command.SeriesPulse")
 @patch("usage.commands.enphase_command.datetime", wraps=datetime)
+@patch.object(EnphaseCommand, "_due")
 @patch.object(EnphaseCommand, "_live")
 @patch.object(EnphaseCommand, "_latest")
 @patch.object(EnphaseCommand, "_require_house")
-def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mock_datetime: MagicMock) -> None:
+def test_series(
+    require_house: MagicMock,
+    latest: MagicMock,
+    live: MagicMock,
+    due: MagicMock,
+    mock_datetime: MagicMock,
+    pulse: MagicMock,
+) -> None:
     tested = helper_instance()
     database = tested._database
 
@@ -739,7 +748,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
         require_house.reset_mock()
         latest.reset_mock()
         live.reset_mock()
+        due.reset_mock()
         mock_datetime.reset_mock()
+        pulse.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -754,7 +765,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
     assert live.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -767,7 +780,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
     assert live.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -792,6 +807,7 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
     exp_latest = {"at": "2026-09-16T06:45:00+00:00", "production": 0.412, "consumption": 0.233, "battery_level": 87.5}
     exp_live = {"at": "2026-09-16T07:14:00+00:00", "production_power": 600.0,
                 "consumption_power": 360.0, "battery_level": 82.0}
+    exp_due = datetime(2026, 9, 16, 12, 0, 59, tzinfo=UTC)
     # a day and a week come from the quarter-hours; a month and a year from the
     # daily totals, and never from both at once
     tests = [
@@ -806,6 +822,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
         mock_datetime.now.side_effect = [now]
         latest.side_effect = [exp_latest]
         live.side_effect = [exp_live]
+        due.side_effect = [[exp_due, None]]
+        pulse.stamp.side_effect = ["theStamp"]
+        pulse.next_poll.side_effect = [59]
         database.fetch_all.side_effect = [rows]
         result = tested.series(user, 3, days, previous, offset)
         expected = {
@@ -819,17 +838,80 @@ def test_series(require_house: MagicMock, latest: MagicMock, live: MagicMock, mo
             "points": exp_points,
             "latest": exp_latest,
             "live": exp_live,
+            "stamp": "theStamp",
+            "next_poll_seconds": 59,
         }
         assert result == expected
         assert require_house.mock_calls == [call(user, 3)]
         assert latest.mock_calls == [call(3)]
         assert live.mock_calls == [call(3)]
+        assert due.mock_calls == [call(3)]
         assert mock_datetime.mock_calls == [call.now(UTC)]
+        assert pulse.mock_calls == [
+            call.stamp(exp_points, exp_latest, exp_live),
+            call.next_poll([exp_due, None], now),
+        ]
         window = (timedelta(minutes=bucket_minutes), 3, 1440, exp_since, exp_until)
         # the same window asked twice, once of each source, so neither is summed
         exp_calls = [call.fetch_all(sql, (*window, "local", *window, "cloud"))]
         assert database.mock_calls == exp_calls
         reset_mocks()
+
+
+def test__due() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    exp_gateway = call.fetch_one("SELECT updated_at, push_seconds FROM enphase_live WHERE house_id = %s", (3,))
+    exp_cloud = call.fetch_one(
+        """
+            SELECT MIN(COALESCE(last_sync_at + %s, now())) AS due
+            FROM enphase_feeds WHERE house_id = %s AND active AND source = %s
+            """,
+        # the floor of the pace, not the pace: the page may look a little early
+        # but never sleeps past the answer
+        (timedelta(seconds=960), 3, "cloud"),
+    )
+    exp_calls = [exp_gateway, exp_cloud]
+    pushed = datetime(2026, 9, 16, 11, 59, tzinfo=UTC)
+    synced = datetime(2026, 9, 16, 12, 11, tzinfo=UTC)
+
+    # both feeds, each on its own clock
+    database.fetch_one.side_effect = [{"updated_at": pushed, "push_seconds": 60}, {"due": synced}]
+    result = tested._due(3)
+    assert result == [datetime(2026, 9, 16, 12, 0, tzinfo=UTC), synced]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # one push seen and no second to measure against: the assumed cadence
+    database.fetch_one.side_effect = [{"updated_at": pushed, "push_seconds": None}, {"due": synced}]
+    result = tested._due(3)
+    assert result == [datetime(2026, 9, 16, 12, 9, tzinfo=UTC), synced]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # a house on the cloud alone, and one on the gateway alone
+    database.fetch_one.side_effect = [None, {"due": synced}]
+    result = tested._due(3)
+    assert result == [None, synced]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    database.fetch_one.side_effect = [{"updated_at": pushed, "push_seconds": 60}, {"due": None}]
+    result = tested._due(3)
+    assert result == [datetime(2026, 9, 16, 12, 0, tzinfo=UTC), None]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # neither: nothing to date the graph by
+    database.fetch_one.side_effect = [None, None]
+    result = tested._due(3)
+    assert result == [None, None]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
 
 
 def test__point() -> None:

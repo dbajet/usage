@@ -30,6 +30,8 @@ SQL_REMEMBER = """
                 battery_level = EXCLUDED.battery_level,
                 production_lifetime = EXCLUDED.production_lifetime,
                 consumption_lifetime = EXCLUDED.consumption_lifetime,
+                push_seconds = LEAST(%s, GREATEST(1,
+                    EXTRACT(EPOCH FROM (now() - enphase_live.updated_at))::int)),
                 updated_at = now()
             """
 SQL_STORE = """
@@ -240,7 +242,7 @@ def test__remember() -> None:
     result = tested._remember(helper_live())
     assert result is None
     exp_calls = [
-        call.execute(SQL_REMEMBER, (3, "2026-09-16T07:14:00+00:00", 600.0, 360.0, 82.0, 1_000_050.0, 2_000_030.0)),
+        call.execute(SQL_REMEMBER, (3, "2026-09-16T07:14:00+00:00", 600.0, 360.0, 82.0, 1_000_050.0, 2_000_030.0, 1800)),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()

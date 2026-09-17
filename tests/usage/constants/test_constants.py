@@ -33,6 +33,11 @@ def test_class() -> None:
         "meter_reader_timeout_seconds",
         "meter_reader_max_tokens",
         "reminder_check_seconds",
+        "realtime_poll_min_seconds",
+        "realtime_poll_max_seconds",
+        "realtime_push_default_seconds",
+        "realtime_push_max_seconds",
+        "realtime_stamp_length",
         "reminder_hour",
         "reminder_minute",
         "sensor_ranges",
@@ -299,6 +304,41 @@ def test_reminder_check_seconds() -> None:
     tested = Constants
     result = tested.reminder_check_seconds
     expected = 300
+    assert result == expected
+
+
+def test_realtime_poll_min_seconds() -> None:
+    tested = Constants
+    result = tested.realtime_poll_min_seconds
+    expected = 30
+    assert result == expected
+
+
+def test_realtime_poll_max_seconds() -> None:
+    tested = Constants
+    result = tested.realtime_poll_max_seconds
+    expected = 900
+    assert result == expected
+
+
+def test_realtime_push_default_seconds() -> None:
+    tested = Constants
+    result = tested.realtime_push_default_seconds
+    expected = 600
+    assert result == expected
+
+
+def test_realtime_push_max_seconds() -> None:
+    tested = Constants
+    result = tested.realtime_push_max_seconds
+    expected = 1800
+    assert result == expected
+
+
+def test_realtime_stamp_length() -> None:
+    tested = Constants
+    result = tested.realtime_stamp_length
+    expected = 16
     assert result == expected
 
 

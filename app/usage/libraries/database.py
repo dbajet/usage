@@ -143,6 +143,8 @@ class Database:
                 shows_water BOOLEAN NOT NULL DEFAULT false,
                 shows_power BOOLEAN NOT NULL DEFAULT false,
                 ingest_token_hash TEXT NOT NULL DEFAULT '',
+                sensors_pushed_at TIMESTAMPTZ,
+                sensors_push_seconds INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """,
@@ -390,6 +392,7 @@ class Database:
                 battery_level NUMERIC(5,2),
                 production_lifetime NUMERIC(16,3),
                 consumption_lifetime NUMERIC(16,3),
+                push_seconds INTEGER,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """,
@@ -444,10 +447,21 @@ class Database:
             (20, "solar pushed live by home assistant"),
             (21, "remember which endpoint answers for production"),
             (22, "a daily limit on what a water meter may draw"),
+            (23, "every feed says when it is worth asking again"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 23:
+                    # A push arrives when Home Assistant feels like sending it,
+                    # which is the house's own business: the app cannot know the
+                    # cadence, so it measures it. Two columns rather than a
+                    # history table - the gap between the last push and the one
+                    # before it is the whole of what the page needs to know when
+                    # to look again, and the row is written on every push anyway.
+                    connection.execute("ALTER TABLE houses ADD COLUMN IF NOT EXISTS sensors_pushed_at TIMESTAMPTZ")
+                    connection.execute("ALTER TABLE houses ADD COLUMN IF NOT EXISTS sensors_push_seconds INTEGER")
+                    connection.execute("ALTER TABLE enphase_live ADD COLUMN IF NOT EXISTS push_seconds INTEGER")
                 if version == 22:
                     # A second question to ask of the same rolling 24 hours: not
                     # only whether the water ever stopped, but whether too much

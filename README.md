@@ -93,6 +93,44 @@ settings panels are worth showing — a house with a water meter and no thermome
 not offered thermometer settings. Existing houses were seeded from what they already
 collect, so a new house needs its switches ticked once.
 
+### Asking again
+
+The view's three halves are fed by three things that move at three different speeds, so they
+are asked for separately and on their own clocks rather than together on one timer. Every
+series answers with two extra fields:
+
+`next_poll_seconds` is **when it is worth asking again** — the moment the thing behind the
+graph could first have something new, held between 30 seconds and 15 minutes. For the water
+and the cloud solar that moment is exact and known here: the rows only change when the sync
+loop pulls the feed, so the answer is its next due pull. For the two pushed feeds the cadence
+belongs to Home Assistant and not to this app, so it is **measured** rather than assumed: each
+push writes down how long it had been since the previous one (`houses.sensors_push_seconds`,
+`enphase_live.push_seconds`), and the page is told to look again that long after the last one
+landed. A gap longer than half an hour is an outage rather than a cadence and is not allowed
+to teach the page to sleep through the afternoon. A house on thermometers pushing every ten
+minutes is therefore asked roughly every 599 seconds and a gateway pushing every minute
+roughly every 59, without either number being written down anywhere.
+
+`stamp` is a short fingerprint of **everything that card draws** — its points, its latest
+reading, its alert or its live block. The window's own end is deliberately not in it: `until`
+is "now" and moves on every request, so folding it in would make every answer look new while
+the graph it draws is identical to the pixel. The browser compares the stamp it has against
+the one that came back and only rebuilds that card when they differ. Nothing else on the page
+is touched: the period bar keeps its focus, and the other two graphs keep the pointer they
+were following.
+
+A background refresh shows no wheel — only a load asked for by hand does — and borrows no
+button. A graph switched off is not asked for at all, and one switched back on is asked afresh
+rather than reappearing at whatever it last said. The words that age on their own ("5 min
+ago", and whether a tile has gone stale) are retouched on a minute's clock as text, without
+redrawing anything, because a stamp that has not moved is no reason to leave a tile claiming
+it was read five minutes ago an hour later.
+
+Websockets were considered and declined. The whole view receives about one event a minute at
+its busiest; a socket would buy under a minute of latency in exchange for `Upgrade` headers in
+nginx, a reconnect-and-resync path that duplicates the polling code, and every connection
+dropped on each blue/green switch.
+
 ## Realtime: sensors (Home Assistant)
 
 Thermometers reach the app the other way round from meter readings: Home
@@ -107,8 +145,8 @@ delete: a deleted sensor would only come back on the next push). Samples are key
 last changed, so a value re-sent unchanged is not a duplicate. The Realtime view
 shows the latest values and a trend over a day, a week, a month or a year, with
 averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band. On
-the last range the view refreshes itself every five minutes; an earlier period
-cannot change, so it does not.
+the last range the view refreshes itself; an earlier period cannot change, so it
+does not. See "Asking again" below for when it asks and what it redraws.
 
 Each push also carries the charge of the thermometer that took the reading -
 the battery entity is derived from the temperature one, `_temperature` replaced
@@ -331,8 +369,7 @@ in `_series_query`, and it is why they must be grouped before they meet.
 
 The push feed appears as a second row in Settings, Solar, with nothing to configure and only
 its own pulse to report - a silent typo in the automation otherwise looks exactly like a working
-one. And when a live reading is arriving, the Realtime page reloads every minute instead of
-every five, because a feed worth that name deserves a page that keeps up.
+one.
 
 ### The cloud feed's history
 

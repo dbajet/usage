@@ -18,13 +18,15 @@ let state = {
   sensorOffset: 0,
   hiddenSensors: new Set(),
   hiddenPower: new Set(),
-  sensorAutoRefreshId: null,
+  // One pending timer per feed, each set from the wait the server named in
+  // that feed's own last answer.
+  realtimeTimers: {},
+  realtimeAgeId: null,
   waterData: null,
   waterFeeds: null,
   powerData: null,
   enphaseFeeds: null,
   enphaseLocal: null,
-  sensorRefreshMs: 0,
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -69,11 +71,15 @@ function endButtonBusy(button) {
 }
 
 async function api(path, options = {}) {
-  const busyButton = beginButtonBusy();
+  // `quiet` is for the Realtime timers. They fire while a hand is still resting
+  // on whatever was clicked last, and a background refresh has no business
+  // greying out a button nobody pressed.
+  const { quiet = false, ...request } = options;
+  const busyButton = quiet ? null : beginButtonBusy();
   try {
     const response = await fetch(path, {
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-      ...options,
+      headers: { "Content-Type": "application/json", ...(request.headers || {}) },
+      ...request,
     });
     if (!response.ok) {
       let message = "The request failed.";
@@ -82,7 +88,7 @@ async function api(path, options = {}) {
     }
     // Anything that writes can change the houses, meters or sensors the
     // dashboard carries: its cache goes, so the next reader refetches.
-    if ((options.method || "GET").toUpperCase() !== "GET") invalidateDashboard();
+    if ((request.method || "GET").toUpperCase() !== "GET") invalidateDashboard();
     if (response.status === 204) return {};
     return await response.json();
   } finally { endButtonBusy(busyButton); }
@@ -209,8 +215,10 @@ function showView(name) {
   }
   if (name === "entries") loadEntries();
   if (name === "stats") loadStats();
-  if (name === "sensors") { loadSensors(); startSensorAutoRefresh(); }
-  else { stopSensorAutoRefresh(); }
+  // The feeds cannot be scheduled before they have answered: each one names
+  // its own next wait, so the first load is what starts the clocks.
+  if (name === "sensors") loadSensors();
+  else stopRealtime();
 }
 
 async function chooseHouseView() {
@@ -1220,7 +1228,12 @@ function wireChartHover(rootSelector) {
 // ---------- Sensors (Home Assistant thermometers) ----------
 
 const SENSOR_STALE_MS = 3 * 60 * 60 * 1000;
-const SENSOR_REFRESH_MS = 5 * 60 * 1000;
+// What a feed waits when the server declined to say - a feed that errored, or
+// an older build answering mid-deploy.
+const REALTIME_FALLBACK_MS = 5 * 60 * 1000;
+// "5 min ago" is wrong a minute later whether or not a byte changed, so the
+// words are retouched on their own clock. Text only: nothing is redrawn.
+const REALTIME_AGE_MS = 60 * 1000;
 const BATTERY_LOW_PERCENT = 20;
 const ICON_CHEVRON_LEFT = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/></svg>';
 const ICON_REFRESH = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z"/></svg>';
@@ -1301,29 +1314,93 @@ function setToggle(selector, on) {
   button.setAttribute("aria-pressed", on ? "true" : "false");
 }
 
-function refreshCadence() {
-  // A gateway pushing every minute is worth watching every minute; a house on
-  // thermometers and the cloud API alone changes far too slowly to bother.
-  return liveReading(state.powerData) ? LIVE_REFRESH_MS : SENSOR_REFRESH_MS;
+// The three feeds behind the view: a question it asks, an answer it keeps, and
+// the card that answer draws. They used to go out together on one timer and be
+// redrawn together whether or not a number had moved. Now each is asked only
+// once the thing behind it could have answered - the gateway pushes every
+// minute, the thermometers every ten, the water meter is pulled every quarter
+// of an hour - and redrawn only when the answer differs from the one on screen.
+const REALTIME_FEEDS = [
+  { key: "sensors", store: "sensorData", path: "/api/sensors/series", has: () => houseHasSensors() },
+  { key: "water", store: "waterData", path: "/api/water/series", has: () => houseHasWater() },
+  { key: "power", store: "powerData", path: "/api/enphase/series", has: () => houseHasPower() },
+];
+
+function feedUrl(feed) {
+  // Every feed follows the same range, offset and overlay, so the graphs of the
+  // view always show one window however far apart their clocks are.
+  return `${feed.path}?house_id=${state.houseId}&days=${state.sensorDays}`
+    + `&previous=${wantsPrevious()}&offset=${state.sensorOffset}`;
 }
 
-function startSensorAutoRefresh() {
-  // The thermometers push every few minutes, so the last range goes stale on its
-  // own: it reloads like the refresh button, readings and tiles together. An
-  // earlier period cannot change - there the arrows, not a timer, move the view.
-  stopSensorAutoRefresh();
-  state.sensorRefreshMs = refreshCadence();
-  state.sensorAutoRefreshId = setInterval(() => {
-    if ($("#view-sensors").hidden || state.sensorOffset !== 0) return;
-    loadSensors(true);
-  }, state.sensorRefreshMs);
+function cancelFeed(feed) {
+  // Both the timer and the note of it: forgetting one without the other leaves
+  // a request armed that nobody is expecting, which is a second poll a moment
+  // after the one that replaced it.
+  clearTimeout(state.realtimeTimers[feed.key]);
+  delete state.realtimeTimers[feed.key];
 }
 
-function stopSensorAutoRefresh() {
-  if (state.sensorAutoRefreshId) {
-    clearInterval(state.sensorAutoRefreshId);
-    state.sensorAutoRefreshId = null;
+function scheduleFeed(feed, seconds) {
+  // A timeout, not an interval: the wait is named afresh in every answer, so a
+  // house whose gateway goes quiet slows down on its own rather than holding
+  // the pace it happened to have when the view was opened.
+  //
+  // An earlier period is not scheduled at all. It cannot change - there the
+  // arrows, not a timer, move the view.
+  cancelFeed(feed);
+  // A graph the house does not have, one the viewer has switched off, and an
+  // earlier period are all asked for nothing at all.
+  if (state.sensorOffset !== 0 || !feed.has() || !showsCard(feed.key)) return;
+  const wait = Number(seconds) > 0 ? Number(seconds) * 1000 : REALTIME_FALLBACK_MS;
+  state.realtimeTimers[feed.key] = setTimeout(() => refreshFeed(feed), wait);
+}
+
+async function refreshFeed(feed) {
+  // The quiet half of the view's life: no wheel, no rebuild, and nothing at all
+  // on screen unless this feed's answer differs from the one already drawn.
+  // What counts as different is the server's word - it stamps everything the
+  // card draws - and not a comparison of the replies, which carry the window's
+  // own end and so are never twice the same.
+  // Asked for by hand as well as by the clock - switching a graph back on asks
+  // at once - so whatever was pending is dropped rather than left to fire.
+  cancelFeed(feed);
+  if ($("#view-sensors").hidden || state.sensorOffset !== 0 || state.sensorsHouseId !== state.houseId) return;
+  const asked = feedUrl(feed);
+  try {
+    const data = await api(asked, { quiet: true });
+    // A house, a range or a period changed while this was in flight: the answer
+    // describes a window nobody is looking at any more, and the load that made
+    // the change is bringing the right one. Dropping it is the whole of the fix.
+    if (asked !== feedUrl(feed) || state.sensorsHouseId !== state.houseId) return;
+    // An answer with no stamp at all is treated as new rather than as the same:
+    // during a blue/green switch the other colour may still be replying, and a
+    // card that quietly stopped redrawing would be the worse of the two errors.
+    const changed = !data.stamp || (state[feed.store] || {}).stamp !== data.stamp;
+    state[feed.store] = data;
+    if (changed) renderRealtimeCard(feed.key);
+    scheduleFeed(feed, data.next_poll_seconds);
+  } catch (error) {
+    // A feed that cannot answer is not worth a banner over a graph that is
+    // still perfectly readable, and a flaky connection would raise one every
+    // time. It is simply asked again at the fallback pace.
+    scheduleFeed(feed, 0);
   }
+}
+
+function startRealtime() {
+  // Called once each feed has answered, because the pace comes out of the
+  // answer: there is nothing to schedule until the first one is in.
+  REALTIME_FEEDS.forEach((feed) => scheduleFeed(feed, (state[feed.store] || {}).next_poll_seconds));
+  clearInterval(state.realtimeAgeId);
+  state.realtimeAgeId = setInterval(refreshAges, REALTIME_AGE_MS);
+}
+
+function stopRealtime() {
+  Object.values(state.realtimeTimers).forEach((id) => clearTimeout(id));
+  state.realtimeTimers = {};
+  clearInterval(state.realtimeAgeId);
+  state.realtimeAgeId = null;
 }
 
 function wireTileGestures(tile, solo, toggle) {
@@ -1477,34 +1554,36 @@ async function loadSensors(seriesOnly = false) {
       control.hidden = !control.dataset.needs.split(" ").some((half) => REALTIME_HALVES[half]());
     });
     $$("[data-sensor-days]").forEach((button) => button.classList.toggle("active", Number(button.dataset.sensorDays) === state.sensorDays));
+    // A load asked for by hand - entering the view, changing the range, the
+    // refresh button - is the only one that shows the wheel. The timers work in
+    // silence, or the view would blink at every feed that had nothing to say.
+    stopRealtime();
     showSensorsLoading();
-    // The list and both series leave together: one round trip, not three, and
-    // both follow the same range, offset and overlay so the two graphs of the
-    // view always show the same window.
-    const [list, series, water, power] = await Promise.all([
+    // Every feed leaves together here, so the whole view arrives in one window
+    // rather than filling in a card at a time. Only afterwards do they part
+    // ways and go each at their own pace.
+    const [list, ...answers] = await Promise.all([
       reuse
         ? Promise.resolve({ sensors: state.sensors })
         : api(`/api/sensors?house_id=${state.houseId}`),
-      houseHasSensors()
-        ? api(`/api/sensors/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
-        : Promise.resolve({ days: state.sensorDays, bucket_minutes: 10, series: [] }),
-      houseHasWater()
-        ? api(`/api/water/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
-        : Promise.resolve(null),
-      houseHasPower()
-        ? api(`/api/enphase/series?house_id=${state.houseId}&days=${state.sensorDays}&previous=${wantsPrevious()}&offset=${state.sensorOffset}`)
-        : Promise.resolve(null),
+      ...REALTIME_FEEDS.map((feed) => (feed.has() ? api(feedUrl(feed)) : Promise.resolve(feedBlank(feed)))),
     ]);
     state.sensors = list.sensors || [];
     state.sensorsHouseId = state.houseId;
-    state.sensorData = series;
-    state.waterData = water;
-    state.powerData = power;
+    REALTIME_FEEDS.forEach((feed, index) => { state[feed.store] = answers[index]; });
     renderSensors();
+    startRealtime();
   } catch (error) {
     $("#sensor-content").classList.remove("loading");
     showAppError(error);
   }
+}
+
+function feedBlank(feed) {
+  // What a house that does not have this half holds instead. The thermometers
+  // answer with an empty period rather than nothing at all, because the period
+  // bar is read off whichever series came back.
+  return feed.key === "sensors" ? { days: state.sensorDays, bucket_minutes: 10, series: [] } : null;
 }
 
 function showSensorsLoading() {
@@ -1517,14 +1596,39 @@ function showSensorsLoading() {
   content.classList.add("loading");
 }
 
-function renderSensors() {
-  const sensors = displaySensors(state.sensors || []);
+function realtimeSensors() {
+  // Who the thermometers are, crossed with what they last read. The two change
+  // on entirely different clocks: a name, a colour and an order only move when
+  // somebody edits them in Settings, while the reading on the tile moves with
+  // every push - and so it travels with the graph rather than with the list,
+  // which is why a tile used to sit on an hour-old value beside a line that had
+  // just been redrawn.
+  const latest = new Map(((state.sensorData || {}).latest || []).map((item) => [item.sensor_id, item]));
+  return (state.sensors || []).map((sensor) => {
+    const last = latest.get(sensor.id);
+    if (!last) return sensor;
+    return { ...sensor, last_value: last.value, last_at: last.at, battery: last.battery, battery_at: last.battery_at };
+  });
+}
+
+function realtimeFrame() {
+  // Every graph of the view shares one window, so the period bar can be read off
+  // whichever series came back - a solar-only house never asks for the water's.
   const data = state.sensorData || { series: [], days: state.sensorDays, bucket_minutes: 10 };
+  const frame = ((state.sensors || []).length ? data : null) || state.waterData || state.powerData || data;
+  const days = frame.days || state.sensorDays;
+  const tMax = frame.until ? Date.parse(frame.until) : Date.now();
+  return { data, days, tMax, tMin: tMax - days * 86400000 };
+}
+
+function thermometerCardMarkup() {
+  const sensors = displaySensors(realtimeSensors());
+  if (!sensors.length) return "";
+  const { data, tMax } = realtimeFrame();
   const colors = sensorColors(sensors);
   const activeIds = sensors.filter((sensor) => sensor.active).map((sensor) => sensor.id);
   // Tiles are "selected" while some sensors are hidden: the visible ones.
-  const visibleIds = activeIds.filter((id) => !state.hiddenSensors.has(id));
-  const selecting = visibleIds.length < activeIds.length;
+  const selecting = activeIds.some((id) => state.hiddenSensors.has(id));
   const tiles = sensors
     .filter((sensor) => sensor.active && sensor.last_value !== null)
     .map((sensor) => {
@@ -1532,41 +1636,50 @@ function renderSensors() {
       const visible = !state.hiddenSensors.has(sensor.id);
       const classes = ["sensor-tile", stale ? "stale" : "", selecting && visible ? "selected" : "", selecting && !visible ? "dimmed" : ""];
       return `
-        <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" role="button" tabindex="0"
+        <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" data-at="${esc(sensor.last_at)}" role="button" tabindex="0"
           style="border-left-color:${colors.get(sensor.id)}"
           title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it">
           <div class="tile-name">${esc(sensor.name)}</div>
           <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
-          <div class="tile-when"><span class="tile-ago">${esc(fmtAgo(sensor.last_at))}</span>${batteryMarkup(sensor)}</div>
+          <div class="tile-when"><span class="tile-ago">${agoMarkup(sensor.last_at)}</span>${batteryMarkup(sensor)}</div>
         </div>`;
     }).join("");
-
-  // Every graph of the view shares one window, so the period bar can be read off
-  // whichever series came back - a solar-only house never asks for the water's.
-  const frame = (sensors.length ? data : null) || state.waterData || state.powerData || data;
-  const days = frame.days || state.sensorDays;
-  const tMax = frame.until ? Date.parse(frame.until) : Date.now();
-  const tMin = tMax - days * 86400000;
-  const allSeries = splitPrevious(displaySeries(data.series || []), data.days, data.until ? Date.parse(data.until) : tMax)
-    .map((item) => ({ ...item, color: colors.get(item.sensor_id) || SENSOR_DEFAULT_COLORS[0] }));
-  const thresholds = sensorThresholds(allSeries);
+  const allSeries = sensorSeries(colors);
   const visible = allSeries.filter((item) => !state.hiddenSensors.has(item.sensor_id));
-
-  const thermometers = sensors.length && showsCard("sensors")
-    ? `
+  const thresholds = sensorThresholds(allSeries).filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id));
+  return `
     <div class="card graph-card">
-      ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds.filter((threshold) => !state.hiddenSensors.has(threshold.sensor_id))) || '<p class="meta">No reading in this period.</p>'}
+      ${sensorChartMarkup(visible, data.days, data.bucket_minutes, tMax, thresholds) || '<p class="meta">No reading in this period.</p>'}
       <div class="sensor-tiles">${tiles || '<p class="meta">No reading received yet.</p>'}</div>
-    </div>`
-    : "";
-  const water = showsCard("water") ? waterCardMarkup(state.waterData) : "";
-  const power = showsCard("power") ? powerCardMarkup(state.powerData) + batteryCardMarkup(state.powerData) : "";
-  const cards = thermometers + water + power;
+    </div>`;
+}
 
+function sensorSeries(colors) {
+  const { data, tMax } = realtimeFrame();
+  return splitPrevious(displaySeries(data.series || []), data.days, data.until ? Date.parse(data.until) : tMax)
+    .map((item) => ({ ...item, color: colors.get(item.sensor_id) || SENSOR_DEFAULT_COLORS[0] }));
+}
+
+function wireSensorTiles(root) {
+  const activeIds = realtimeSensors().filter((sensor) => sensor.active).map((sensor) => sensor.id);
+  $$(`${root} [data-sensor-tile]`).forEach((tile) => {
+    const sensorId = Number(tile.dataset.sensorTile);
+    // The same rule the solar tiles follow, and written once for both. Hiding a
+    // sensor is a question for this card alone, so this card alone is redrawn.
+    const solo = () => { state.hiddenSensors = pickOne(activeIds, state.hiddenSensors, sensorId); renderRealtimeCard("sensors"); };
+    const toggle = () => { state.hiddenSensors = toggleOne(activeIds, state.hiddenSensors, sensorId); renderRealtimeCard("sensors"); };
+    wireTileGestures(tile, solo, toggle);
+  });
+}
+
+function renderSensors() {
+  // The whole view, rebuilt: entering it, changing house, range, period or
+  // overlay, or turning a graph on and off. Everything that happens afterwards
+  // goes through renderRealtimeCard and leaves the rest of the page alone.
   $("#sensor-content").classList.remove("loading");
   // Nothing collected at all is a different thing from everything turned off,
   // and only one of them is the house's fault.
-  const collecting = sensors.length || state.waterData || state.powerData;
+  const collecting = (state.sensors || []).length || state.waterData || state.powerData;
   if (!collecting) {
     $("#sensor-content").innerHTML = `
       <div class="card">
@@ -1575,28 +1688,50 @@ function renderSensors() {
       </div>`;
     return;
   }
-  const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
-  const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
-  const rangeLabel = `${fmtPeriodEdge(tMin, days)} – ${fmtPeriodEdge(tMax, days)}`;
-  const hint = thermometers
-    ? `${bucketLabel} averages${data.bucket_minutes > 10 ? " with the low-high band" : ""}${data.previous ? `; dotted: the previous ${previousLabel}` : ""}${thresholds.length ? "; dashed: the alert range" : ""}. Click a tile for that sensor alone.`
-    : "Click a tile for that series alone; the icons choose which graphs are on show.";
+  // One slot per card, standing whether or not it has anything in it yet: a
+  // feed answering on its own later needs somewhere of its own to land.
+  const slots = REALTIME_CARDS.filter((card) => card.has() && showsCard(card.key));
   // The bar stays even with every card off, or there would be no way back.
-  $("#sensor-content").innerHTML = periodBarMarkup(rangeLabel, hint) + (cards || `
+  $("#sensor-content").innerHTML = periodBarMarkup() + (slots.length
+    ? slots.map((card) => `<div data-card-slot="${card.key}"></div>`).join("")
+    : `
     <div class="card">
       <p class="meta">Every graph is hidden. The icons above the date bring them back.</p>
     </div>`);
-  wireSensorChartHover("#sensor-content");
   wirePeriodBar();
-  wirePowerTiles();
-  // Whether this house has a live feed is only known once its series is in.
-  if (state.sensorAutoRefreshId && state.sensorRefreshMs !== refreshCadence()) startSensorAutoRefresh();
-  $$("[data-sensor-tile]").forEach((tile) => {
-    const sensorId = Number(tile.dataset.sensorTile);
-    // The same rule the solar tiles follow, and written once for both.
-    const solo = () => { state.hiddenSensors = pickOne(activeIds, state.hiddenSensors, sensorId); renderSensors(); };
-    const toggle = () => { state.hiddenSensors = toggleOne(activeIds, state.hiddenSensors, sensorId); renderSensors(); };
-    wireTileGestures(tile, solo, toggle);
+  slots.forEach((card) => renderRealtimeCard(card.key));
+}
+
+function renderRealtimeCard(key) {
+  // One card redrawn where it stands. The view around it is untouched, so the
+  // period bar keeps the focus a click just gave it and the other two graphs
+  // keep the pointer they were following.
+  const selector = `[data-card-slot="${key}"]`;
+  const slot = $(selector);
+  const card = REALTIME_CARDS.find((item) => item.key === key);
+  if (!slot || !card) return;
+  slot.innerHTML = card.markup();
+  card.wire(selector);
+  // The window ends now, so its label moves with every answer that lands.
+  refreshPeriodBar();
+  refreshAges();
+}
+
+function refreshPeriodBar() {
+  const label = $("#sensor-content .period-label");
+  if (!label) return;
+  label.textContent = periodRangeLabel();
+  label.title = periodHint();
+}
+
+function refreshAges() {
+  // Words, not markup: no card is rebuilt and no graph is touched, so this can
+  // run on the clock without anything on screen moving but the text itself.
+  // "5 min ago" stops being true a minute later whether or not a byte changed,
+  // and a tile that has gone quiet has to be able to say so.
+  $$("#sensor-content .ago").forEach((span) => { span.textContent = fmtAgo(span.dataset.ago); });
+  $$("#sensor-content [data-sensor-tile]").forEach((tile) => {
+    tile.classList.toggle("stale", Date.now() - Date.parse(tile.dataset.at) > SENSOR_STALE_MS);
   });
 }
 
@@ -1850,10 +1985,32 @@ const WATER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
 // The three halves of the view, and the icon that turns each one off. Pressed
 // is showing: the eye is open, the card is there.
 const REALTIME_CARDS = [
-  { key: "sensors", label: "Thermometers", icon: ICON_THERMOMETER, has: () => houseHasSensors() },
-  { key: "water", label: "Water", icon: ICON_DROP, has: () => houseHasWater() },
-  { key: "power", label: "Solar", icon: ICON_SUN, has: () => houseHasPower() },
+  {
+    key: "sensors", label: "Thermometers", icon: ICON_THERMOMETER, has: () => houseHasSensors(),
+    markup: () => thermometerCardMarkup(),
+    wire: (root) => { wireSensorChartHover(root); wireSensorTiles(root); },
+  },
+  {
+    key: "water", label: "Water", icon: ICON_DROP, has: () => houseHasWater(),
+    markup: () => waterCardMarkup(state.waterData),
+    // Its bars carry their own titles, so there is nothing here to wire.
+    wire: () => {},
+  },
+  {
+    key: "power", label: "Solar", icon: ICON_SUN, has: () => houseHasPower(),
+    // The batteries are the solar feed's second graph and follow the same
+    // switch: one feed, one slot, two cards.
+    markup: () => powerCardMarkup(state.powerData) + batteryCardMarkup(state.powerData),
+    wire: (root) => { wireSensorChartHover(root); wirePowerTiles(root); },
+  },
 ];
+
+function agoMarkup(iso) {
+  // The one place a "5 min ago" is written, so the timer that keeps them honest
+  // has a single thing to look for.
+  if (!iso) return "";
+  return `<span class="ago" data-ago="${esc(iso)}">${esc(fmtAgo(iso))}</span>`;
+}
 
 function hiddenCards() {
   // A viewer's choice, kept per browser like the unit switch: which of the
@@ -1871,6 +2028,13 @@ function toggleCard(key) {
   else hidden.add(key);
   storeItem("usage-realtime-cards", [...hidden].join(","));
   renderSensors();
+  // A hidden graph is not asked for, so one switched off drops its pending
+  // request and one switched back on is asked afresh rather than reappearing
+  // at whatever it happened to say when it was put away.
+  const feed = REALTIME_FEEDS.find((item) => item.key === key);
+  if (!feed) return;
+  if (showsCard(key) && feed.has()) refreshFeed(feed);
+  else scheduleFeed(feed, 0);
 }
 
 function cardTogglesMarkup() {
@@ -1884,12 +2048,36 @@ function cardTogglesMarkup() {
   }).join("");
 }
 
-function periodBarMarkup(rangeLabel, hint) {
+function periodRangeLabel() {
+  const { days, tMin, tMax } = realtimeFrame();
+  return `${fmtPeriodEdge(tMin, days)} – ${fmtPeriodEdge(tMax, days)}`;
+}
+
+function periodHint() {
+  const { data } = realtimeFrame();
+  if (!(state.sensors || []).length || !showsCard("sensors")) {
+    return "Click a tile for that series alone; the icons choose which graphs are on show.";
+  }
+  const previousLabel = { 1: "day", 7: "week", 30: "30 days", 365: "year" }[data.days] || "period";
+  const bucketLabel = data.bucket_minutes >= 1440 ? "daily" : data.bucket_minutes >= 60 ? `${data.bucket_minutes / 60}-hour` : `${data.bucket_minutes}-minute`;
+  const banded = data.bucket_minutes > 10 ? " with the low-high band" : "";
+  const dotted = data.previous ? `; dotted: the previous ${previousLabel}` : "";
+  // Whether any curve on show carries an alert range, which is all the hint
+  // needs to know - the lines themselves are the chart's business.
+  const drawn = new Set((data.series || []).map((item) => item.sensor_id));
+  const bounded = (sensor) => sensor.threshold_min !== null || sensor.threshold_max !== null;
+  const dashed = wantsThresholds() && (state.sensors || []).some((sensor) => drawn.has(sensor.id) && bounded(sensor))
+    ? "; dashed: the alert range"
+    : "";
+  return `${bucketLabel} averages${banded}${dotted}${dashed}. Click a tile for that sensor alone.`;
+}
+
+function periodBarMarkup() {
   // Shared by every graph of the view: they all move together, and the icons
   // on the left say which of them are on show at all.
   return `
     <div class="period-bar">
-      <span class="period-label" title="${esc(hint)}">${esc(rangeLabel)}</span>
+      <span class="period-label" title="${esc(periodHint())}">${esc(periodRangeLabel())}</span>
       <span class="range-tabs card-toggles">${cardTogglesMarkup()}</span>
       <span class="range-tabs">
         <button id="sensor-earlier" class="ghost compact icon-button" type="button" title="Earlier period" aria-label="Earlier period">${ICON_CHEVRON_LEFT}</button>
@@ -2059,13 +2247,13 @@ function waterCardMarkup(data) {
   const reading = latest.reading === null || latest.reading === undefined ? "" : ` · meter at ${fmtVolume(latest.reading)}`;
   // EyeOnWater publishes in batches, so the freshest bar is usually hours old:
   // saying when the last reading landed stops that looking like a dry house.
-  const freshness = latest.at ? `Last reading ${fmtAgo(latest.at)}${reading}.` : "Nothing collected yet.";
+  const freshness = latest.at ? `Last reading ${agoMarkup(latest.at)}${esc(reading)}.` : "Nothing collected yet.";
   const overlay = earlier.length ? ` Pale bars: the previous ${WATER_PERIODS[data.days] || "period"}.` : "";
   return `
     <div class="card graph-card">
       <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span>${waterLimitMarkup(data.alert)}</h3>
       ${waterChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
-      <p class="meta">${esc(bucket)} totals from the water meter. ${esc(freshness)}${esc(overlay)}</p>
+      <p class="meta">${esc(bucket)} totals from the water meter. ${freshness}${esc(overlay)}</p>
     </div>`;
 }
 
@@ -2211,7 +2399,6 @@ const POWER_PERIODS = { 1: "day", 7: "week", 30: "30 days", 365: "year" };
 // A push every minute off the gateway goes stale in minutes, not hours: past
 // this the tiles stop claiming to be live and fall back to the last interval.
 const LIVE_STALE_MS = 15 * 60 * 1000;
-const LIVE_REFRESH_MS = 60 * 1000;
 const WATTS_PER_KW = 1000;
 // The two halves of the solar graph, which the tiles turn on and off.
 const POWER_SERIES = ["production", "consumption"];
@@ -2368,8 +2555,8 @@ function powerCardMarkup(data) {
   const bucket = data.daily ? "daily" : WATER_BUCKETS[data.bucket_minutes] || `${data.bucket_minutes}-minute`;
   const live = liveReading(data);
   const freshness = live
-    ? `Live from the gateway, ${fmtAgo(live.at)}.`
-    : latest.at ? `Last reading ${fmtAgo(latest.at)}.` : "Nothing collected yet.";
+    ? `Live from the gateway, ${agoMarkup(live.at)}.`
+    : latest.at ? `Last reading ${agoMarkup(latest.at)}.` : "Nothing collected yet.";
   // Beyond the fortnight of quarter-hourly telemetry the graph is drawn from the
   // daily totals, which is the only resolution the whole history fits in.
   const source = data.daily ? " Daily totals, from the whole life of the system." : "";
@@ -2379,7 +2566,7 @@ function powerCardMarkup(data) {
       <h3>Solar <span class="meta">· ${esc(totals)}${esc(showing.length > 1 ? covered : "")}</span></h3>
       ${powerChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax, state.hiddenPower) || '<p class="meta">No reading in this period.</p>'}
       ${powerTilesMarkup(data, latest)}
-      <p class="meta">${esc(bucket)} totals from the Enphase system. ${esc(freshness)}${esc(source)}${esc(overlay)}</p>
+      <p class="meta">${esc(bucket)} totals from the Enphase system. ${freshness}${esc(source)}${esc(overlay)}</p>
     </div>`;
 }
 
@@ -2394,7 +2581,7 @@ function powerTilesMarkup(data, latest) {
   // removes it.
   const live = liveReading(data);
   const when = live ? live.at : latest.at;
-  const ago = when ? fmtAgo(when) : "";
+  const ago = agoMarkup(when);
   const selecting = POWER_SERIES.some((field) => state.hiddenPower.has(field));
   const names = { production: "Production", consumption: "Consumption" };
   const doing = { production: "the panels are making", consumption: "the house is drawing" };
@@ -2412,19 +2599,21 @@ function powerTilesMarkup(data, latest) {
           title="${esc(hint)} - click: only this one · Ctrl+click or long press: add or remove it">
           <div class="tile-name">${esc(names[field])}</div>
           <div class="tile-value">${esc(value)}</div>
-          <div class="tile-when"><span class="tile-ago">${esc(ago)}</span></div>
+          <div class="tile-when"><span class="tile-ago">${ago}</span></div>
         </div>`;
   }).join("");
   return `<div class="sensor-tiles">${tiles}</div>`;
 }
 
-function wirePowerTiles() {
-  $$("[data-power-tile]").forEach((tile) => {
+function wirePowerTiles(root) {
+  $$(`${root} [data-power-tile]`).forEach((tile) => {
     const field = tile.dataset.powerTile;
+    // Which half of the solar is on show is a question for the solar card
+    // alone, so the thermometers and the water are left where they are.
     wireTileGestures(
       tile,
-      () => { state.hiddenPower = pickOne(POWER_SERIES, state.hiddenPower, field); renderSensors(); },
-      () => { state.hiddenPower = toggleOne(POWER_SERIES, state.hiddenPower, field); renderSensors(); },
+      () => { state.hiddenPower = pickOne(POWER_SERIES, state.hiddenPower, field); renderRealtimeCard("power"); },
+      () => { state.hiddenPower = toggleOne(POWER_SERIES, state.hiddenPower, field); renderRealtimeCard("power"); },
     );
   });
 }
@@ -3334,7 +3523,8 @@ addEventListener("DOMContentLoaded", () => {
     const on = !wantsThresholds();
     storeThresholds(on);
     setToggle("#sensor-thresholds", on);
-    renderSensors();
+    // The alert range is drawn on the thermometers and nowhere else.
+    renderRealtimeCard("sensors");
   });
   // On narrow screens the version hides behind the info icon: a tap reveals it.
   $("#version").addEventListener("click", () => $("#version").classList.toggle("open"));

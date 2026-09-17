@@ -12,6 +12,7 @@ from usage.libraries.database import Database
 from usage.libraries.email_sender import EmailSender
 from usage.libraries.email_texts import EmailTexts
 from usage.libraries.ingest_token import IngestToken
+from usage.libraries.series_pulse import SeriesPulse
 from usage.structures.app_exception import AppException
 from usage.structures.sensor_breach import SensorBreach
 from usage.structures.sensor_sample import SensorSample
@@ -65,6 +66,7 @@ class SensorCommand:
                     (known[sample.entity_id], sample.measured_at.isoformat(), sample.value),
                 )
             self._store_batteries(parsed, known)
+            self._mark_push(house_id)
         # Outside the transaction: the samples are in whatever the mail relay does next.
         self._alert(house_id, parsed, known)
         return {"accepted": len(parsed), "created": created}
@@ -193,11 +195,17 @@ class SensorCommand:
             raise AppException(400, f"The range must be one of {choices} days.")
         if offset < 0:
             raise AppException(400, "The offset counts periods back from now.")
-        until = datetime.now(UTC) - timedelta(days=days * offset)
+        # One reading of the clock for the whole answer: the window's end and the
+        # wait named beside it must not drift apart by the length of a query.
+        now = datetime.now(UTC)
+        until = now - timedelta(days=days * offset)
         since = until - timedelta(days=days * (2 if previous else 1))
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
-                "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
+                """
+                SELECT id, name_sealed AS name, unit, battery, battery_at
+                FROM sensors WHERE house_id = %s AND active ORDER BY position, id
+                """,
                 (house_id,),
             ),
             ("name",),
@@ -236,6 +244,7 @@ class SensorCommand:
                     "points": points,
                 },
             )
+        latest = self._latest(house_id, sensors)
         return {
             "days": days,
             "bucket_minutes": bucket_minutes,
@@ -243,7 +252,64 @@ class SensorCommand:
             "offset": offset,
             "until": until.isoformat(),
             "series": result,
+            # The tiles under the graph, which age between two pushes even when
+            # the curves do not: they used to come from the sensor list, which
+            # the view only re-asked for when it was entered, so a tile could
+            # sit on an hour-old reading while the line beside it moved.
+            "latest": latest,
+            "stamp": SeriesPulse.stamp(result, latest),
+            "next_poll_seconds": SeriesPulse.next_poll([self._due(house_id)], now),
         }
+
+    def _latest(self, house_id: int, sensors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The freshest reading of each active sensor, and the charge that took it.
+
+        A sensor quiet for the whole window has no curve but still has a tile,
+        so this is asked of the whole history rather than of the period on show.
+        """
+        rows = self._database.fetch_all(
+            """
+            SELECT DISTINCT ON (samples.sensor_id) samples.sensor_id, samples.measured_at, samples.value
+            FROM samples JOIN sensors ON sensors.id = samples.sensor_id
+            WHERE sensors.house_id = %s AND sensors.active
+            ORDER BY samples.sensor_id, samples.measured_at DESC
+            """,
+            (house_id,),
+        )
+        result: list[dict[str, Any]] = []
+        for sensor in sensors:
+            row = next((item for item in rows if int(item["sensor_id"]) == int(sensor["id"])), None)
+            if row is None:
+                continue
+            result.append(
+                {
+                    "sensor_id": int(sensor["id"]),
+                    "value": float(row["value"]),
+                    "at": row["measured_at"].isoformat(),
+                    "battery": int(sensor["battery"]) if sensor["battery"] is not None else None,
+                    "battery_at": sensor["battery_at"].isoformat() if sensor["battery_at"] is not None else "",
+                },
+            )
+        return result
+
+    def _due(self, house_id: int) -> datetime | None:
+        """When Home Assistant is next expected to push, going by the last two.
+
+        Before two have been seen there is nothing to measure, so the house
+        falls back to the assumed cadence counted from the moment it was last
+        heard from. A house that has never pushed at all answers nothing, and
+        is then looked in on at the ceiling: there is no cadence to guess, and
+        the first push could as easily be tomorrow as in a minute.
+        """
+        row = self._database.fetch_one(
+            "SELECT sensors_pushed_at, sensors_push_seconds FROM houses WHERE id = %s",
+            (house_id,),
+        )
+        if row is None or row["sensors_pushed_at"] is None:
+            return None
+        pushed: datetime = row["sensors_pushed_at"]
+        cadence = row["sensors_push_seconds"] or Constants.realtime_push_default_seconds
+        return pushed + timedelta(seconds=int(cadence))
 
     def alerts(self, user: SessionUser, house_id: int) -> dict[str, bool]:
         """Whether this user asked for the house's threshold alerts (off unless asked)."""
@@ -293,6 +359,30 @@ class SensorCommand:
             ),
         )
         return sensor_id, True
+
+    def _mark_push(self, house_id: int) -> None:
+        """When this push landed, and how long it had been since the one before.
+
+        A sample is stamped with the instant its value last changed, which is
+        the thermometer's clock and says nothing about when Home Assistant
+        chose to send it: a room that has held 19.4 all afternoon carries an
+        afternoon-old stamp. So the arrival is written down here instead, and
+        the gap between two arrivals is the cadence the Realtime page is told
+        to wait. A gap longer than the ceiling is an outage rather than a
+        cadence and is not allowed to teach the page to sleep through the day.
+        """
+        self._database.execute(
+            """
+            UPDATE houses
+            SET sensors_push_seconds = CASE
+                    WHEN sensors_pushed_at IS NULL THEN sensors_push_seconds
+                    ELSE LEAST(%s, GREATEST(1, EXTRACT(EPOCH FROM (now() - sensors_pushed_at))::int))
+                END,
+                sensors_pushed_at = now()
+            WHERE id = %s
+            """,
+            (Constants.realtime_push_max_seconds, house_id),
+        )
 
     def _store_batteries(self, parsed: list[SensorSample], known: dict[str, int]) -> None:
         """Keep the last charge each thermometer reported; only the current one is shown."""

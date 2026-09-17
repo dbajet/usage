@@ -563,6 +563,8 @@ def test__create_schema() -> None:
                 shows_water BOOLEAN NOT NULL DEFAULT false,
                 shows_power BOOLEAN NOT NULL DEFAULT false,
                 ingest_token_hash TEXT NOT NULL DEFAULT '',
+                sensors_pushed_at TIMESTAMPTZ,
+                sensors_push_seconds INTEGER,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -848,6 +850,7 @@ def test__create_schema() -> None:
                 battery_level NUMERIC(5,2),
                 production_lifetime NUMERIC(16,3),
                 consumption_lifetime NUMERIC(16,3),
+                push_seconds INTEGER,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -890,7 +893,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 22
+    connection.execute.return_value.fetchone.side_effect = [None] * 23
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1131,12 +1134,24 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (22, 'a daily limit on what a water meter may draw'),
         ),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (23,),
+        ),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE houses ADD COLUMN IF NOT EXISTS sensors_pushed_at TIMESTAMPTZ"),
+        call.execute("ALTER TABLE houses ADD COLUMN IF NOT EXISTS sensors_push_seconds INTEGER"),
+        call.execute("ALTER TABLE enphase_live ADD COLUMN IF NOT EXISTS push_seconds INTEGER"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (23, 'every feed says when it is worth asking again'),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 22
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 23
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1248,6 +1263,11 @@ def test__migrate() -> None:
         call.execute(
             "SELECT 1 FROM schema_migrations WHERE version = %s",
             (22,),
+        ),
+        call.execute().fetchone(),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (23,),
         ),
         call.execute().fetchone(),
     ]

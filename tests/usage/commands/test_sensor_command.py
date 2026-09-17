@@ -69,6 +69,7 @@ def test___init__() -> None:
 
 
 @patch.object(SensorCommand, "_alert")
+@patch.object(SensorCommand, "_mark_push")
 @patch.object(SensorCommand, "_store_batteries")
 @patch.object(SensorCommand, "_find_or_create_sensor")
 @patch.object(SensorCommand, "_parse_sample")
@@ -78,6 +79,7 @@ def test_ingest(
     parse_sample: MagicMock,
     find_or_create_sensor: MagicMock,
     store_batteries: MagicMock,
+    mark_push: MagicMock,
     alert: MagicMock,
 ) -> None:
     tested = helper_instance()
@@ -88,6 +90,7 @@ def test_ingest(
         parse_sample.reset_mock()
         find_or_create_sensor.reset_mock()
         store_batteries.reset_mock()
+        mark_push.reset_mock()
         alert.reset_mock()
         database.reset_mock()
 
@@ -106,6 +109,7 @@ def test_ingest(
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == []
+    assert mark_push.mock_calls == []
     assert alert.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
@@ -121,6 +125,7 @@ def test_ingest(
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == [call([], {})]
+    assert mark_push.mock_calls == [call(3)]
     assert alert.mock_calls == [call(3, [], {})]
     exp_calls = [call.transaction(), call.transaction().__enter__(), call.transaction().__exit__(None, None, None)]
     assert database.mock_calls == exp_calls
@@ -145,6 +150,7 @@ def test_ingest(
     assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
     exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
     assert store_batteries.mock_calls == [call([garage, freezer, garage_later], exp_known)]
+    assert mark_push.mock_calls == [call(3)]
     assert alert.mock_calls == [call(3, [garage, freezer, garage_later], exp_known)]
     exp_calls = [
         call.transaction(),
@@ -444,15 +450,27 @@ def test_set_order(require_house: MagicMock) -> None:
     reset_mocks()
 
 
+@patch("usage.commands.sensor_command.SeriesPulse")
 @patch("usage.commands.sensor_command.datetime", wraps=datetime)
+@patch.object(SensorCommand, "_due")
+@patch.object(SensorCommand, "_latest")
 @patch.object(SensorCommand, "_require_house")
-def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
+def test_series(
+    require_house: MagicMock,
+    latest: MagicMock,
+    due: MagicMock,
+    mock_datetime: MagicMock,
+    pulse: MagicMock,
+) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         require_house.reset_mock()
+        latest.reset_mock()
+        due.reset_mock()
         mock_datetime.reset_mock()
+        pulse.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -465,7 +483,10 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "The range must be one of 1, 7, 30, 365 days."
     assert require_house.mock_calls == [call(user, 3)]
+    assert latest.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -476,7 +497,10 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
     assert exc_info.value.status_code == 400
     assert exc_info.value.message == "The offset counts periods back from now."
     assert require_house.mock_calls == [call(user, 3)]
+    assert latest.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -503,9 +527,14 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
         (True, 0, "2026-08-20T12:00:00+00:00", "2026-09-03T12:00:00+00:00"),
         (False, 2, "2026-08-13T12:00:00+00:00", "2026-08-20T12:00:00+00:00"),
     ]
+    exp_latest = [{"sensor_id": 9, "value": 84.9, "at": "2026-09-03T11:50:00+00:00", "battery": 74, "battery_at": ""}]
     for previous, offset, exp_since, exp_until in tests:
         require_house.side_effect = [None]
+        latest.side_effect = [exp_latest]
+        due.side_effect = [datetime(2026, 9, 3, 12, 9, 59, tzinfo=UTC)]
         mock_datetime.now.side_effect = [now]
+        pulse.stamp.side_effect = ["theStamp"]
+        pulse.next_poll.side_effect = [599]
         database.fetch_all.side_effect = [sensor_rows, rows]
         database.decrypt_rows.side_effect = [[{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}]]
         result = tested.series(user, 3, 7, previous, offset)
@@ -526,13 +555,26 @@ def test_series(require_house: MagicMock, mock_datetime: MagicMock) -> None:
                     ],
                 },
             ],
+            "latest": exp_latest,
+            "stamp": "theStamp",
+            "next_poll_seconds": 599,
         }
         assert result == expected
         assert require_house.mock_calls == [call(user, 3)]
+        exp_series = expected["series"]
+        assert latest.mock_calls == [call(3, [{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}])]
+        assert due.mock_calls == [call(3)]
         assert mock_datetime.mock_calls == [call.now(UTC)]
+        assert pulse.mock_calls == [
+            call.stamp(exp_series, exp_latest),
+            call.next_poll([datetime(2026, 9, 3, 12, 9, 59, tzinfo=UTC)], now),
+        ]
         exp_calls = [
             call.fetch_all(
-                "SELECT id, name_sealed AS name, unit FROM sensors WHERE house_id = %s AND active ORDER BY position, id",
+                """
+                SELECT id, name_sealed AS name, unit, battery, battery_at
+                FROM sensors WHERE house_id = %s AND active ORDER BY position, id
+                """,
                 (3,),
             ),
             call.decrypt_rows(sensor_rows, ("name",)),
@@ -660,6 +702,110 @@ def test__find_or_create_sensor() -> None:
         ]
         assert database.mock_calls == exp_calls
         reset_mocks()
+
+
+def test__mark_push() -> None:
+    tested = helper_instance()
+    database = tested._database
+    exp_sql = """
+            UPDATE houses
+            SET sensors_push_seconds = CASE
+                    WHEN sensors_pushed_at IS NULL THEN sensors_push_seconds
+                    ELSE LEAST(%s, GREATEST(1, EXTRACT(EPOCH FROM (now() - sensors_pushed_at))::int))
+                END,
+                sensors_pushed_at = now()
+            WHERE id = %s
+            """
+
+    database.execute.side_effect = [None]
+    result = tested._mark_push(3)
+    assert result is None
+    # the ceiling travels with the statement: an outage is not a cadence
+    assert database.mock_calls == [call.execute(exp_sql, (1800, 3))]
+
+
+@patch("usage.commands.sensor_command.datetime", wraps=datetime)
+def test__due(mock_datetime: MagicMock) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        mock_datetime.reset_mock()
+        database.reset_mock()
+
+    exp_sql = "SELECT sensors_pushed_at, sensors_push_seconds FROM houses WHERE id = %s"
+    pushed = datetime(2026, 9, 3, 11, 50, tzinfo=UTC)
+
+    # two pushes seen: the gap between them is what the page is told to wait
+    database.fetch_one.side_effect = [{"sensors_pushed_at": pushed, "sensors_push_seconds": 599}]
+    result = tested._due(3)
+    assert result == datetime(2026, 9, 3, 11, 59, 59, tzinfo=UTC)
+    assert database.mock_calls == [call.fetch_one(exp_sql, (3,))]
+    reset_mocks()
+
+    # only one so far: the assumed cadence, counted from when it landed
+    database.fetch_one.side_effect = [{"sensors_pushed_at": pushed, "sensors_push_seconds": None}]
+    result = tested._due(3)
+    assert result == datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+    assert database.mock_calls == [call.fetch_one(exp_sql, (3,))]
+    reset_mocks()
+
+    # a house that has never pushed, and one that is not there at all: nothing
+    # to go on either way, and the caller answers that with the ceiling
+    for row in [{"sensors_pushed_at": None, "sensors_push_seconds": 60}, None]:
+        database.fetch_one.side_effect = [row]
+        result = tested._due(3)
+        assert result is None
+        assert database.mock_calls == [call.fetch_one(exp_sql, (3,))]
+        reset_mocks()
+
+
+def test__latest() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    exp_sql = """
+            SELECT DISTINCT ON (samples.sensor_id) samples.sensor_id, samples.measured_at, samples.value
+            FROM samples JOIN sensors ON sensors.id = samples.sensor_id
+            WHERE sensors.house_id = %s AND sensors.active
+            ORDER BY samples.sensor_id, samples.measured_at DESC
+            """
+    rows = [
+        {"sensor_id": 9, "measured_at": datetime(2026, 9, 3, 11, 50, tzinfo=UTC), "value": Decimal("84.90")},
+        {"sensor_id": 10, "measured_at": datetime(2026, 9, 3, 11, 40, tzinfo=UTC), "value": Decimal("-17.20")},
+    ]
+    sensors = [
+        {"id": 9, "battery": 74, "battery_at": datetime(2026, 9, 3, 11, 50, tzinfo=UTC)},
+        {"id": 10, "battery": None, "battery_at": None},
+        # a sensor quiet since it was created still has a tile, but nothing to put on it
+        {"id": 11, "battery": 12, "battery_at": None},
+    ]
+
+    database.fetch_all.side_effect = [rows]
+    result = tested._latest(3, sensors)
+    expected = [
+        {
+            "sensor_id": 9,
+            "value": 84.9,
+            "at": "2026-09-03T11:50:00+00:00",
+            "battery": 74,
+            "battery_at": "2026-09-03T11:50:00+00:00",
+        },
+        {"sensor_id": 10, "value": -17.2, "at": "2026-09-03T11:40:00+00:00", "battery": None, "battery_at": ""},
+    ]
+    assert result == expected
+    assert database.mock_calls == [call.fetch_all(exp_sql, (3,))]
+    reset_mocks()
+
+    # a house whose thermometers have never reported
+    database.fetch_all.side_effect = [[]]
+    result = tested._latest(3, sensors)
+    assert result == []
+    assert database.mock_calls == [call.fetch_all(exp_sql, (3,))]
+    reset_mocks()
 
 
 def test__store_batteries() -> None:

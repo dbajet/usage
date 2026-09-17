@@ -7,6 +7,7 @@ from typing import Any
 from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.libraries.eye_on_water_client import EyeOnWaterClient
+from usage.libraries.series_pulse import SeriesPulse
 from usage.structures.app_exception import AppException
 from usage.structures.session_user import SessionUser
 from usage.structures.water_meter import WaterMeter
@@ -199,7 +200,10 @@ class WaterCommand:
             raise AppException(400, f"The range must be one of {choices} days.")
         if offset < 0:
             raise AppException(400, "The offset counts periods back from now.")
-        until = datetime.now(UTC) - timedelta(days=days * offset)
+        # One reading of the clock for the whole answer: the window's end and the
+        # wait named beside it must not drift apart by the length of a query.
+        now = datetime.now(UTC)
+        until = now - timedelta(days=days * offset)
         since = until - timedelta(days=days * (2 if previous else 1))
         rows = self._database.fetch_all(
             """
@@ -212,6 +216,9 @@ class WaterCommand:
             """,
             (timedelta(minutes=bucket_minutes), house_id, since.isoformat(), until.isoformat()),
         )
+        points = [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows]
+        latest = self._latest(house_id)
+        alert = self._alert(house_id)
         return {
             "days": days,
             "bucket_minutes": bucket_minutes,
@@ -219,10 +226,35 @@ class WaterCommand:
             "offset": offset,
             "until": until.isoformat(),
             "unit": "m³",
-            "points": [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows],
-            "latest": self._latest(house_id),
-            "alert": self._alert(house_id),
+            "points": points,
+            "latest": latest,
+            "alert": alert,
+            "stamp": SeriesPulse.stamp(points, latest, alert),
+            "next_poll_seconds": SeriesPulse.next_poll([self._due(house_id)], now),
         }
+
+    def _due(self, house_id: int) -> datetime | None:
+        """When the earliest of this house's meters is next pulled.
+
+        A water bar cannot move between two syncs: the rows only arrive when
+        the loop signs into the portal and asks for an export, so there is
+        nothing for the page to see in the meantime. The tick is added because
+        the loop wakes on its own clock rather than at the instant a feed comes
+        due, and arriving a second early would only cost a wasted request.
+
+        A feed that has never synced is due now.
+        """
+        row = self._database.fetch_one(
+            """
+            SELECT MIN(COALESCE(last_sync_at + %s, now())) AS due
+            FROM water_feeds WHERE house_id = %s AND active
+            """,
+            (timedelta(seconds=Constants.water_sync_seconds + Constants.water_tick_seconds), house_id),
+        )
+        if row is None:
+            return None
+        due: datetime | None = row["due"]
+        return due
 
     def alerts(self, user: SessionUser, house_id: int) -> dict[str, bool]:
         """Whether this user asked for the house's leak alerts (off unless asked)."""

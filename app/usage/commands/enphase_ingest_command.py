@@ -94,7 +94,15 @@ class EnphaseIngestCommand:
         )
 
     def _remember(self, push: EnphaseLive) -> None:
-        """The newest push, which is both the tiles and the next interval's baseline."""
+        """The newest push: the tiles, the next interval's baseline, and the pace.
+
+        How long it had been since the previous push is written down beside it,
+        because it is the only place the gateway's cadence is visible. Home
+        Assistant is told how often to send by whoever configured the house,
+        not by this app, and the Realtime page has no business guessing: it is
+        told to look again a push's worth of time after the last one landed.
+        A gap longer than the ceiling is an outage rather than a cadence.
+        """
         self._database.execute(
             """
             INSERT INTO enphase_live(house_id, measured_at, production_power, consumption_power,
@@ -107,6 +115,8 @@ class EnphaseIngestCommand:
                 battery_level = EXCLUDED.battery_level,
                 production_lifetime = EXCLUDED.production_lifetime,
                 consumption_lifetime = EXCLUDED.consumption_lifetime,
+                push_seconds = LEAST(%s, GREATEST(1,
+                    EXTRACT(EPOCH FROM (now() - enphase_live.updated_at))::int)),
                 updated_at = now()
             """,
             (
@@ -117,6 +127,7 @@ class EnphaseIngestCommand:
                 push.battery_level,
                 push.production_lifetime,
                 push.consumption_lifetime,
+                Constants.realtime_push_max_seconds,
             ),
         )
 

@@ -8,6 +8,7 @@ from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.libraries.enphase_client import EnphaseClient
 from usage.libraries.rate_limiter import RateLimiter
+from usage.libraries.series_pulse import SeriesPulse
 from usage.structures.app_exception import AppException
 from usage.structures.enphase_system import EnphaseSystem
 from usage.structures.enphase_tokens import EnphaseTokens
@@ -230,7 +231,10 @@ class EnphaseCommand:
             raise AppException(400, f"The range must be one of {choices} days.")
         if offset < 0:
             raise AppException(400, "The offset counts periods back from now.")
-        until = datetime.now(UTC) - timedelta(days=days * offset)
+        # One reading of the clock for the whole answer: the window's end and the
+        # wait named beside it must not drift apart by the length of a query.
+        now = datetime.now(UTC)
+        until = now - timedelta(days=days * offset)
         since = until - timedelta(days=days * (2 if previous else 1))
         daily = bucket_minutes >= Constants.enphase_daily_bucket_minutes
         window = (
@@ -241,6 +245,9 @@ class EnphaseCommand:
             until.isoformat(),
         )
         rows = self._database.fetch_all(self._series_query(daily), (*window, Constants.enphase_source_local, *window, Constants.enphase_source_cloud))
+        points = [self._point(row) for row in rows]
+        latest = self._latest(house_id)
+        live = self._live(house_id)
         return {
             "days": days,
             "bucket_minutes": bucket_minutes,
@@ -249,10 +256,48 @@ class EnphaseCommand:
             "until": until.isoformat(),
             "unit": "kWh",
             "daily": daily,
-            "points": [self._point(row) for row in rows],
-            "latest": self._latest(house_id),
-            "live": self._live(house_id),
+            "points": points,
+            "latest": latest,
+            "live": live,
+            "stamp": SeriesPulse.stamp(points, latest, live),
+            "next_poll_seconds": SeriesPulse.next_poll(self._due(house_id), now),
         }
+
+    def _due(self, house_id: int) -> list[datetime | None]:
+        """When either feed behind the solar graph could next have something new.
+
+        Two sources on two entirely different clocks. The gateway is pushed by
+        Home Assistant at whatever cadence the house set, which is measured
+        from the gap between two pushes rather than assumed. The cloud is
+        pulled at a pace derived from what is left of the month's allowance,
+        which only ever grows: the floor of that pace is used here, so the page
+        may look a little early but never sleeps past the answer.
+
+        A house with only one of the two answers for one of them, and the
+        caller takes whichever comes first.
+        """
+        gateway = self._database.fetch_one(
+            "SELECT updated_at, push_seconds FROM enphase_live WHERE house_id = %s",
+            (house_id,),
+        )
+        cloud = self._database.fetch_one(
+            """
+            SELECT MIN(COALESCE(last_sync_at + %s, now())) AS due
+            FROM enphase_feeds WHERE house_id = %s AND active AND source = %s
+            """,
+            (
+                timedelta(seconds=Constants.enphase_sync_min_seconds + Constants.enphase_tick_seconds),
+                house_id,
+                Constants.enphase_source_cloud,
+            ),
+        )
+        pushed: datetime | None = None
+        if gateway is not None:
+            landed: datetime = gateway["updated_at"]
+            cadence = gateway["push_seconds"] or Constants.realtime_push_default_seconds
+            pushed = landed + timedelta(seconds=int(cadence))
+        synced: datetime | None = None if cloud is None else cloud["due"]
+        return [pushed, synced]
 
     @classmethod
     def _series_query(cls, daily: bool) -> str:

@@ -31,6 +31,24 @@ class _Constants:
     meter_reader_timeout_seconds: int = 120
     meter_reader_max_tokens: int = 4096
     reminder_check_seconds: int = 300
+    # What a Realtime graph says about its own pace, beside its points. A feed
+    # is only worth asking again once the thing behind it could have answered:
+    # a gateway pushing every minute earns a minute, a water meter pulled every
+    # quarter-hour earns the quarter-hour. Both ends are held - an overdue feed
+    # must not turn the page into a spin, and a quiet one is still looked in on,
+    # because a backfill is not on any schedule the page can read.
+    realtime_poll_min_seconds: int = 30
+    realtime_poll_max_seconds: int = 900
+    # A push arrives on Home Assistant's own cadence, which is the house's
+    # business and not this app's: it is measured from the gap between two of
+    # them rather than assumed here. This is only what stands in until two have
+    # been seen, and the longest gap allowed to teach it - an outage is not a
+    # cadence, and one must not put the page to sleep for the afternoon.
+    realtime_push_default_seconds: int = 600
+    realtime_push_max_seconds: int = 1800
+    # Long enough that two different graphs never collide, short enough to be
+    # worth sending on every answer.
+    realtime_stamp_length: int = 16
     reminder_hour: int = 6
     reminder_minute: int = 15
     # Sensor series: (range in days, bucket in minutes) - about 150 points per range.

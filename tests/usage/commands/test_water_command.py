@@ -528,11 +528,20 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
     reset_mocks()
 
 
+@patch("usage.commands.water_command.SeriesPulse")
 @patch("usage.commands.water_command.datetime", wraps=datetime)
+@patch.object(WaterCommand, "_due")
 @patch.object(WaterCommand, "_alert")
 @patch.object(WaterCommand, "_latest")
 @patch.object(WaterCommand, "_require_house")
-def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, mock_datetime: MagicMock) -> None:
+def test_series(
+    require_house: MagicMock,
+    latest: MagicMock,
+    alert: MagicMock,
+    due: MagicMock,
+    mock_datetime: MagicMock,
+    pulse: MagicMock,
+) -> None:
     tested = helper_instance()
     database = tested._database
 
@@ -540,7 +549,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, m
         require_house.reset_mock()
         latest.reset_mock()
         alert.reset_mock()
+        due.reset_mock()
         mock_datetime.reset_mock()
+        pulse.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -555,7 +566,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, m
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
     assert alert.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -568,7 +581,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, m
     assert require_house.mock_calls == [call(user, 3)]
     assert latest.mock_calls == []
     assert alert.mock_calls == []
+    assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
+    assert pulse.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -588,6 +603,9 @@ def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, m
         mock_datetime.now.side_effect = [now]
         latest.side_effect = [exp_latest]
         alert.side_effect = [exp_alert]
+        due.side_effect = [datetime(2026, 9, 15, 12, 4, 0, tzinfo=UTC)]
+        pulse.stamp.side_effect = ["theStamp"]
+        pulse.next_poll.side_effect = [240]
         database.fetch_all.side_effect = [rows]
         result = tested.series(user, 3, days, previous, offset)
         expected = {
@@ -603,15 +621,58 @@ def test_series(require_house: MagicMock, latest: MagicMock, alert: MagicMock, m
             ],
             "latest": exp_latest,
             "alert": exp_alert,
+            "stamp": "theStamp",
+            "next_poll_seconds": 240,
         }
         assert result == expected
         assert require_house.mock_calls == [call(user, 3)]
         assert latest.mock_calls == [call(3)]
         assert alert.mock_calls == [call(3)]
+        assert due.mock_calls == [call(3)]
         assert mock_datetime.mock_calls == [call.now(UTC)]
+        assert pulse.mock_calls == [
+            call.stamp(expected["points"], exp_latest, exp_alert),
+            call.next_poll([datetime(2026, 9, 15, 12, 4, 0, tzinfo=UTC)], now),
+        ]
         exp_calls = [call.fetch_all(SQL_SERIES, (timedelta(minutes=bucket_minutes), 3, exp_since, exp_until))]
         assert database.mock_calls == exp_calls
         reset_mocks()
+
+
+def test__due() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    exp_sql = """
+            SELECT MIN(COALESCE(last_sync_at + %s, now())) AS due
+            FROM water_feeds WHERE house_id = %s AND active
+            """
+    # the quarter-hour between pulls plus the minute the loop wakes on: arriving
+    # a second early would only cost a request that answers the same thing
+    exp_call = call.fetch_one(exp_sql, (timedelta(seconds=960), 3))
+    due = datetime(2026, 9, 15, 12, 4, tzinfo=UTC)
+
+    database.fetch_one.side_effect = [{"due": due}]
+    result = tested._due(3)
+    assert result == due
+    assert database.mock_calls == [exp_call]
+    reset_mocks()
+
+    # a house with no meter at all: the query answers, the row does not
+    database.fetch_one.side_effect = [{"due": None}]
+    result = tested._due(3)
+    assert result is None
+    assert database.mock_calls == [exp_call]
+    reset_mocks()
+
+    database.fetch_one.side_effect = [None]
+    result = tested._due(3)
+    assert result is None
+    assert database.mock_calls == [exp_call]
+    reset_mocks()
 
 
 @patch.object(WaterCommand, "_require_house")
