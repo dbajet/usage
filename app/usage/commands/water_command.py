@@ -17,7 +17,9 @@ class WaterCommand:
 
     A house whose water never stops for a whole day is leaking, and the users who
     asked for it get one email when that starts - the alert is the house's, like
-    the thermometers' one, not any single meter's.
+    the thermometers' one, not any single meter's. A meter may also carry a limit
+    on what it draws in a rolling 24 hours; moving that limit re-arms the alert,
+    since the flag standing against it was the verdict on the old number.
 
     A feed is one meter of one EyeOnWater account. The meter uuid is asked of
     the account rather than copied by hand: the portal shows a nineteen-digit
@@ -129,6 +131,7 @@ class WaterCommand:
         # An empty password means "keep the one already stored".
         password = str(data.get("password") or "") or self._database.decrypt(str(feed["password"]))
         export_unit = str(data.get("export_unit") or Constants.water_export_unit).strip() or Constants.water_export_unit
+        daily_max = self._daily_max(data)
         client = EyeOnWaterClient(hostname, username, password, export_unit)
         meter_uuid = self._resolve_meter(client, meter_uuid)
         self._probe(client, meter_uuid)
@@ -137,7 +140,8 @@ class WaterCommand:
             UPDATE water_feeds
             SET hostname = %s, username_sealed = %s, username_hash = %s, password_sealed = %s,
                 meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s,
-                daily_max = %s, last_error = ''
+                daily_max = %s, last_error = '',
+                over_daily = CASE WHEN daily_max IS DISTINCT FROM %s THEN false ELSE over_daily END
             WHERE id = %s
             """,
             (
@@ -149,7 +153,11 @@ class WaterCommand:
                 self._database.blind_index(meter_uuid),
                 export_unit,
                 bool(data.get("active")),
-                self._daily_max(data),
+                daily_max,
+                # A limit that moved re-arms the alert, exactly as a thermometer's
+                # range does: the stored flag was the verdict on the old number,
+                # and leaving it would keep the graph red until the next pull.
+                daily_max,
                 feed_id,
             ),
         )

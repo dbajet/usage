@@ -28,7 +28,8 @@ SQL_UPDATE = """
             UPDATE water_feeds
             SET hostname = %s, username_sealed = %s, username_hash = %s, password_sealed = %s,
                 meter_uuid_sealed = %s, meter_uuid_hash = %s, export_unit = %s, active = %s,
-                daily_max = %s, last_error = ''
+                daily_max = %s, last_error = '',
+                over_daily = CASE WHEN daily_max IS DISTINCT FROM %s THEN false ELSE over_daily END
             WHERE id = %s
             """
 SQL_SERIES = """
@@ -410,10 +411,30 @@ def test_update_feed(
         call.blind_index("1234567890123456789"),
         call.execute(
             SQL_UPDATE,
-            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedNewPassword", "sealedUuid", "theUuidHash", "Gallons", True, None, 11),
+            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedNewPassword", "sealedUuid", "theUuidHash", "Gallons", True, None, None, 11),
         ),
     ]
     assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # a limit travels twice: once to be stored, once to be compared with the one
+    # already there, so that moving it re-arms the alert standing against the old
+    hostname.side_effect = ["eyeonwater.com"]
+    meter_uuid.side_effect = ["1234567890123456789"]
+    client_class.side_effect = [client]
+    resolve_meter.side_effect = ["1234567890123456789"]
+    probe.side_effect = [None]
+    require_admin.side_effect = [None]
+    require_feed.side_effect = [{"id": 11, "house_id": 3, "password": "sealedPassword"}]
+    database.encrypt.side_effect = ["sealedUsername", "sealedNewPassword", "sealedUuid"]
+    database.blind_index.side_effect = ["theUsernameHash", "theUuidHash"]
+    database.execute.side_effect = [11]
+    result = tested.update_feed(user, 11, {**payload, "daily_max": 0.38})
+    assert result == expected
+    assert database.mock_calls[-1] == call.execute(
+        SQL_UPDATE,
+        ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedNewPassword", "sealedUuid", "theUuidHash", "Gallons", True, 0.38, 0.38, 11),
+    )
     reset_mocks()
 
     # an empty password keeps the stored one
@@ -442,7 +463,7 @@ def test_update_feed(
         call.blind_index("1234567890123456789"),
         call.execute(
             SQL_UPDATE,
-            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons", False, None, 11),
+            ("eyeonwater.com", "sealedUsername", "theUsernameHash", "sealedPassword", "sealedUuid", "theUuidHash", "Gallons", False, None, None, 11),
         ),
     ]
     assert database.mock_calls == exp_calls

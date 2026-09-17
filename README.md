@@ -200,7 +200,9 @@ in cubic metres like everything else. It is opt-in — no limit, no alert — be
 run every tap it owns all afternoon without a drop of it being accidental, and because a slow
 leak can pass unnoticed while never adding up to much. The two rules catch different things
 and neither subsumes the other. This one is edge triggered as well, or a fortnight with the
-sprinklers on would mail every quarter of an hour. The limit rides along in the Realtime title
+sprinklers on would mail every quarter of an hour — and moving the limit re-arms it, exactly as
+moving a thermometer's range does, since the flag standing against a house was the verdict on
+the old number and would otherwise keep the graph red until the next pull. The limit rides along in the Realtime title
 beside the period's total — quietly while the house is under it, and in the warning colour once
 it is not, since the email announces the crossing but the page is where it gets looked into.
 
