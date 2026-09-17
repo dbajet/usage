@@ -148,6 +148,31 @@ averages per 10-minute, hourly, 6-hour or daily bucket and the low-high band. On
 the last range the view refreshes itself; an earlier period cannot change, so it
 does not. See "Asking again" below for when it asks and what it redraws.
 
+### last_changed and last_updated
+
+A push carries both of Home Assistant's instants, because they answer different
+questions and the tile and the graph want different ones.
+
+`last_changed` is when the value last moved, and it keys the sample - which is
+what makes a value re-sent unchanged a no-op rather than a duplicate row every
+ten minutes. `last_updated` is when Home Assistant last heard that value
+confirmed, and it belongs to the thermometer rather than to any reading, so only
+the latest is kept (`sensors.reported_at`, beside the charge).
+
+The tile counts its age, and its three-hour staleness, from `last_updated`. The
+two are far apart for anything slow: the outdoor SwitchBot resolves to a fifth
+of a degree, so it sits half an hour on one number while reporting every minute,
+and counting from `last_changed` had the tile claim it had not been heard from
+since - which is exactly what a dead thermometer looks like. The reading's own
+age is not lost, it is simply not the headline: the tile's tooltip carries
+"Reading unchanged since ...", as a clock rather than a count, since a title
+attribute is not retouched by the minute.
+
+A push that does not carry `last_updated` - an automation still on the older
+template - leaves `reported_at` unset rather than standing in the push's own
+arrival, which would claim a freshness the thermometer has not vouched for. The
+tile then falls back to `last_changed`, exactly as it behaved before.
+
 Each push also carries the charge of the thermometer that took the reading -
 the battery entity is derived from the temperature one, `_temperature` replaced
 by `_battery` - and the tile shows it as a small battery filled to its level,

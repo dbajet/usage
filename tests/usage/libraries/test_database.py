@@ -711,6 +711,7 @@ def test__create_schema() -> None:
                 alert_state TEXT NOT NULL DEFAULT '',
                 battery INTEGER,
                 battery_at TIMESTAMPTZ,
+                reported_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, entity_hash),
                 CONSTRAINT sensors_threshold_range
@@ -893,7 +894,7 @@ def test__migrate() -> None:
     tested = helper_instance()
 
     # no migration applied yet
-    connection.execute.return_value.fetchone.side_effect = [None] * 23
+    connection.execute.return_value.fetchone.side_effect = [None] * 24
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1146,12 +1147,22 @@ def test__migrate() -> None:
             "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
             (23, 'every feed says when it is worth asking again'),
         ),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (24,),
+        ),
+        call.execute().fetchone(),
+        call.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ"),
+        call.execute(
+            "INSERT INTO schema_migrations(version, name) VALUES (%s, %s)",
+            (24, 'when a thermometer was last heard from'),
+        ),
     ]
     assert connection.mock_calls == exp_calls
     reset_mocks()
 
     # all migrations already applied
-    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 23
+    connection.execute.return_value.fetchone.side_effect = [{"?column?": 1}] * 24
     result = tested._migrate(connection)
     assert result is None
     exp_calls = [
@@ -1268,6 +1279,11 @@ def test__migrate() -> None:
         call.execute(
             "SELECT 1 FROM schema_migrations WHERE version = %s",
             (23,),
+        ),
+        call.execute().fetchone(),
+        call.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (24,),
         ),
         call.execute().fetchone(),
     ]

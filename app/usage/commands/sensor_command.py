@@ -66,6 +66,7 @@ class SensorCommand:
                     (known[sample.entity_id], sample.measured_at.isoformat(), sample.value),
                 )
             self._store_batteries(parsed, known)
+            self._store_reported(parsed, known)
             self._mark_push(house_id)
         # Outside the transaction: the samples are in whatever the mail relay does next.
         self._alert(house_id, parsed, known)
@@ -100,7 +101,7 @@ class SensorCommand:
             self._database.fetch_all(
                 """
                 SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
-                       threshold_min, threshold_max, battery, battery_at
+                       threshold_min, threshold_max, battery, battery_at, reported_at
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
                 (house_id,),
@@ -125,6 +126,7 @@ class SensorCommand:
                     "threshold_max": float(sensor["threshold_max"]) if sensor["threshold_max"] is not None else None,
                     "battery": int(sensor["battery"]) if sensor["battery"] is not None else None,
                     "battery_at": sensor["battery_at"].isoformat() if sensor["battery_at"] is not None else "",
+                    "reported_at": sensor["reported_at"].isoformat() if sensor["reported_at"] is not None else "",
                 },
             )
         return {"sensors": result}
@@ -203,7 +205,7 @@ class SensorCommand:
         sensors = self._database.decrypt_rows(
             self._database.fetch_all(
                 """
-                SELECT id, name_sealed AS name, unit, battery, battery_at
+                SELECT id, name_sealed AS name, unit, battery, battery_at, reported_at
                 FROM sensors WHERE house_id = %s AND active ORDER BY position, id
                 """,
                 (house_id,),
@@ -288,6 +290,9 @@ class SensorCommand:
                     "at": row["measured_at"].isoformat(),
                     "battery": int(sensor["battery"]) if sensor["battery"] is not None else None,
                     "battery_at": sensor["battery_at"].isoformat() if sensor["battery_at"] is not None else "",
+                    # What the tile's "ago" counts from: when the thermometer was
+                    # last heard from, not when its reading last happened to move.
+                    "reported_at": sensor["reported_at"].isoformat() if sensor["reported_at"] is not None else "",
                 },
             )
         return result
@@ -400,6 +405,26 @@ class SensorCommand:
                 (sample.battery, sample.measured_at.isoformat(), sensor_id),
             )
 
+    def _store_reported(self, parsed: list[SensorSample], known: dict[str, int]) -> None:
+        """Keep when each thermometer was last heard from; only the latest is shown.
+
+        Kept apart from the charge on purpose. A push carries a battery only for
+        a thermometer that has one, and a reported instant only once the Home
+        Assistant template sends it, so neither may blank the other.
+        """
+        heard: dict[int, datetime] = {}
+        for sample in parsed:
+            sensor_id = known.get(sample.entity_id)
+            if sensor_id is None or sample.reported_at is None:
+                continue
+            if sensor_id not in heard or sample.reported_at >= heard[sensor_id]:
+                heard[sensor_id] = sample.reported_at
+        for sensor_id, reported_at in heard.items():
+            self._database.execute(
+                "UPDATE sensors SET reported_at = %s WHERE id = %s",
+                (reported_at.isoformat(), sensor_id),
+            )
+
     def _parse_sample(self, data: dict[str, Any]) -> SensorSample:
         entity_id = str(data.get("entity_id") or "").strip().lower()
         if not entity_id:
@@ -417,6 +442,11 @@ class SensorCommand:
             value=round(value, 2),
             measured_at=self._parse_instant(str(data.get("measured_at") or "")),
             battery=self._parse_battery(data.get("battery"), entity_id),
+            # Absent from a push written before this field existed, and then
+            # left unknown: standing in the push's own arrival would claim a
+            # freshness the thermometer has not vouched for, which is the very
+            # thing this column is here to answer.
+            reported_at=self._parse_optional_instant(str(data.get("reported_at") or "")),
         )
 
     def _parse_battery(self, raw: Any, entity_id: str) -> int | None:
@@ -430,6 +460,11 @@ class SensorCommand:
         if not 0 <= charge <= 100:
             raise AppException(400, f"The battery of {entity_id} is not a percentage.")
         return charge
+
+    @classmethod
+    def _parse_optional_instant(cls, text: str) -> datetime | None:
+        """An instant a push may simply not carry, as against one it may leave to us."""
+        return cls._parse_instant(text) if text.strip() else None
 
     @classmethod
     def _parse_instant(cls, text: str) -> datetime:

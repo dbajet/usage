@@ -70,6 +70,7 @@ def test___init__() -> None:
 
 @patch.object(SensorCommand, "_alert")
 @patch.object(SensorCommand, "_mark_push")
+@patch.object(SensorCommand, "_store_reported")
 @patch.object(SensorCommand, "_store_batteries")
 @patch.object(SensorCommand, "_find_or_create_sensor")
 @patch.object(SensorCommand, "_parse_sample")
@@ -79,6 +80,7 @@ def test_ingest(
     parse_sample: MagicMock,
     find_or_create_sensor: MagicMock,
     store_batteries: MagicMock,
+    store_reported: MagicMock,
     mark_push: MagicMock,
     alert: MagicMock,
 ) -> None:
@@ -90,6 +92,7 @@ def test_ingest(
         parse_sample.reset_mock()
         find_or_create_sensor.reset_mock()
         store_batteries.reset_mock()
+        store_reported.reset_mock()
         mark_push.reset_mock()
         alert.reset_mock()
         database.reset_mock()
@@ -109,6 +112,7 @@ def test_ingest(
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == []
+    assert store_reported.mock_calls == []
     assert mark_push.mock_calls == []
     assert alert.mock_calls == []
     assert database.mock_calls == []
@@ -125,6 +129,7 @@ def test_ingest(
     assert parse_sample.mock_calls == []
     assert find_or_create_sensor.mock_calls == []
     assert store_batteries.mock_calls == [call([], {})]
+    assert store_reported.mock_calls == [call([], {})]
     assert mark_push.mock_calls == [call(3)]
     assert alert.mock_calls == [call(3, [], {})]
     exp_calls = [call.transaction(), call.transaction().__enter__(), call.transaction().__exit__(None, None, None)]
@@ -150,6 +155,7 @@ def test_ingest(
     assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
     exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
     assert store_batteries.mock_calls == [call([garage, freezer, garage_later], exp_known)]
+    assert store_reported.mock_calls == [call([garage, freezer, garage_later], exp_known)]
     assert mark_push.mock_calls == [call(3)]
     assert alert.mock_calls == [call(3, [garage, freezer, garage_later], exp_known)]
     exp_calls = [
@@ -245,6 +251,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "threshold_max": Decimal("85.00"),
                 "battery": 87,
                 "battery_at": datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC),
+                "reported_at": datetime(2026, 9, 2, 23, 40, tzinfo=UTC),
             },
             {
                 "id": 10,
@@ -258,6 +265,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "threshold_max": None,
                 "battery": None,
                 "battery_at": None,
+                "reported_at": None,
             },
         ],
     ]
@@ -278,6 +286,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "threshold_max": 85.0,
                 "battery": 87,
                 "battery_at": "2026-09-02T23:16:59+00:00",
+                "reported_at": "2026-09-02T23:40:00+00:00",
             },
             {
                 "id": 10,
@@ -293,6 +302,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
                 "threshold_max": None,
                 "battery": None,
                 "battery_at": "",
+                "reported_at": "",
             },
         ],
     }
@@ -311,7 +321,7 @@ def test_list_sensors(require_house: MagicMock) -> None:
         call.fetch_all(
             """
                 SELECT id, entity_id_sealed AS entity_id, name_sealed AS name, unit, color, position, active,
-                       threshold_min, threshold_max, battery, battery_at
+                       threshold_min, threshold_max, battery, battery_at, reported_at
                 FROM sensors WHERE house_id = %s ORDER BY position, id
                 """,
             (3,),
@@ -527,7 +537,8 @@ def test_series(
         (True, 0, "2026-08-20T12:00:00+00:00", "2026-09-03T12:00:00+00:00"),
         (False, 2, "2026-08-13T12:00:00+00:00", "2026-08-20T12:00:00+00:00"),
     ]
-    exp_latest = [{"sensor_id": 9, "value": 84.9, "at": "2026-09-03T11:50:00+00:00", "battery": 74, "battery_at": ""}]
+    exp_latest = [{"sensor_id": 9, "value": 84.9, "at": "2026-09-03T11:50:00+00:00", "battery": 74,
+                   "battery_at": "", "reported_at": "2026-09-03T11:58:00+00:00"}]
     for previous, offset, exp_since, exp_until in tests:
         require_house.side_effect = [None]
         latest.side_effect = [exp_latest]
@@ -572,7 +583,7 @@ def test_series(
         exp_calls = [
             call.fetch_all(
                 """
-                SELECT id, name_sealed AS name, unit, battery, battery_at
+                SELECT id, name_sealed AS name, unit, battery, battery_at, reported_at
                 FROM sensors WHERE house_id = %s AND active ORDER BY position, id
                 """,
                 (3,),
@@ -778,10 +789,11 @@ def test__latest() -> None:
         {"sensor_id": 10, "measured_at": datetime(2026, 9, 3, 11, 40, tzinfo=UTC), "value": Decimal("-17.20")},
     ]
     sensors = [
-        {"id": 9, "battery": 74, "battery_at": datetime(2026, 9, 3, 11, 50, tzinfo=UTC)},
-        {"id": 10, "battery": None, "battery_at": None},
+        {"id": 9, "battery": 74, "battery_at": datetime(2026, 9, 3, 11, 50, tzinfo=UTC),
+         "reported_at": datetime(2026, 9, 3, 11, 58, tzinfo=UTC)},
+        {"id": 10, "battery": None, "battery_at": None, "reported_at": None},
         # a sensor quiet since it was created still has a tile, but nothing to put on it
-        {"id": 11, "battery": 12, "battery_at": None},
+        {"id": 11, "battery": 12, "battery_at": None, "reported_at": None},
     ]
 
     database.fetch_all.side_effect = [rows]
@@ -793,8 +805,10 @@ def test__latest() -> None:
             "at": "2026-09-03T11:50:00+00:00",
             "battery": 74,
             "battery_at": "2026-09-03T11:50:00+00:00",
+            "reported_at": "2026-09-03T11:58:00+00:00",
         },
-        {"sensor_id": 10, "value": -17.2, "at": "2026-09-03T11:40:00+00:00", "battery": None, "battery_at": ""},
+        {"sensor_id": 10, "value": -17.2, "at": "2026-09-03T11:40:00+00:00", "battery": None,
+         "battery_at": "", "reported_at": ""},
     ]
     assert result == expected
     assert database.mock_calls == [call.fetch_all(exp_sql, (3,))]
@@ -854,18 +868,70 @@ def test__store_batteries() -> None:
     reset_mocks()
 
 
+def test__store_reported() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    def helper_sample(entity_id: str, reported_at: datetime | None) -> SensorSample:
+        return SensorSample(
+            entity_id=entity_id,
+            name="",
+            unit="",
+            value=0.0,
+            measured_at=datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC),
+            reported_at=reported_at,
+        )
+
+    known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+    early = datetime(2026, 9, 2, 23, 20, tzinfo=UTC)
+    late = datetime(2026, 9, 2, 23, 40, tzinfo=UTC)
+
+    # the latest instant per sensor wins, whichever order the batch arrives in
+    parsed = [
+        helper_sample("sensor.garage_temperature", late),
+        helper_sample("sensor.freezer_temperature", early),
+        helper_sample("sensor.garage_temperature", early),
+    ]
+    database.execute.side_effect = [None, None]
+    result = tested._store_reported(parsed, known)
+    assert result is None
+    exp_calls = [
+        call.execute("UPDATE sensors SET reported_at = %s WHERE id = %s", ("2026-09-02T23:40:00+00:00", 9)),
+        call.execute("UPDATE sensors SET reported_at = %s WHERE id = %s", ("2026-09-02T23:20:00+00:00", 10)),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # a sample carrying none, and one for an entity nobody recognised: a push
+    # written before the field existed must not blank what is already there
+    parsed = [
+        helper_sample("sensor.garage_temperature", None),
+        helper_sample("sensor.attic_temperature", late),
+    ]
+    result = tested._store_reported(parsed, known)
+    assert result is None
+    assert database.mock_calls == []
+    reset_mocks()
+
+
+@patch.object(SensorCommand, "_parse_optional_instant")
 @patch.object(SensorCommand, "_parse_battery")
 @patch.object(SensorCommand, "_parse_instant")
-def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> None:
+def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock, parse_optional: MagicMock) -> None:
     tested = helper_instance()
     database = tested._database
 
     def reset_mocks() -> None:
         parse_instant.reset_mock()
         parse_battery.reset_mock()
+        parse_optional.reset_mock()
         database.reset_mock()
 
     instant = datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC)
+    heard = datetime(2026, 9, 2, 23, 40, tzinfo=UTC)
 
     # missing entity
     with pytest.raises(AppException) as exc_info:
@@ -874,6 +940,7 @@ def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> No
     assert exc_info.value.message == "Each sample needs an entity_id."
     assert parse_instant.mock_calls == []
     assert parse_battery.mock_calls == []
+    assert parse_optional.mock_calls == []
     assert database.mock_calls == []
     reset_mocks()
 
@@ -885,6 +952,7 @@ def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> No
         assert exc_info.value.message == "The value of sensor.garage_temperature is not a number."
         assert parse_instant.mock_calls == []
         assert parse_battery.mock_calls == []
+        assert parse_optional.mock_calls == []
         assert database.mock_calls == []
         reset_mocks()
 
@@ -897,10 +965,13 @@ def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> No
                 "name": " Garage ",
                 "unit": " °F ",
                 "measured_at": "2026-09-02T23:16:59+00:00",
+                "reported_at": "2026-09-02T23:40:00+00:00",
                 "battery": 87,
             },
             "2026-09-02T23:16:59+00:00",
+            "2026-09-02T23:40:00+00:00",
             87,
+            heard,
             SensorSample(
                 entity_id="sensor.garage_temperature",
                 name="Garage",
@@ -908,11 +979,15 @@ def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> No
                 value=84.92,
                 measured_at=instant,
                 battery=87,
+                reported_at=heard,
             ),
         ),
         (
+            # a push written before the field existed says nothing about it
             {"entity_id": "sensor.freezer_temperature", "value": 0},
             "",
+            "",
+            None,
             None,
             SensorSample(
                 entity_id="sensor.freezer_temperature",
@@ -921,18 +996,39 @@ def test__parse_sample(parse_instant: MagicMock, parse_battery: MagicMock) -> No
                 value=0.0,
                 measured_at=instant,
                 battery=None,
+                reported_at=None,
             ),
         ),
     ]
-    for data, exp_text, charge, expected in tests:
+    for data, exp_text, exp_heard, charge, reported, expected in tests:
         parse_instant.side_effect = [instant]
         parse_battery.side_effect = [charge]
+        parse_optional.side_effect = [reported]
         result = tested._parse_sample(data)
         assert result == expected
         assert parse_instant.mock_calls == [call(exp_text)]
         assert parse_battery.mock_calls == [call(data.get("battery"), expected.entity_id)]
+        assert parse_optional.mock_calls == [call(exp_heard)]
         assert database.mock_calls == []
         reset_mocks()
+
+
+def test__parse_optional_instant() -> None:
+    tested = helper_instance()
+    instant = datetime(2026, 9, 2, 23, 40, tzinfo=UTC)
+
+    # nothing sent is unknown, not now: the point of the field is to say whether
+    # the thermometer was heard from, and inventing an answer would defeat it
+    for text in ["", "   "]:
+        assert tested._parse_optional_instant(text) is None
+
+    assert tested._parse_optional_instant("2026-09-02T23:40:00+00:00") == instant
+
+    # and it is as strict as its mandatory twin
+    with pytest.raises(AppException) as exc_info:
+        tested._parse_optional_instant("yesterday")
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message == "The instant yesterday is not an ISO 8601 date and time."
 
 
 def test__parse_battery() -> None:

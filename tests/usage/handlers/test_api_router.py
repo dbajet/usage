@@ -1816,6 +1816,7 @@ def test__ingest_samples() -> None:
                         "unit": "°F",
                         "measured_at": "",
                         "battery": None,
+                        "reported_at": "",
                     },
                 ],
             },

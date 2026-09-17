@@ -269,6 +269,7 @@ class Database:
                 alert_state TEXT NOT NULL DEFAULT '',
                 battery INTEGER,
                 battery_at TIMESTAMPTZ,
+                reported_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(house_id, entity_hash),
                 CONSTRAINT sensors_threshold_range
@@ -448,10 +449,20 @@ class Database:
             (21, "remember which endpoint answers for production"),
             (22, "a daily limit on what a water meter may draw"),
             (23, "every feed says when it is worth asking again"),
+            (24, "when a thermometer was last heard from"),
         ]
         for version, name in migrations:
             row = connection.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,)).fetchone()
             if row is None:
+                if version == 24:
+                    # A sample is keyed by the instant its value last changed,
+                    # which says nothing about whether the thermometer is still
+                    # there: a room holding 19.4 all afternoon carries an
+                    # afternoon-old stamp while reporting every minute. Home
+                    # Assistant's `last_updated` is the other half of that, and
+                    # it belongs to the thermometer rather than to any reading,
+                    # so only the latest is kept - like the charge beside it.
+                    connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ")
                 if version == 23:
                     # A push arrives when Home Assistant feels like sending it,
                     # which is the house's own business: the app cannot know the

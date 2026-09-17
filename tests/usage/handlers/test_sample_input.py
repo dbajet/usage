@@ -14,7 +14,7 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = SampleInput
     result = list(tested.model_fields.keys())
-    expected = ["entity_id", "value", "name", "unit", "measured_at", "battery"]
+    expected = ["entity_id", "value", "name", "unit", "measured_at", "battery", "reported_at"]
     assert result == expected
 
 
@@ -28,6 +28,7 @@ def test___init__() -> None:
         "unit": "",
         "measured_at": "",
         "battery": None,
+        "reported_at": "",
     }
     assert result == expected
 
@@ -40,5 +41,6 @@ def test___init__() -> None:
         "unit": "",
         "measured_at": "",
         "battery": 87.0,
+        "reported_at": "",
     }
     assert result == expected

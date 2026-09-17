@@ -1521,6 +1521,18 @@ function batteryMarkup(sensor) {
     </svg><span class="tile-battery-text">${level}%</span></span>`;
 }
 
+function heardFrom(sensor) {
+  // What the tile counts from: when Home Assistant last heard this thermometer
+  // confirm its reading, not when that reading last happened to move. A room
+  // holding 19.4 all afternoon is not a thermometer that went quiet at lunch,
+  // and an outdoor one that only resolves to a fifth of a degree can sit half
+  // an hour on the same number while reporting every minute.
+  //
+  // Falls back to the reading's own instant, which is all there is to go on
+  // until the Home Assistant template sends `last_updated` too.
+  return sensor.reported_at || sensor.last_at;
+}
+
 function sensorColors(sensors) {
   // A sensor's own colour, else a default from its rank among the active ones:
   // tiles, lines and legend agree.
@@ -1607,7 +1619,14 @@ function realtimeSensors() {
   return (state.sensors || []).map((sensor) => {
     const last = latest.get(sensor.id);
     if (!last) return sensor;
-    return { ...sensor, last_value: last.value, last_at: last.at, battery: last.battery, battery_at: last.battery_at };
+    return {
+      ...sensor,
+      last_value: last.value,
+      last_at: last.at,
+      battery: last.battery,
+      battery_at: last.battery_at,
+      reported_at: last.reported_at,
+    };
   });
 }
 
@@ -1632,16 +1651,26 @@ function thermometerCardMarkup() {
   const tiles = sensors
     .filter((sensor) => sensor.active && sensor.last_value !== null)
     .map((sensor) => {
-      const stale = Date.now() - Date.parse(sensor.last_at) > SENSOR_STALE_MS;
+      const heard = heardFrom(sensor);
+      const stale = Date.now() - Date.parse(heard) > SENSOR_STALE_MS;
       const visible = !state.hiddenSensors.has(sensor.id);
       const classes = ["sensor-tile", stale ? "stale" : "", selecting && visible ? "selected" : "", selecting && !visible ? "dimmed" : ""];
+      // The reading's own age is worth having, just not on the face of the tile:
+      // it answers "how long has it been this warm", which is a different
+      // question from the one the tile is asked at a glance.
+      // A clock rather than an "ago": a title attribute is not retouched by the
+      // minute, and a fixed instant cannot go quietly out of date the way a
+      // count of minutes would.
+      const held = sensor.reported_at && sensor.last_at && sensor.last_at !== sensor.reported_at
+        ? `\nReading unchanged since ${fmtInstant(Date.parse(sensor.last_at), 1)}`
+        : "";
       return `
-        <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" data-at="${esc(sensor.last_at)}" role="button" tabindex="0"
+        <div class="${classes.filter(Boolean).join(" ")}" data-sensor-tile="${sensor.id}" data-at="${esc(heard)}" role="button" tabindex="0"
           style="border-left-color:${colors.get(sensor.id)}"
-          title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it">
+          title="${esc(sensor.entity_id)} - click: only this sensor · Ctrl+click or long press: add or remove it${esc(held)}">
           <div class="tile-name">${esc(sensor.name)}</div>
           <div class="tile-value">${fmtTemp(sensor.last_value)}${sensor.unit ? ` <span class="meta">${esc(sensor.unit)}</span>` : ""}</div>
-          <div class="tile-when"><span class="tile-ago">${agoMarkup(sensor.last_at)}</span>${batteryMarkup(sensor)}</div>
+          <div class="tile-when"><span class="tile-ago">${agoMarkup(heard)}</span>${batteryMarkup(sensor)}</div>
         </div>`;
     }).join("");
   const allSeries = sensorSeries(colors);

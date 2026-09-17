@@ -9,7 +9,7 @@ from usage.structures.sensor_sample import SensorSample
 
 def test_class() -> None:
     tested = SensorSample
-    fields = ["entity_id", "name", "unit", "value", "measured_at", "battery"]
+    fields = ["entity_id", "name", "unit", "value", "measured_at", "battery", "reported_at"]
     result = is_namedtuple(tested, fields)
     assert result is True
 
@@ -24,6 +24,7 @@ def test_to_dict() -> None:
                 value=84.9,
                 measured_at=datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC),
                 battery=87,
+                reported_at=datetime(2026, 9, 2, 23, 40, tzinfo=UTC),
             ),
             {
                 "entity_id": "sensor.garage_temperature",
@@ -32,11 +33,13 @@ def test_to_dict() -> None:
                 "value": 84.9,
                 "measured_at": "2026-09-02T23:16:59+00:00",
                 "battery": 87,
+                "reported_at": "2026-09-02T23:40:00+00:00",
             },
         ),
         (
             SensorSample(entity_id="", name="", unit="", value=0.0, measured_at=datetime(1970, 1, 1, tzinfo=UTC)),
-            {"entity_id": "", "name": "", "unit": "", "value": 0.0, "measured_at": "1970-01-01T00:00:00+00:00", "battery": None},
+            {"entity_id": "", "name": "", "unit": "", "value": 0.0, "measured_at": "1970-01-01T00:00:00+00:00",
+             "battery": None, "reported_at": None},
         ),
     ]
     for tested, expected in tests:
@@ -55,6 +58,7 @@ def test_from_dict() -> None:
                 "value": 84.9,
                 "measured_at": "2026-09-02T23:16:59+00:00",
                 "battery": "87",
+                "reported_at": "2026-09-02T23:40:00+00:00",
             },
             SensorSample(
                 entity_id="sensor.garage_temperature",
@@ -63,6 +67,7 @@ def test_from_dict() -> None:
                 value=84.9,
                 measured_at=datetime(2026, 9, 2, 23, 16, 59, tzinfo=UTC),
                 battery=87,
+                reported_at=datetime(2026, 9, 2, 23, 40, tzinfo=UTC),
             ),
         ),
         (

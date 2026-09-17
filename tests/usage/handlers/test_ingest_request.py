@@ -28,6 +28,7 @@ def test___init__() -> None:
                 name="Garage",
                 unit="°F",
                 measured_at="2026-09-02T23:16:59+00:00",
+                reported_at="2026-09-02T23:40:00+00:00",
             ),
         ],
     )
@@ -41,6 +42,7 @@ def test___init__() -> None:
                 "unit": "°F",
                 "measured_at": "2026-09-02T23:16:59+00:00",
                 "battery": None,
+                "reported_at": "2026-09-02T23:40:00+00:00",
             },
         ],
     }
