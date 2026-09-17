@@ -10,6 +10,7 @@ class SampleInput(BaseModel):
     unit: str = ""
     measured_at: str = ""
     battery: float | None = None
-    # Home Assistant's `last_reported`: when the thermometer was last heard from
-    # at all, as against `measured_at`, which is when its value last changed.
+    # When the thermometer was last heard from, as against `measured_at`, which
+    # is when its value last changed. Worked out by the Home Assistant template,
+    # which has to arrive at it sideways - see deploy/home-assistant.yaml.
     reported_at: str = ""

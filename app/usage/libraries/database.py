@@ -459,7 +459,7 @@ class Database:
                     # which says nothing about whether the thermometer is still
                     # there: a room holding 19.4 all afternoon carries an
                     # afternoon-old stamp while reporting every minute. Home
-                    # Assistant's `last_reported` is the other half of that, and
+                    # last heard from is the other half of that, and
                     # it belongs to the thermometer rather than to any reading,
                     # so only the latest is kept - like the charge beside it.
                     connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ")

@@ -13,18 +13,33 @@
 # A sample is keyed by the instant the value last changed (`last_changed`), so
 # an unchanged value re-sent ten minutes later is not a duplicate.
 #
-# Each sample also carries `last_reported`, which is when the thermometer was
-# last heard from rather than when its reading last moved. Home Assistant keeps
-# three instants and only this one answers that question: `last_changed` moves
-# when the value changes, `last_updated` when the value or an attribute does,
-# and `last_reported` on every write, changed or not. A thermometer re-sending
-# the same number is a no-op for the first two, so both would have the tile
-# claim it had not been heard from since it last moved - half an hour ago for
-# an outdoor sensor that only resolves to a fifth of a degree, and indefinitely
-# for a room holding steady.
+# Each sample also carries `reported_at`: when the thermometer was last heard
+# from, as against when its reading last moved. The app's tile counts its age
+# from that, and greys out on it, so a sensor sitting on one number must not
+# look like a sensor that has died.
 #
-# The tile counts its age from `last_reported`; the graph is still keyed by
-# `last_changed`, so the de-duplication above is untouched.
+# Home Assistant cannot answer this directly for a BLE thermometer. It keeps
+# three instants - `last_changed` (the value changed), `last_updated` (the value
+# or an attribute changed) and `last_reported` (written at all, changed or not)
+# - but the SwitchBot and Govee integrations only write when a value changes, so
+# all three sit at the same instant and none of them says "still there". Checked
+# on a real Govee: fifty-one minutes with the three identical to the second.
+#
+# So it is answered sideways, from the device's other entities. A thermometer
+# publishes temperature, humidity and a charge, and outdoors the humidity moves
+# constantly while the temperature holds a step: whichever of them moved most
+# recently is proof the device was heard from at least that recently. Derived by
+# name, the way the battery already is, so nothing is added to the map above.
+#
+# This is a lower bound, not the instant itself - a device steady in all of them
+# still under-reports - and the honest fix for that is the signal strength
+# entity, which wobbles on every advertisement. It is a diagnostic one, disabled
+# by default (Settings, Devices & services, the device). Enable it and the line
+# below picks it up on its own, no template change: that is what the third
+# lookup is for.
+#
+# The graph is still keyed by `last_changed`, so the de-duplication above is
+# untouched.
 #
 # Each sample also carries the charge of the thermometer that took it, shown on
 # its tile in the app. The battery entity is not listed: it is the temperature
@@ -60,13 +75,19 @@ rest_command:
         {% set entry = states[entity_id] %}
         {% if entry is not none and is_number(entry.state) %}
           {% set charge = states[entity_id | replace('_temperature', '_battery')] %}
+          {% set humid = states[entity_id | replace('_temperature', '_humidity')] %}
+          {% set signal = states[entity_id | replace('_temperature', '_signal_strength')] %}
+          {% set heard = [entry.last_reported]
+             + ([charge.last_reported] if charge is not none else [])
+             + ([humid.last_reported] if humid is not none else [])
+             + ([signal.last_reported] if signal is not none else []) %}
           {% set ns.samples = ns.samples + [{
             "entity_id": entity_id,
             "name": name,
             "unit": entry.attributes.unit_of_measurement | default(""),
             "value": entry.state | float,
             "measured_at": entry.last_changed.isoformat(),
-            "reported_at": entry.last_reported.isoformat(),
+            "reported_at": (heard | max).isoformat(),
             "battery": (charge.state | float | round | int) if (charge is not none and is_number(charge.state)) else none,
           }] %}
         {% endif %}
