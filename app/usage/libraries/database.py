@@ -458,10 +458,10 @@ class Database:
                     # A sample is keyed by the instant its value last changed,
                     # which says nothing about whether the thermometer is still
                     # there: a room holding 19.4 all afternoon carries an
-                    # afternoon-old stamp while reporting every minute. Home
-                    # last heard from is the other half of that, and
-                    # it belongs to the thermometer rather than to any reading,
-                    # so only the latest is kept - like the charge beside it.
+                    # afternoon-old stamp while reporting every minute. When it
+                    # was last heard from is the other half of that, and it
+                    # belongs to the thermometer rather than to any reading, so
+                    # only the latest is kept - like the charge beside it.
                     connection.execute("ALTER TABLE sensors ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ")
                 if version == 23:
                     # A push arrives when Home Assistant feels like sending it,
