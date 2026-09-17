@@ -214,6 +214,17 @@ td.cell-reading { cursor: pointer; }
   .desktop-only { display: none; }
 }
 .modal-backdrop.top-layer { z-index: 60; }
+/* A dialog with an edit in it refuses Escape and the backdrop; the shake is how
+   it says so, since doing nothing at all would read as a key that failed. */
+.modal.refused { animation: modal-refused 0.22s ease-in-out; }
+@keyframes modal-refused {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal.refused { animation: none; outline: 2px solid var(--accent); outline-offset: 3px; }
+}
 .icon-actions { display: inline-flex; gap: 0.3rem; }
 .swatch {
   display: inline-block;

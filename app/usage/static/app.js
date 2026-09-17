@@ -115,7 +115,7 @@ function showAppError(error) {
   setTimeout(() => { target.hidden = true; }, 6000);
 }
 
-function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false, top = false, compact = false }) {
+function openModal({ title, message = "", fields = [], options = [], submitLabel = "Save", danger = false, remove = false, top = false, compact = false, submit = null }) {
   return new Promise((resolve) => {
     // Two layers: the base modal, and one that can stack on top of it.
     const part = (name) => $(top ? `#modal2-${name}` : `#modal-${name}`);
@@ -157,6 +157,17 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
     if (first) first.focus();
 
     const previousKeydown = document.onkeydown;
+    const readValues = () => {
+      const values = {};
+      part("fields").querySelectorAll("[data-modal-field]").forEach((input) => {
+        values[input.dataset.modalField] = input.type === "checkbox" ? input.checked : input.value;
+      });
+      return values;
+    };
+    // What the dialog was handed, to tell an edit from a look.
+    const opened = JSON.stringify(readValues());
+    const edited = () => JSON.stringify(readValues()) !== opened;
+    let working = false;
     const close = (result) => {
       backdrop.hidden = true;
       part("form").onsubmit = null;
@@ -166,25 +177,64 @@ function openModal({ title, message = "", fields = [], options = [], submitLabel
       document.onkeydown = previousKeydown;
       resolve(result);
     };
+    const refuse = () => {
+      // Escape and the backdrop are for leaving a dialog alone, not for throwing
+      // an edit away: with something typed in it, the two buttons are the way
+      // out. A refusal that did nothing at all would read as a broken key.
+      const panel = backdrop.querySelector(".modal");
+      panel.classList.remove("refused");
+      void panel.offsetWidth;
+      panel.classList.add("refused");
+    };
+    const dismiss = () => {
+      if (working) return;
+      if (edited()) { refuse(); return; }
+      close(null);
+    };
     part("remove").onclick = () => close({ __remove: true });
-    part("form").onsubmit = (event) => {
+    part("form").onsubmit = async (event) => {
       event.preventDefault();
-      const values = {};
-      part("fields").querySelectorAll("[data-modal-field]").forEach((input) => {
-        values[input.dataset.modalField] = input.type === "checkbox" ? input.checked : input.value;
-      });
+      const values = readValues();
+      // Without a handler the caller does the work after the dialog closes, as
+      // it always has. With one, the dialog is still up while the work runs and
+      // only leaves once it has landed - a dialog that vanishes first says the
+      // save succeeded before anyone knows whether it did.
+      if (!submit || working) {
+        close(values);
+        return;
+      }
+      working = true;
+      part("submit").classList.add("busy");
+      part("cancel").disabled = true;
+      part("remove").disabled = true;
+      try {
+        await submit(values);
+      } catch (error) {
+        // It keeps what was typed and says what went wrong, where it happened.
+        messageTarget.textContent = (error && error.message) || "That did not work.";
+        messageTarget.hidden = false;
+        return;
+      } finally {
+        working = false;
+        part("submit").classList.remove("busy");
+        part("cancel").disabled = false;
+        part("remove").disabled = false;
+      }
       close(values);
     };
     part("fields").querySelectorAll("[data-modal-option]").forEach((button) =>
       button.addEventListener("click", () => close({ value: button.dataset.modalOption })));
-    part("cancel").onclick = () => close(null);
-    backdrop.onclick = (event) => { if (event.target === backdrop) close(null); };
-    document.onkeydown = (event) => { if (event.key === "Escape") close(null); };
+    part("cancel").onclick = () => { if (!working) close(null); };
+    backdrop.onclick = (event) => { if (event.target === backdrop) dismiss(); };
+    document.onkeydown = (event) => { if (event.key === "Escape") dismiss(); };
   });
 }
 
-async function confirmModal(title, message, submitLabel = "Delete", top = false) {
-  return (await openModal({ title, message, submitLabel, danger: true, top })) !== null;
+async function confirmModal(title, message, submitLabel = "Delete", { top = false, submit = null } = {}) {
+  // With a handler the dialog stays up while the deletion runs and reports its
+  // own failure, as an edit dialog does: a confirmation that vanishes first has
+  // said the thing is gone before anyone knows whether it went.
+  return (await openModal({ title, message, submitLabel, danger: true, top, submit })) !== null;
 }
 
 function storedItem(key, fallback) {
@@ -757,24 +807,23 @@ async function editReading(readingId, data) {
       })),
     ],
     remove: true,
+    submit: async (answers) => {
+      const values = reading.values.map((value) => ({
+        register_id: value.register_id,
+        value: Number(answers[`register-${value.register_id}`]),
+      }));
+      await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: `${answers.read_on}-15`, values }) });
+      await loadReadings(state.entriesPage);
+    },
   });
-  if (answers === null) return;
-  if (answers.__remove) {
-    if (!await confirmModal("Delete reading", "Delete this reading?")) return;
-    try {
+  // Delete leaves by the third button, which asks again on its own layer.
+  if (answers === null || !answers.__remove) return;
+  await confirmModal("Delete reading", "Delete this reading?", "Delete", {
+    submit: async () => {
       await api(`/api/readings/${readingId}`, { method: "DELETE" });
       await loadReadings(state.entriesPage);
-    } catch (error) { showAppError(error); }
-    return;
-  }
-  const values = reading.values.map((value) => ({
-    register_id: value.register_id,
-    value: Number(answers[`register-${value.register_id}`]),
-  }));
-  try {
-    await api(`/api/readings/${readingId}`, { method: "PUT", body: JSON.stringify({ read_on: `${answers.read_on}-15`, values }) });
-    await loadReadings(state.entriesPage);
-  } catch (error) { showAppError(error); }
+    },
+  });
 }
 
 async function loadStats() {
@@ -2452,32 +2501,33 @@ function renderWaterFeeds() {
         { name: "daily_max", label: `Alert above (${limitUnit()} in any 24 hours)`, type: "number", value: limitFromCubic(feed.daily_max) },
         { name: "active", label: "Collecting", type: "checkbox", value: feed.active },
       ],
+      submit: async (answers) => {
+        await api(`/api/water/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
+          ...answers,
+          daily_max: limitToCubic(answers.daily_max),
+        }) });
+        await loadWaterSettings();
+      },
     });
-    if (answers === null) return;
-    try {
-      await api(`/api/water/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
-        ...answers,
-        daily_max: limitToCubic(answers.daily_max),
-      }) });
-      await loadWaterSettings();
-    } catch (error) { showAppError(error); }
   }));
   $$("[data-backfill-water]").forEach((button) => button.addEventListener("click", async () => {
     const feed = feeds.find((item) => item.id === Number(button.dataset.backfillWater));
-    if (!await confirmModal("Import the history again", `Walk ${feed.username}'s history back from today. Readings already stored are kept and refreshed.`, "Import")) return;
-    try {
-      await api(`/api/water/feeds/${feed.id}/backfill`, { method: "POST" });
-      await loadWaterSettings();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Import the history again", `Walk ${feed.username}'s history back from today. Readings already stored are kept and refreshed.`, "Import", {
+      submit: async () => {
+        await api(`/api/water/feeds/${feed.id}/backfill`, { method: "POST" });
+        await loadWaterSettings();
+      },
+    });
   }));
   $$("[data-delete-water]").forEach((button) => button.addEventListener("click", async () => {
     const feed = feeds.find((item) => item.id === Number(button.dataset.deleteWater));
-    if (!await confirmModal("Delete this water feed", `Everything collected for ${feed.username} goes with it. The history would have to be imported again.`)) return;
-    try {
-      await api(`/api/water/feeds/${feed.id}`, { method: "DELETE" });
-      invalidateDashboard();
-      await loadWaterSettings();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Delete this water feed", `Everything collected for ${feed.username} goes with it. The history would have to be imported again.`, "Delete", {
+      submit: async () => {
+        await api(`/api/water/feeds/${feed.id}`, { method: "DELETE" });
+        invalidateDashboard();
+        await loadWaterSettings();
+      },
+    });
   }));
 }
 
@@ -2920,35 +2970,36 @@ function renderEnphaseFeeds() {
         { name: "calls_budget", label: "Calls per month", type: "number", value: feed.calls_budget },
         { name: "active", label: "Collecting", type: "checkbox", value: feed.active },
       ],
+      submit: async (answers) => {
+        await api(`/api/enphase/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
+          ...answers,
+          calls_budget: Number(answers.calls_budget) || 0,
+        }) });
+        await loadEnphaseSettings();
+      },
     });
-    if (answers === null) return;
-    try {
-      await api(`/api/enphase/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
-        ...answers,
-        calls_budget: Number(answers.calls_budget) || 0,
-      }) });
-      await loadEnphaseSettings();
-    } catch (error) { showAppError(error); }
   }));
   $$("[data-backfill-enphase]").forEach((button) => button.addEventListener("click", async () => {
     const feed = feeds.find((item) => item.id === Number(button.dataset.backfillEnphase));
-    if (!await confirmModal("Import the history again",
+    await confirmModal("Import the history again",
       `Walk system ${feed.system_id}'s history again. Readings already stored are kept and refreshed, `
-      + "and the walk costs calls out of this month's allowance.", "Import")) return;
-    try {
-      await api(`/api/enphase/feeds/${feed.id}/backfill`, { method: "POST" });
-      await loadEnphaseSettings();
-    } catch (error) { showAppError(error); }
+      + "and the walk costs calls out of this month's allowance.", "Import", {
+        submit: async () => {
+          await api(`/api/enphase/feeds/${feed.id}/backfill`, { method: "POST" });
+          await loadEnphaseSettings();
+        },
+      });
   }));
   $$("[data-delete-enphase]").forEach((button) => button.addEventListener("click", async () => {
     const feed = feeds.find((item) => item.id === Number(button.dataset.deleteEnphase));
-    if (!await confirmModal("Delete this solar feed",
-      `Everything collected for system ${feed.system_id} goes with it. The history would have to be imported again.`)) return;
-    try {
-      await api(`/api/enphase/feeds/${feed.id}`, { method: "DELETE" });
-      invalidateDashboard();
-      await loadEnphaseSettings();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Delete this solar feed",
+      `Everything collected for system ${feed.system_id} goes with it. The history would have to be imported again.`, "Delete", {
+        submit: async () => {
+          await api(`/api/enphase/feeds/${feed.id}`, { method: "DELETE" });
+          invalidateDashboard();
+          await loadEnphaseSettings();
+        },
+      });
   }));
 }
 
@@ -3058,32 +3109,25 @@ function renderSensorSettings() {
   }));
   $$("[data-edit-sensor]").forEach((button) => button.addEventListener("click", async () => {
     const sensor = state.sensors.find((item) => item.id === Number(button.dataset.editSensor));
-    let draft = { ...sensor, threshold_min: sensor.threshold_min ?? "", threshold_max: sensor.threshold_max ?? "" };
-    let complaint = "";
-    // An impossible range brings the dialog back with what was typed in it:
-    // closing it would throw a whole edit away over one of the two numbers.
-    for (;;) {
-      const answers = await openModal({
-        title: `Edit sensor · ${sensor.name}`,
-        message: complaint || sensor.entity_id,
-        fields: [
-          { name: "name", label: "Name", value: draft.name },
-          { name: "unit", label: "Unit", value: draft.unit },
-          { name: "active", label: "Shown in the graphs", type: "checkbox", value: draft.active },
-          { type: "heading", label: "Alert range - leave a side empty for no bound" },
-          { name: "threshold_min", label: `Alert below${draft.unit ? ` (${draft.unit})` : ""}`, type: "number", value: draft.threshold_min },
-          { name: "threshold_max", label: `Alert above${draft.unit ? ` (${draft.unit})` : ""}`, type: "number", value: draft.threshold_max },
-        ],
-      });
-      if (answers === null) return;
-      draft = answers;
-      const minimum = answers.threshold_min === "" ? null : Number(answers.threshold_min);
-      const maximum = answers.threshold_max === "" ? null : Number(answers.threshold_max);
-      if (minimum !== null && maximum !== null && minimum >= maximum) {
-        complaint = "The alert minimum must be lower than the maximum.";
-        continue;
-      }
-      try {
+    await openModal({
+      title: `Edit sensor · ${sensor.name}`,
+      message: sensor.entity_id,
+      fields: [
+        { name: "name", label: "Name", value: sensor.name },
+        { name: "unit", label: "Unit", value: sensor.unit },
+        { name: "active", label: "Shown in the graphs", type: "checkbox", value: sensor.active },
+        { type: "heading", label: "Alert range - leave a side empty for no bound" },
+        { name: "threshold_min", label: `Alert below${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_min ?? "" },
+        { name: "threshold_max", label: `Alert above${sensor.unit ? ` (${sensor.unit})` : ""}`, type: "number", value: sensor.threshold_max ?? "" },
+      ],
+      submit: async (answers) => {
+        const minimum = answers.threshold_min === "" ? null : Number(answers.threshold_min);
+        const maximum = answers.threshold_max === "" ? null : Number(answers.threshold_max);
+        // An impossible range keeps the dialog up with what was typed in it:
+        // closing it would throw a whole edit away over one of the two numbers.
+        if (minimum !== null && maximum !== null && minimum >= maximum) {
+          throw new Error("The alert minimum must be lower than the maximum.");
+        }
         await api(`/api/sensors/${sensor.id}`, { method: "PUT", body: JSON.stringify({
           ...sensorPayload(sensor),
           name: answers.name,
@@ -3093,9 +3137,8 @@ function renderSensorSettings() {
           threshold_max: maximum,
         }) });
         await loadSensorSettings();
-      } catch (error) { showAppError(error); }
-      return;
-    }
+      },
+    });
   }));
   $$("[data-toggle-sensor]").forEach((button) => button.addEventListener("click", async () => {
     // Hidden sensors keep collecting; deleting one would only bring it back on the next push.
@@ -3224,6 +3267,21 @@ function renderHouses() {
         { name: "shows_water", label: "Water meter (EyeOnWater)", type: "checkbox", value: house.shows_water },
         { name: "shows_power", label: "Solar panels and batteries (Enphase)", type: "checkbox", value: house.shows_power },
       ],
+      submit: async (answers) => {
+        if (!answers.name.trim()) throw new Error("Enter a house name.");
+        await api(`/api/houses/${house.id}`, { method: "PUT", body: JSON.stringify({
+          name: answers.name.trim(),
+          timezone: answers.timezone,
+          shows_sensors: answers.shows_sensors,
+          shows_water: answers.shows_water,
+          shows_power: answers.shows_power,
+        }) });
+        // The switches decide a nav item and two settings tabs: the cached
+        // dashboard would keep showing yesterday's answer.
+        invalidateDashboard();
+        await loadAdmin();
+        await ensureDashboard();
+      },
     });
     // The token is what Home Assistant pushes with, so it belongs beside that
     // switch rather than in the row. openModal builds its fields before it
@@ -3236,29 +3294,15 @@ function renderHouses() {
         tokenButton.innerHTML = 'Sensor token <span class="badge">set</span>';
       });
     }
-    const answers = await dialog;
-    if (answers === null || !answers.name.trim()) return;
-    try {
-      await api(`/api/houses/${house.id}`, { method: "PUT", body: JSON.stringify({
-        name: answers.name.trim(),
-        timezone: answers.timezone,
-        shows_sensors: answers.shows_sensors,
-        shows_water: answers.shows_water,
-        shows_power: answers.shows_power,
-      }) });
-      // The switches decide a nav item and two settings tabs: the cached
-      // dashboard would keep showing yesterday's answer.
-      invalidateDashboard();
-      await loadAdmin();
-      await ensureDashboard();
-    } catch (error) { showAppError(error); }
+    await dialog;
   }));
   $$("[data-delete-house]").forEach((button) => button.addEventListener("click", async () => {
-    if (!await confirmModal("Delete house", "Delete this house, its meters and all their readings?")) return;
-    try {
-      await api(`/api/houses/${button.dataset.deleteHouse}`, { method: "DELETE" });
-      await loadAdmin();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Delete house", "Delete this house, its meters and all their readings?", "Delete", {
+      submit: async () => {
+        await api(`/api/houses/${button.dataset.deleteHouse}`, { method: "DELETE" });
+        await loadAdmin();
+      },
+    });
   }));
 }
 
@@ -3298,19 +3342,19 @@ function renderUsers() {
         { name: "name", label: "Name", value: user.name },
         { name: "is_admin", label: "Admin", type: "checkbox", value: user.is_admin },
       ],
+      submit: async (answers) => {
+        await api(`/api/users/${user.id}`, { method: "PUT", body: JSON.stringify({ name: answers.name, is_admin: answers.is_admin }) });
+        await loadAdmin();
+      },
     });
-    if (answers === null) return;
-    try {
-      await api(`/api/users/${user.id}`, { method: "PUT", body: JSON.stringify({ name: answers.name, is_admin: answers.is_admin }) });
-      await loadAdmin();
-    } catch (error) { showAppError(error); }
   }));
   $$("[data-delete-user]").forEach((button) => button.addEventListener("click", async () => {
-    if (!await confirmModal("Delete user", "Delete this user?")) return;
-    try {
-      await api(`/api/users/${button.dataset.deleteUser}`, { method: "DELETE" });
-      await loadAdmin();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Delete user", "Delete this user?", "Delete", {
+      submit: async () => {
+        await api(`/api/users/${button.dataset.deleteUser}`, { method: "DELETE" });
+        await loadAdmin();
+      },
+    });
   }));
 }
 
@@ -3382,11 +3426,12 @@ function renderMeters() {
   $$("[data-edit-meter]").forEach((button) => button.addEventListener("click", () =>
     editMeter(Number(button.dataset.editMeter))));
   $$("[data-delete-meter]").forEach((button) => button.addEventListener("click", async () => {
-    if (!await confirmModal("Delete meter", "Delete this meter and all its readings?")) return;
-    try {
-      await api(`/api/meters/${button.dataset.deleteMeter}`, { method: "DELETE" });
-      await loadMeters();
-    } catch (error) { showAppError(error); }
+    await confirmModal("Delete meter", "Delete this meter and all its readings?", "Delete", {
+      submit: async () => {
+        await api(`/api/meters/${button.dataset.deleteMeter}`, { method: "DELETE" });
+        await loadMeters();
+      },
+    });
   }));
 }
 
@@ -3434,23 +3479,24 @@ function wireModalRegisters(meterId) {
         { name: "initial_value", label: "Start value of the counter", type: "number", value: register.initial_value },
         { name: "active", label: "Active", type: "checkbox", value: register.active },
       ],
+      submit: async (answers) => {
+        await api(`/api/registers/${register.id}`, { method: "PUT", body: JSON.stringify({
+          label: answers.label,
+          initial_value: Number(answers.initial_value) || 0,
+          active: answers.active,
+        }) });
+        await refreshModalRegisters(meterId);
+      },
     });
-    if (answers === null) return;
-    try {
-      await api(`/api/registers/${register.id}`, { method: "PUT", body: JSON.stringify({
-        label: answers.label,
-        initial_value: Number(answers.initial_value) || 0,
-        active: answers.active,
-      }) });
-    } catch (error) { showAppError(error); }
-    await refreshModalRegisters(meterId);
   }));
   $$("[data-modal-delete-register]").forEach((button) => button.addEventListener("click", async () => {
-    if (!await confirmModal("Delete register", "Delete this register and its values?", "Delete", true)) return;
-    try {
-      await api(`/api/registers/${button.dataset.modalDeleteRegister}`, { method: "DELETE" });
-    } catch (error) { showAppError(error); }
-    await refreshModalRegisters(meterId);
+    await confirmModal("Delete register", "Delete this register and its values?", "Delete", {
+      top: true,
+      submit: async () => {
+        await api(`/api/registers/${button.dataset.modalDeleteRegister}`, { method: "DELETE" });
+        await refreshModalRegisters(meterId);
+      },
+    });
   }));
   const addButton = $("[data-modal-add-register]");
   if (addButton) addButton.addEventListener("click", async () => {
@@ -3462,15 +3508,14 @@ function wireModalRegisters(meterId) {
         { name: "label", label: "Register label (e.g. HP)", value: "" },
         { name: "initial_value", label: "Start value of the counter", type: "number", value: "" },
       ],
+      submit: async (answers) => {
+        await api(`/api/meters/${meterId}/registers`, { method: "POST", body: JSON.stringify({
+          label: answers.label.trim(),
+          initial_value: Number(answers.initial_value) || 0,
+        }) });
+        await refreshModalRegisters(meterId);
+      },
     });
-    if (answers === null) return;
-    try {
-      await api(`/api/meters/${meterId}/registers`, { method: "POST", body: JSON.stringify({
-        label: answers.label.trim(),
-        initial_value: Number(answers.initial_value) || 0,
-      }) });
-    } catch (error) { showAppError(error); }
-    await refreshModalRegisters(meterId);
   });
 }
 
@@ -3487,19 +3532,18 @@ async function editMeter(meterId) {
       { type: "heading", label: "Registers" },
       { type: "html", html: `<div id="modal-registers">${registerRowsMarkup(meter)}</div>` },
     ],
+    submit: async (answers) => {
+      await api(`/api/meters/${meterId}`, { method: "PUT", body: JSON.stringify({
+        label: answers.label,
+        unit: answers.unit,
+        monthly: answers.monthly,
+        active: answers.active,
+      }) });
+      await loadMeters();
+    },
   });
   wireModalRegisters(meterId);
-  const answers = await promise;
-  if (answers === null) return;
-  try {
-    await api(`/api/meters/${meterId}`, { method: "PUT", body: JSON.stringify({
-      label: answers.label,
-      unit: answers.unit,
-      monthly: answers.monthly,
-      active: answers.active,
-    }) });
-    await loadMeters();
-  } catch (error) { showAppError(error); }
+  await promise;
 }
 
 async function addHouse(event) {
