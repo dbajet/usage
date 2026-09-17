@@ -2022,8 +2022,8 @@ const REALTIME_CARDS = [
   {
     key: "water", label: "Water", icon: ICON_DROP, has: () => houseHasWater(),
     markup: () => waterCardMarkup(state.waterData),
-    // Its bars carry their own titles, so there is nothing here to wire.
-    wire: () => {},
+    // Its bars carry their own titles; the running total is the one control.
+    wire: (root) => { wireWaterCard(root); },
   },
   {
     key: "power", label: "Solar", icon: ICON_SUN, has: () => houseHasPower(),
@@ -2168,6 +2168,10 @@ function fmtVolume(value, unit = null) {
   return `${value.toFixed(value < 10 ? 2 : 1)} m³`;
 }
 
+function wantsWaterTotal() {
+  return storedItem("usage-water-total", "0") === "1";
+}
+
 function waterStamp(time) {
   // One shape whatever the range: MM/DD hh:mm, in the viewer's own time zone. A
   // stamp that drops the date on the day view, or the clock on the year view,
@@ -2190,7 +2194,19 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   const bottom = 28;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const high = Math.max(...[...current, ...earlier].map((point) => point.volume), 0);
+  // The running total is the sum of the bars, so it belongs on their axis and
+  // not on a second one: two scales over one plot would let the reader compare
+  // a line against bars whose alignment we invented. The price is honest - the
+  // ladder now climbs to the period's total, so the bars shrink - and it is
+  // only paid while the total is asked for.
+  const running = (timed) => {
+    let sum = 0;
+    return timed.map((point) => ({ time: point.time, volume: (sum += point.volume) }));
+  };
+  const showTotal = wantsWaterTotal();
+  const currentTotal = showTotal ? running(current) : [];
+  const earlierTotal = showTotal ? running(earlier) : [];
+  const high = Math.max(...[...current, ...earlier, ...currentTotal, ...earlierTotal].map((point) => point.volume), 0);
   // The ladder is built in the unit it will be read in, not in the cubic metres
   // everything is stored as: a step that is round in m3 lands on 26 and 53 gal.
   const unit = volumeUnit(high, true);
@@ -2218,12 +2234,16 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
   // so whichever one the pointer lands on answers the same question.
   const currentAt = new Map(current.map((point) => [point.time, point]));
   const earlierAt = new Map(earlier.map((point) => [point.time, point]));
+  const runningAt = new Map(currentTotal.map((point) => [point.time, point.volume]));
+  const earlierRunningAt = new Map(earlierTotal.map((point) => [point.time, point.volume]));
   const titleAt = (time) => {
     const now = currentAt.get(time);
     const before = earlierAt.get(time);
-    const lines = [`${waterStamp(time)} · ${fmtVolume(now ? now.volume : 0)}`];
+    const so_far = runningAt.has(time) ? ` (${fmtVolume(runningAt.get(time))} so far)` : "";
+    const lines = [`${waterStamp(time)} · ${fmtVolume(now ? now.volume : 0)}${so_far}`];
     if (earlier.length) {
-      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${fmtVolume(before ? before.volume : 0)}`);
+      const earlierSoFar = earlierRunningAt.has(time) ? ` (${fmtVolume(earlierRunningAt.get(time))} so far)` : "";
+      lines.push(`${waterStamp(before ? before.actual : time - days * 86400000)} · ${fmtVolume(before ? before.volume : 0)}${earlierSoFar}`);
     }
     return lines.join("\n");
   };
@@ -2233,12 +2253,23 @@ function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
     if (!barHeight) return "";
     return `<rect class="${className}" x="${xAt(point.time).toFixed(1)}" y="${(top + plotHeight - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" fill="${WATER_COLOR}"><title>${esc(titleAt(point.time))}</title></rect>`;
   }).join("");
+  // Drawn twice: once thickly in the card's own colour so the line reads over
+  // the bars it crosses, then the line itself. It starts at nothing, at the
+  // left edge, so the climb begins where the period does.
+  const totalOf = (timed, className) => {
+    if (timed.length < 2) return "";
+    const steps = [{ time: tMin, volume: 0 }, ...timed]
+      .map((point, index) => `${index ? "L" : "M"}${xAt(point.time).toFixed(1)},${yAt(point.volume).toFixed(1)}`)
+      .join(" ");
+    return `<path class="halo" d="${steps}"></path><path class="${className}" d="${steps}" stroke="${WATER_COLOR}"></path>`;
+  };
   return `
     <div class="viz-holder">
       <svg class="viz-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Water consumption">
         <g class="grid">${gridLines.join("")}</g>
         <g class="axis">${yLabels.join("")}${xLabels.join("")}</g>
         <g class="bars">${barsOf(earlier, "previous")}${barsOf(current, "")}</g>
+        <g class="totals">${totalOf(earlierTotal, "previous")}${totalOf(currentTotal, "")}</g>
       </svg>
     </div>`;
 }
@@ -2277,13 +2308,36 @@ function waterCardMarkup(data) {
   // EyeOnWater publishes in batches, so the freshest bar is usually hours old:
   // saying when the last reading landed stops that looking like a dry house.
   const freshness = latest.at ? `Last reading ${agoMarkup(latest.at)}${esc(reading)}.` : "Nothing collected yet.";
-  const overlay = earlier.length ? ` Pale bars: the previous ${WATER_PERIODS[data.days] || "period"}.` : "";
+  const period = WATER_PERIODS[data.days] || "period";
+  const overlay = earlier.length ? ` Pale bars: the previous ${period}.` : "";
+  // Saying what the line is stops it reading as a second measurement: it is the
+  // same water added up, which is why it can share the bars' own axis.
+  const climbing = wantsWaterTotal()
+    ? ` The climbing line is that water added up${earlier.length ? ", one line per period" : ""}, ending at the total above.`
+    : "";
   return `
     <div class="card graph-card">
+      <div class="card-head">
       <h3>Water <span class="meta">· ${esc(fmtVolume(total))} over the period</span>${waterLimitMarkup(data.alert)}</h3>
+        <label class="switch card-switch" title="Draw the water added up as the period goes, ending at its total">
+          <input type="checkbox" data-water-total${wantsWaterTotal() ? " checked" : ""}><span class="slider"></span>
+          <span class="long">Running total</span><span class="short">Total</span>
+        </label>
+      </div>
       ${waterChartMarkup(current, earlier, data.days, data.bucket_minutes, tMax) || '<p class="meta">No reading in this period.</p>'}
-      <p class="meta">${esc(bucket)} totals from the water meter. ${freshness}${esc(overlay)}</p>
+      <p class="meta">${esc(bucket)} totals from the water meter. ${freshness}${esc(overlay)}${esc(climbing)}</p>
     </div>`;
+}
+
+function wireWaterCard(root) {
+  // Redrawn where it stands: the running total is only the points added up, so
+  // nothing is fetched and no other graph on the view is disturbed.
+  const toggle = $(`${root} [data-water-total]`);
+  if (!toggle) return;
+  toggle.addEventListener("change", () => {
+    storeItem("usage-water-total", toggle.checked ? "1" : "0");
+    renderRealtimeCard("water");
+  });
 }
 
 function limitUnit() {
