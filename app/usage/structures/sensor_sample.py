@@ -20,6 +20,14 @@ class SensorSample(NamedTuple):
     # moving. Absent from a push that predates the field, and then unknown
     # rather than assumed.
     reported_at: datetime | None = None
+    # Whether a sensor this sample creates starts out of the graphs. A push
+    # never sets it - the Home Assistant entity map is curated, and everything
+    # in it was chosen. The SwitchBot pull does, for the humidity it collects
+    # beside a temperature: it is the evidence that the thermometer is still
+    # being heard from, not a curve anybody asked to see on that axis. It says
+    # nothing about a sensor that already exists, which is the user's to show
+    # or hide as they please.
+    hidden: bool = False
 
     def to_dict(self) -> dict[str, str | float | None]:
         return {
@@ -30,6 +38,7 @@ class SensorSample(NamedTuple):
             "measured_at": self.measured_at.isoformat(),
             "battery": self.battery,
             "reported_at": None if self.reported_at is None else self.reported_at.isoformat(),
+            "hidden": self.hidden,
         }
 
     @classmethod
@@ -43,4 +52,5 @@ class SensorSample(NamedTuple):
             measured_at=datetime.fromisoformat(str(data.get("measured_at") or "1970-01-01T00:00:00+00:00")),
             battery=None if data.get("battery") is None else int(data["battery"]),
             reported_at=None if reported_at is None else datetime.fromisoformat(str(reported_at)),
+            hidden=bool(data.get("hidden")),
         )

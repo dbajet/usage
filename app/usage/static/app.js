@@ -257,9 +257,7 @@ function showView(name) {
     showSettingsTab(tab);
     loadPasskeys();
     loadMeters();
-    loadSensorSettings();
-    loadWaterSettings();
-    loadEnphaseSettings();
+    loadSettingsPanels();
     loadReminder();
     if (state.me && state.me.is_admin) loadAdmin();
   }
@@ -2057,6 +2055,120 @@ async function loadSensorSettings() {
   } catch (error) { showAppError(error); }
 }
 
+// ---------- SwitchBot (thermometers pulled from the cloud) ----------
+//
+// It is set up in Settings, Houses, Edit, beside the Home Assistant switch: a
+// house is fed one way, the other, or both, and each source belongs next to the
+// switch that turns it on. What follows is what that dialog needs.
+
+const HUB_DEVICES_SHOWN = 6;
+
+function hubLabel(hub) {
+  // What makes a hub recognisable as this house's is what hangs off it, so the
+  // devices are the label - enough of them to recognise the place, and a count
+  // for the rest, since a hub with a dozen things on it would wrap for ever.
+  const devices = hub.devices || [];
+  const shown = devices.slice(0, HUB_DEVICES_SHOWN).join(", ");
+  const rest = devices.length - HUB_DEVICES_SHOWN;
+  const listed = rest > 0 ? `${shown} and ${rest} more` : shown;
+  // The group for devices the cloud cannot place: they name no hub at all, and
+  // a hub is what reaches them, so they are almost certainly unreadable.
+  const name = hub.name || "Behind no hub (usually unreadable from the cloud)";
+  return listed ? `${name} · ${listed}` : name;
+}
+
+function sayInModal(message) {
+  const target = $("#modal-message");
+  target.textContent = message;
+  target.hidden = false;
+}
+
+function hubsButtonLabel(picked) {
+  const count = (picked || []).length;
+  if (!count) return "Choose hubs";
+  return `Choose hubs <span class="badge">${count}</span>`;
+}
+
+function pickedHubs(answers) {
+  return Object.keys(answers).filter((key) => key.startsWith("hub:") && answers[key]).map((key) => key.slice(4));
+}
+
+function switchBotState(feed) {
+  // Three different things can be wrong and they are fixed differently, so the
+  // line says which: the pull, the webhook's registration, and whether that
+  // registration has ever delivered anything. An accepted URL is not proof.
+  if (!feed) return "not set up yet";
+  const bits = [feed.last_sync_at ? `checked ${fmtAgo(feed.last_sync_at)}` : "first check due within a minute"];
+  if (feed.last_error) bits.push(feed.last_error);
+  if (feed.last_event_at) bits.push(`events live, last ${fmtAgo(feed.last_event_at)}`);
+  else if (feed.webhook_error) bits.push(`events off: ${feed.webhook_error}`);
+  else if (feed.webhook_at) bits.push("events registered, none yet");
+  else bits.push("events not registered yet");
+  return bits.join(" · ");
+}
+
+async function chooseSwitchBotHubs(house, feed, picked) {
+  // Asked of the account rather than typed: SwitchBot's own Homes never reach
+  // the API, and the hub relaying a thermometer is the only thing that says
+  // where it stands. A stored feed is asked on its own credentials, since
+  // neither the token nor the secret is ever sent back to the browser.
+  const typed = {
+    house_id: house.id,
+    token: $("#modal-fields [data-modal-field='switchbot_token']").value.trim(),
+    secret: $("#modal-fields [data-modal-field='switchbot_secret']").value.trim(),
+  };
+  let hubs = [];
+  try {
+    hubs = feed && !typed.token && !typed.secret
+      ? (await api(`/api/switchbot/feeds/${feed.id}/hubs`)).hubs || []
+      : (await api("/api/switchbot/hubs", { method: "POST", body: JSON.stringify(typed) })).hubs || [];
+  } catch (error) {
+    // In the dialog rather than in the banner behind it: a refused token is
+    // answered where it was typed, exactly as a refused save is.
+    sayInModal(error.message || "That did not work.");
+    return null;
+  }
+  const answers = await openModal({
+    title: "Which hubs stand in this house?",
+    message: "Everything behind a ticked hub is collected - the thermometers it relays now, and any paired later.",
+    top: true,
+    submitLabel: "Choose",
+    fields: hubs.map((hub) => ({
+      name: `hub:${hub.hub_id}`, label: hubLabel(hub), type: "checkbox",
+      value: picked.includes(hub.hub_id) || (hubs.length === 1 && !picked.length),
+    })),
+  });
+  return answers === null ? null : pickedHubs(answers);
+}
+
+async function saveSwitchBotFeed(house, feed, picked, answers) {
+  // The switch is the feed: turning it off pauses the pull and keeps the
+  // account, turning it on with credentials and hubs sets one up. Nothing here
+  // deletes - an account is forgotten from the row's own Forget button, where
+  // it can be confirmed rather than implied by an empty field.
+  const token = answers.switchbot_token.trim();
+  const secret = answers.switchbot_secret.trim();
+  if (!feed && !answers.shows_switchbot && !token && !secret) return;
+  if (!feed) {
+    if (!answers.shows_switchbot) return;
+    if (!token || !secret) throw new Error("Enter the SwitchBot token and secret, both from the app's Developer Options.");
+    if (!picked.length) throw new Error("Choose the hubs of that account standing in this house.");
+    await api("/api/switchbot/feeds", { method: "POST", body: JSON.stringify({
+      house_id: house.id, token, secret, hub_ids: picked,
+    }) });
+    return;
+  }
+  await api(`/api/switchbot/feeds/${feed.id}`, { method: "PUT", body: JSON.stringify({
+    token, secret, hub_ids: picked, active: answers.shows_switchbot,
+  }) });
+}
+
+async function forgetSwitchBotFeed(house) {
+  const feed = ((await api(`/api/switchbot/feeds?house_id=${house.id}`)).feeds || [])[0] || null;
+  if (!feed) throw new Error("This house collects from no SwitchBot account.");
+  await api(`/api/switchbot/feeds/${feed.id}`, { method: "DELETE" });
+}
+
 // ---------- Water (EyeOnWater consumption) ----------
 
 const WATER_COLOR = "var(--viz-2)";
@@ -3081,7 +3193,7 @@ function renderSensorSettings() {
         <button class="ghost compact" data-toggle-sensor="${sensor.id}" type="button"
           title="${sensor.active ? "Keep collecting, but leave it out of the graphs" : "Show it in the graphs again"}">${sensor.active ? "Hide" : "Show"}</button>
       </span>
-    </div>`).join("") || '<p class="meta">No sensor yet - they appear once Home Assistant starts pushing readings.</p>';
+    </div>`).join("") || '<p class="meta">No sensor yet - they appear once a feed starts bringing readings in.</p>';
   $$("[data-move-sensor]").forEach((button) => button.addEventListener("click", async () => {
     // The sensor order is shared by the whole house.
     const ids = state.sensors.map((sensor) => sensor.id);
@@ -3218,6 +3330,13 @@ async function loadReminder() {
   } catch (error) { showAppError(error); }
 }
 
+async function loadSettingsPanels() {
+  // The three feed panels the house switches govern. They are laid out when
+  // Settings is opened, so whatever moves a switch afterwards has to say so:
+  // a tab that has just appeared with nothing in it reads as a broken one.
+  await Promise.all([loadSensorSettings(), loadWaterSettings(), loadEnphaseSettings()]);
+}
+
 function showSettingsTab(name) {
   storeItem("usage-settings-tab", name);
   $$("#settings-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.settingsTab === name));
@@ -3253,6 +3372,16 @@ function renderHouses() {
     </div>`).join("") || '<p class="meta">No house yet.</p>';
   $$("[data-rename-house]").forEach((button) => button.addEventListener("click", async () => {
     const house = (state.admin.houses || []).find((item) => item.id === Number(button.dataset.renameHouse));
+    // A house is fed one way, the other, or both, so both sources are set up
+    // here beside their own switch. The account is asked for first: its hubs
+    // are what the dialog offers, and it is one request either way.
+    let feed = null;
+    try {
+      feed = ((await api(`/api/switchbot/feeds?house_id=${house.id}`)).feeds || [])[0] || null;
+    } catch (error) { showAppError(error); return; }
+    // What the hub picker last settled on, which the save reads rather than the
+    // dialog: a hub list cannot be a field, and a button is not an answer.
+    let picked = feed ? feed.hub_ids.slice() : [];
     const dialog = openModal({
       title: `Edit house · ${house.name}`,
       fields: [
@@ -3264,6 +3393,14 @@ function renderHouses() {
         { type: "html", html: `<button class="ghost compact modal-action" data-issue-token type="button"
           title="${house.has_sensor_token ? "Replace the Home Assistant sensor token" : "Create the Home Assistant sensor token"}">
           Sensor token${house.has_sensor_token ? ' <span class="badge">set</span>' : ""}</button>` },
+        { name: "shows_switchbot", label: "Thermometers (SwitchBot cloud)", type: "checkbox", value: house.shows_switchbot },
+        { name: "switchbot_token", label: feed ? `SwitchBot token (stored, …${feed.token_tail})` : "SwitchBot token", value: "" },
+        { name: "switchbot_secret", label: feed ? "SwitchBot secret (stored)" : "SwitchBot secret", type: "password", value: "" },
+        { type: "html", html: `<button class="ghost compact modal-action" data-choose-hubs type="button"
+          title="Pick the hubs of that account standing in this house">${hubsButtonLabel(picked)}</button>
+          <button class="ghost compact modal-action" data-forget-switchbot type="button"${feed ? "" : " hidden"}
+          title="Forget this SwitchBot account; the thermometers keep their readings">Forget account</button>
+          <span class="meta" data-switchbot-state>${esc(switchBotState(feed))}</span>` },
         { name: "shows_water", label: "Water meter (EyeOnWater)", type: "checkbox", value: house.shows_water },
         { name: "shows_power", label: "Solar panels and batteries (Enphase)", type: "checkbox", value: house.shows_power },
       ],
@@ -3273,14 +3410,19 @@ function renderHouses() {
           name: answers.name.trim(),
           timezone: answers.timezone,
           shows_sensors: answers.shows_sensors,
+          shows_switchbot: answers.shows_switchbot,
           shows_water: answers.shows_water,
           shows_power: answers.shows_power,
         }) });
-        // The switches decide a nav item and two settings tabs: the cached
+        await saveSwitchBotFeed(house, feed, picked, answers);
+        // The switches decide a nav item and three settings tabs: the cached
         // dashboard would keep showing yesterday's answer.
         invalidateDashboard();
         await loadAdmin();
         await ensureDashboard();
+        // And the tabs they reveal were laid out before the switch moved, so
+        // their panels are asked again rather than waiting for a reload.
+        await loadSettingsPanels();
       },
     });
     // The token is what Home Assistant pushes with, so it belongs beside that
@@ -3292,6 +3434,34 @@ function renderHouses() {
         if (!await issueSensorToken(house, true)) return;
         house.has_sensor_token = true;
         tokenButton.innerHTML = 'Sensor token <span class="badge">set</span>';
+      });
+    }
+    const hubsButton = $("#modal-fields [data-choose-hubs]");
+    if (hubsButton) {
+      hubsButton.addEventListener("click", async () => {
+        const chosen = await chooseSwitchBotHubs(house, feed, picked);
+        if (chosen === null) return;
+        picked = chosen;
+        hubsButton.innerHTML = hubsButtonLabel(picked);
+      });
+    }
+    const forgetButton = $("#modal-fields [data-forget-switchbot]");
+    if (forgetButton) {
+      forgetButton.addEventListener("click", async () => {
+        const gone = await confirmModal(
+          "Forget this SwitchBot account",
+          "The thermometers it collected keep every reading they have; only the asking stops. Hide the ones you no longer want in Settings, Sensors.",
+          "Forget",
+          { top: true, submit: async () => { await forgetSwitchBotFeed(house); } },
+        );
+        if (!gone) return;
+        // The dialog stays open on an emptied account, so typing another one in
+        // and saving sets it up rather than editing something that has gone.
+        feed = null;
+        picked = [];
+        forgetButton.hidden = true;
+        hubsButton.innerHTML = hubsButtonLabel(picked);
+        $("#modal-fields [data-switchbot-state]").textContent = switchBotState(feed);
       });
     }
     await dialog;

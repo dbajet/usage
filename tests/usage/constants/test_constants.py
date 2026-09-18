@@ -46,6 +46,40 @@ def test_class() -> None:
         "alert_normal",
         "alert_below",
         "alert_above",
+        "switchbot_host",
+        "switchbot_devices_path",
+        "switchbot_status_path",
+        "switchbot_timeout_seconds",
+        "switchbot_success_code",
+        "switchbot_unreadable_status",
+        "switchbot_message_max",
+        "switchbot_tick_seconds",
+        "switchbot_sync_seconds",
+        "switchbot_claim_minutes",
+        "switchbot_calls_per_day",
+        "switchbot_rate_window_seconds",
+        "switchbot_rate_wait_seconds",
+        "switchbot_entity_prefix",
+        "switchbot_humidity_suffix",
+        "switchbot_temperature_unit",
+        "switchbot_humidity_unit",
+        "switchbot_token_tail",
+        "switchbot_zero_hub_id",
+        "switchbot_no_hub_id",
+        "switchbot_hub_type",
+        "switchbot_webhook_setup_path",
+        "switchbot_webhook_delete_path",
+        "switchbot_webhook_all_devices",
+        "switchbot_event_path",
+        "switchbot_event_change",
+        "switchbot_event_token_bytes",
+        "switchbot_webhook_scheme",
+        "switchbot_scale_fahrenheit",
+        "switchbot_fahrenheit_offset",
+        "switchbot_fahrenheit_factor",
+        "switchbot_epoch_millis_floor",
+        "switchbot_event_future_seconds",
+        "switchbot_event_past_days",
         "water_host_default",
         "water_hosts",
         "water_sign_in_path",
@@ -395,6 +429,244 @@ def test_alert_above() -> None:
     tested = Constants
     result = tested.alert_above
     expected = "above"
+    assert result == expected
+
+
+def test_switchbot_host() -> None:
+    tested = Constants
+    result = tested.switchbot_host
+    expected = "api.switch-bot.com"
+    assert result == expected
+
+
+def test_switchbot_devices_path() -> None:
+    tested = Constants
+    result = tested.switchbot_devices_path
+    expected = "/v1.1/devices"
+    assert result == expected
+
+
+def test_switchbot_status_path() -> None:
+    tested = Constants
+    result = tested.switchbot_status_path
+    expected = "/v1.1/devices/{device_id}/status"
+    assert result == expected
+
+
+def test_switchbot_timeout_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_timeout_seconds
+    expected = 30
+    assert result == expected
+
+
+def test_switchbot_success_code() -> None:
+    tested = Constants
+    result = tested.switchbot_success_code
+    expected = 100
+    assert result == expected
+
+
+def test_switchbot_unreadable_status() -> None:
+    tested = Constants
+    result = tested.switchbot_unreadable_status
+    expected = 422
+    assert result == expected
+
+
+def test_switchbot_message_max() -> None:
+    tested = Constants
+    result = tested.switchbot_message_max
+    expected = 300
+    assert result == expected
+
+
+def test_switchbot_tick_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_tick_seconds
+    expected = 60
+    assert result == expected
+
+
+def test_switchbot_sync_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_sync_seconds
+    expected = 600
+    assert result == expected
+
+
+def test_switchbot_claim_minutes() -> None:
+    tested = Constants
+    result = tested.switchbot_claim_minutes
+    expected = 10
+    assert result == expected
+
+
+def test_switchbot_calls_per_day() -> None:
+    tested = Constants
+    result = tested.switchbot_calls_per_day
+    expected = 9000
+    assert result == expected
+
+
+def test_switchbot_rate_window_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_rate_window_seconds
+    expected = 86400.0
+    assert result == expected
+
+
+def test_switchbot_rate_wait_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_rate_wait_seconds
+    expected = 0.0
+    assert result == expected
+
+
+def test_switchbot_entity_prefix() -> None:
+    tested = Constants
+    result = tested.switchbot_entity_prefix
+    expected = "switchbot."
+    assert result == expected
+
+
+def test_switchbot_humidity_suffix() -> None:
+    tested = Constants
+    result = tested.switchbot_humidity_suffix
+    expected = ".humidity"
+    assert result == expected
+
+
+def test_switchbot_temperature_unit() -> None:
+    tested = Constants
+    result = tested.switchbot_temperature_unit
+    expected = "\u00b0C"
+    assert result == expected
+
+
+def test_switchbot_humidity_unit() -> None:
+    tested = Constants
+    result = tested.switchbot_humidity_unit
+    expected = "%"
+    assert result == expected
+
+
+def test_switchbot_token_tail() -> None:
+    tested = Constants
+    result = tested.switchbot_token_tail
+    expected = 6
+    assert result == expected
+
+
+def test_switchbot_zero_hub_id() -> None:
+    tested = Constants
+    result = tested.switchbot_zero_hub_id
+    expected = "000000000000"
+    assert result == expected
+
+
+def test_switchbot_no_hub_id() -> None:
+    tested = Constants
+    result = tested.switchbot_no_hub_id
+    expected = "none"
+    assert result == expected
+
+
+def test_switchbot_hub_type() -> None:
+    tested = Constants
+    result = tested.switchbot_hub_type
+    expected = "hub"
+    assert result == expected
+
+
+def test_switchbot_webhook_setup_path() -> None:
+    tested = Constants
+    result = tested.switchbot_webhook_setup_path
+    expected = "/v1.1/webhook/setupWebhook"
+    assert result == expected
+
+
+def test_switchbot_webhook_delete_path() -> None:
+    tested = Constants
+    result = tested.switchbot_webhook_delete_path
+    expected = "/v1.1/webhook/deleteWebhook"
+    assert result == expected
+
+
+def test_switchbot_webhook_all_devices() -> None:
+    tested = Constants
+    result = tested.switchbot_webhook_all_devices
+    expected = "ALL"
+    assert result == expected
+
+
+def test_switchbot_event_path() -> None:
+    tested = Constants
+    result = tested.switchbot_event_path
+    expected = "/api/switchbot/events/"
+    assert result == expected
+
+
+def test_switchbot_event_change() -> None:
+    tested = Constants
+    result = tested.switchbot_event_change
+    expected = "changeReport"
+    assert result == expected
+
+
+def test_switchbot_event_token_bytes() -> None:
+    tested = Constants
+    result = tested.switchbot_event_token_bytes
+    expected = 32
+    assert result == expected
+
+
+def test_switchbot_webhook_scheme() -> None:
+    tested = Constants
+    result = tested.switchbot_webhook_scheme
+    expected = "https://"
+    assert result == expected
+
+
+def test_switchbot_scale_fahrenheit() -> None:
+    tested = Constants
+    result = tested.switchbot_scale_fahrenheit
+    expected = "FAHRENHEIT"
+    assert result == expected
+
+
+def test_switchbot_fahrenheit_offset() -> None:
+    tested = Constants
+    result = tested.switchbot_fahrenheit_offset
+    expected = 32.0
+    assert result == expected
+
+
+def test_switchbot_fahrenheit_factor() -> None:
+    tested = Constants
+    result = tested.switchbot_fahrenheit_factor
+    expected = 1.8
+    assert result == expected
+
+
+def test_switchbot_epoch_millis_floor() -> None:
+    tested = Constants
+    result = tested.switchbot_epoch_millis_floor
+    expected = 100000000000
+    assert result == expected
+
+
+def test_switchbot_event_future_seconds() -> None:
+    tested = Constants
+    result = tested.switchbot_event_future_seconds
+    expected = 3600
+    assert result == expected
+
+
+def test_switchbot_event_past_days() -> None:
+    tested = Constants
+    result = tested.switchbot_event_past_days
+    expected = 7
     assert result == expected
 
 

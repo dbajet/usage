@@ -15,6 +15,15 @@ from usage.structures.session_user import SessionUser
 from usage.structures.settings import Settings
 
 
+SQL_BATTERY = """
+                UPDATE sensors SET battery = %s, battery_at = %s
+                WHERE id = %s AND (battery_at IS NULL OR battery_at <= %s)
+                """
+SQL_REPORTED = """
+                UPDATE sensors SET reported_at = %s
+                WHERE id = %s AND (reported_at IS NULL OR reported_at < %s)
+                """
+
 def helper_settings(base_url: str = "https://usage.example.com") -> Settings:
     return Settings(
         database_url="postgresql://tests",
@@ -164,6 +173,90 @@ def test_ingest(
         call.execute(exp_upsert, (9, "2026-09-02T23:16:59+00:00", 84.9)),
         call.execute(exp_upsert, (10, "2026-09-02T23:16:59+00:00", -0.58)),
         call.execute(exp_upsert, (9, "2026-09-02T23:16:59+00:00", 85.1)),
+        call.transaction().__exit__(None, None, None),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
+@patch.object(SensorCommand, "_alert")
+@patch.object(SensorCommand, "_mark_push")
+@patch.object(SensorCommand, "_store_reported")
+@patch.object(SensorCommand, "_store_batteries")
+@patch.object(SensorCommand, "_find_or_create_sensor")
+@patch.object(SensorCommand, "_find_sensor")
+def test_store(
+    find_sensor: MagicMock,
+    find_or_create_sensor: MagicMock,
+    store_batteries: MagicMock,
+    store_reported: MagicMock,
+    mark_push: MagicMock,
+    alert: MagicMock,
+) -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        find_sensor.reset_mock()
+        find_or_create_sensor.reset_mock()
+        store_batteries.reset_mock()
+        store_reported.reset_mock()
+        mark_push.reset_mock()
+        alert.reset_mock()
+        database.reset_mock()
+
+    exp_upsert = """
+                    INSERT INTO samples(sensor_id, measured_at, value) VALUES (%s, %s, %s)
+                    ON CONFLICT (sensor_id, measured_at) DO UPDATE SET value = EXCLUDED.value
+                    """
+    garage = helper_sample()
+    freezer = helper_sample(entity_id="sensor.freezer_temperature", value=-0.58)
+
+    # a pull, which may bring a thermometer nobody has seen before
+    find_or_create_sensor.side_effect = [(9, False), (10, True)]
+    store_batteries.side_effect = [None]
+    alert.side_effect = [None]
+    database.execute.side_effect = [0, 0]
+    result = tested.store(3, [garage, freezer])
+    expected = {"accepted": 2, "created": 1}
+    assert result == expected
+    assert find_sensor.mock_calls == []
+    assert find_or_create_sensor.mock_calls == [call(3, garage), call(3, freezer)]
+    exp_known = {"sensor.garage_temperature": 9, "sensor.freezer_temperature": 10}
+    assert store_batteries.mock_calls == [call([garage, freezer], exp_known)]
+    assert store_reported.mock_calls == [call([garage, freezer], exp_known)]
+    assert mark_push.mock_calls == [call(3)]
+    assert alert.mock_calls == [call(3, [garage, freezer], exp_known)]
+    exp_calls = [
+        call.transaction(),
+        call.transaction().__enter__(),
+        call.execute(exp_upsert, (9, "2026-09-02T23:16:59+00:00", 84.9)),
+        call.execute(exp_upsert, (10, "2026-09-02T23:16:59+00:00", -0.58)),
+        call.transaction().__exit__(None, None, None),
+    ]
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # a webhook, which may not: SwitchBot reports every device on the account,
+    # this house's and any other's, and nothing signs what it posts
+    find_sensor.side_effect = [9, None]
+    store_batteries.side_effect = [None]
+    alert.side_effect = [None]
+    database.execute.side_effect = [0]
+    result = tested.store(3, [garage, freezer], create=False)
+    expected = {"accepted": 1, "created": 0}
+    assert result == expected
+    assert find_sensor.mock_calls == [call(3, garage), call(3, freezer)]
+    assert find_or_create_sensor.mock_calls == []
+    exp_known = {"sensor.garage_temperature": 9}
+    assert store_batteries.mock_calls == [call([garage, freezer], exp_known)]
+    assert store_reported.mock_calls == [call([garage, freezer], exp_known)]
+    assert mark_push.mock_calls == [call(3)]
+    assert alert.mock_calls == [call(3, [garage, freezer], exp_known)]
+    exp_calls = [
+        call.transaction(),
+        call.transaction().__enter__(),
+        call.execute(exp_upsert, (9, "2026-09-02T23:16:59+00:00", 84.9)),
         call.transaction().__exit__(None, None, None),
     ]
     assert database.mock_calls == exp_calls
@@ -666,6 +759,36 @@ def test_set_alerts(require_house: MagicMock) -> None:
         reset_mocks()
 
 
+def test__find_sensor() -> None:
+    tested = helper_instance()
+    database = tested._database
+
+    def reset_mocks() -> None:
+        database.reset_mock()
+
+    sample = helper_sample()
+    exp_calls = [
+        call.blind_index("sensor.garage_temperature"),
+        call.fetch_one("SELECT id FROM sensors WHERE house_id = %s AND entity_hash = %s", (3, "the-hash")),
+    ]
+
+    database.blind_index.side_effect = ["the-hash"]
+    database.fetch_one.side_effect = [{"id": 9}]
+    result = tested._find_sensor(3, sample)
+    expected = 9
+    assert result == expected
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+    # a device this house does not collect: nothing, and nothing created either
+    database.blind_index.side_effect = ["the-hash"]
+    database.fetch_one.side_effect = [None]
+    result = tested._find_sensor(3, sample)
+    assert result is None
+    assert database.mock_calls == exp_calls
+    reset_mocks()
+
+
 def test__find_or_create_sensor() -> None:
     tested = helper_instance()
     database = tested._database
@@ -675,8 +798,8 @@ def test__find_or_create_sensor() -> None:
 
     sample = helper_sample()
     exp_insert = """
-            INSERT INTO sensors(house_id, entity_id_sealed, entity_hash, name_sealed, unit, position)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO sensors(house_id, entity_id_sealed, entity_hash, name_sealed, unit, position, active)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """
 
@@ -693,14 +816,16 @@ def test__find_or_create_sensor() -> None:
     assert database.mock_calls == exp_calls
     reset_mocks()
 
-    # new entity: appended after the existing sensors
-    tests = [({"count": 4}, 4), (None, 0)]
-    for count_row, position in tests:
+    # new entity: appended after the existing sensors. A sample that asks to be
+    # hidden - the humidity the SwitchBot pull collects as evidence rather than
+    # as a curve - starts out of the graphs; a pushed one never asks.
+    tests = [({"count": 4}, 4, False, True), (None, 0, False, True), ({"count": 4}, 4, True, False)]
+    for count_row, position, hidden, active in tests:
         database.blind_index.side_effect = ["the-hash"]
         database.fetch_one.side_effect = [None, count_row]
         database.encrypt.side_effect = ["sealedEntity", "sealedName"]
         database.execute.side_effect = [10]
-        result = tested._find_or_create_sensor(3, sample)
+        result = tested._find_or_create_sensor(3, sample._replace(hidden=hidden))
         expected = (10, True)
         assert result == expected
         exp_calls = [
@@ -709,7 +834,7 @@ def test__find_or_create_sensor() -> None:
             call.fetch_one("SELECT COUNT(*) AS count FROM sensors WHERE house_id = %s", (3,)),
             call.encrypt("sensor.garage_temperature"),
             call.encrypt("Garage"),
-            call.execute(exp_insert, (3, "sealedEntity", "the-hash", "sealedName", "°F", position)),
+            call.execute(exp_insert, (3, "sealedEntity", "the-hash", "sealedName", "°F", position, active)),
         ]
         assert database.mock_calls == exp_calls
         reset_mocks()
@@ -861,8 +986,8 @@ def test__store_batteries() -> None:
     result = tested._store_batteries(samples, known)
     assert result is None
     exp_calls = [
-        call.execute("UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s", (88, "2026-09-02T23:40:00+00:00", 9)),
-        call.execute("UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s", (12, "2026-09-02T23:20:00+00:00", 10)),
+        call.execute(SQL_BATTERY, (88, "2026-09-02T23:40:00+00:00", 9, "2026-09-02T23:40:00+00:00")),
+        call.execute(SQL_BATTERY, (12, "2026-09-02T23:20:00+00:00", 10, "2026-09-02T23:20:00+00:00")),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()
@@ -899,8 +1024,8 @@ def test__store_reported() -> None:
     result = tested._store_reported(parsed, known)
     assert result is None
     exp_calls = [
-        call.execute("UPDATE sensors SET reported_at = %s WHERE id = %s", ("2026-09-02T23:40:00+00:00", 9)),
-        call.execute("UPDATE sensors SET reported_at = %s WHERE id = %s", ("2026-09-02T23:20:00+00:00", 10)),
+        call.execute(SQL_REPORTED, ("2026-09-02T23:40:00+00:00", 9, "2026-09-02T23:40:00+00:00")),
+        call.execute(SQL_REPORTED, ("2026-09-02T23:20:00+00:00", 10, "2026-09-02T23:20:00+00:00")),
     ]
     assert database.mock_calls == exp_calls
     reset_mocks()

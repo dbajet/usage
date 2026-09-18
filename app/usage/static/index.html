@@ -207,9 +207,11 @@
         <div data-settings-panel="sensors" hidden>
           <div class="card">
             <h3>Sensors · <span id="sensors-house-name"></span></h3>
-            <p class="meta">Home Assistant pushes the thermometers' readings every few minutes; a new entity appears here
-              on its own. Rename, reorder or hide the sensors - a hidden one keeps collecting but stays out of the graphs.
-              To stop a thermometer for good, remove it from the Home Assistant configuration.</p>
+            <p class="meta">Thermometers arrive one of two ways, and a house can use both: Home Assistant pushes
+              their readings, or the app pulls them from the SwitchBot cloud. Either is turned on for a house in
+              Settings, Houses, Edit, where its credentials live. Whichever brings a thermometer in, it appears
+              here on its own - rename, reorder or hide it; a hidden one keeps collecting but stays out of the
+              graphs. To stop one for good, take it out of the feed that brings it.</p>
             <label class="switch">
               <input id="sensor-alert-toggle" type="checkbox"><span class="slider"></span>
               <span>Email me when a thermometer of this house leaves the alert range set for it (Edit, Alert range)</span>

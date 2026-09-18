@@ -21,11 +21,18 @@ from usage.structures.settings import Settings
 
 
 class SensorCommand:
-    """Sensors fed by Home Assistant: timestamped samples (temperatures) per house.
+    """The house's thermometers: timestamped samples (temperatures) per house.
 
-    Home Assistant posts a batch of current states every few minutes, signed
-    with the house's sensor token. An unknown entity becomes a sensor on the
-    fly, named by the Home Assistant configuration; users rename, order and
+    Two things feed them and they meet here. Home Assistant posts a batch of
+    current states every few minutes, signed with the house's sensor token; a
+    house without Home Assistant has `SwitchBotSyncCommand` pull the same
+    readings out of the cloud and hand them to `store` directly. The difference
+    between the two is entirely in who worked out the instants a sample carries,
+    which is settled before either of them gets here.
+
+    An unknown entity becomes a sensor on the
+    fly, named by the Home Assistant configuration or by the SwitchBot device;
+    users rename, order and
     hide sensors in Settings (a hidden sensor keeps collecting, out of the
     graphs - a deleted one would only come back on the next push). A sample
     is keyed by the sensor and the instant its value last changed, so a value
@@ -49,15 +56,36 @@ class SensorCommand:
         samples = list(data.get("samples") or [])
         if len(samples) > Constants.ingest_max_samples:
             raise AppException(400, f"At most {Constants.ingest_max_samples} samples per request.")
-        parsed = [self._parse_sample(sample) for sample in samples]
+        return self.store(house_id, [self._parse_sample(sample) for sample in samples])
+
+    def store(self, house_id: int, parsed: list[SensorSample], create: bool = True) -> dict[str, int]:
+        """Write a batch of samples, whichever of the three ways they reached the app.
+
+        Home Assistant pushes them, the SwitchBot sync pulls them, and a
+        SwitchBot webhook posts them as they happen. From here on the three are
+        the same thing: the difference between them is entirely in who worked
+        out `measured_at` and `reported_at`, and that is settled before anything
+        arrives here.
+
+        `create` is what keeps the webhook honest. A push and a pull are both
+        answers to something this app asked for, so an entity nobody has seen
+        before is a new thermometer. A webhook is not: it reports every device
+        on the account, including another house's, and nothing signs it. So it
+        may write to sensors that already exist and may not invent any.
+        """
         known: dict[str, int] = {}
         created = 0
+        accepted = 0
         with self._database.transaction():
             for sample in parsed:
                 if sample.entity_id not in known:
-                    sensor_id, is_new = self._find_or_create_sensor(house_id, sample)
+                    found = self._find_sensor(house_id, sample) if not create else None
+                    if not create and found is None:
+                        continue
+                    sensor_id, is_new = (found, False) if found is not None else self._find_or_create_sensor(house_id, sample)
                     known[sample.entity_id] = sensor_id
                     created += int(is_new)
+                accepted += 1
                 self._database.execute(
                     """
                     INSERT INTO samples(sensor_id, measured_at, value) VALUES (%s, %s, %s)
@@ -70,7 +98,7 @@ class SensorCommand:
             self._mark_push(house_id)
         # Outside the transaction: the samples are in whatever the mail relay does next.
         self._alert(house_id, parsed, known)
-        return {"accepted": len(parsed), "created": created}
+        return {"accepted": accepted, "created": created}
 
     def issue_token(self, user: SessionUser, house_id: int) -> dict[str, str]:
         """Mint the house's sensor token; the previous one stops working at once."""
@@ -339,6 +367,14 @@ class SensorCommand:
         result = "Threshold alerts enabled for this house." if enabled else "Threshold alerts disabled for this house."
         return {"message": result}
 
+    def _find_sensor(self, house_id: int, sample: SensorSample) -> int | None:
+        """This house's sensor for that entity, and never one belonging to another."""
+        row = self._database.fetch_one(
+            "SELECT id FROM sensors WHERE house_id = %s AND entity_hash = %s",
+            (house_id, self._database.blind_index(sample.entity_id)),
+        )
+        return None if row is None else int(row["id"])
+
     def _find_or_create_sensor(self, house_id: int, sample: SensorSample) -> tuple[int, bool]:
         entity_hash = self._database.blind_index(sample.entity_id)
         row = self._database.fetch_one(
@@ -350,8 +386,8 @@ class SensorCommand:
         count = self._database.fetch_one("SELECT COUNT(*) AS count FROM sensors WHERE house_id = %s", (house_id,))
         sensor_id = self._database.execute(
             """
-            INSERT INTO sensors(house_id, entity_id_sealed, entity_hash, name_sealed, unit, position)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO sensors(house_id, entity_id_sealed, entity_hash, name_sealed, unit, position, active)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -361,6 +397,10 @@ class SensorCommand:
                 self._database.encrypt(sample.name),
                 sample.unit,
                 int(count["count"]) if count is not None else 0,
+                # Only ever on the way in: a sensor that already exists is shown
+                # or hidden by whoever decided that in Settings, and no arriving
+                # sample is allowed to overrule them.
+                not sample.hidden,
             ),
         )
         return sensor_id, True
@@ -400,9 +440,14 @@ class SensorCommand:
             if known_sample is None or sample.measured_at >= known_sample.measured_at:
                 charges[sensor_id] = sample
         for sensor_id, sample in charges.items():
+            # Never backwards. Three things write here now, and a webhook event
+            # can arrive after a poll that already reported a later reading.
             self._database.execute(
-                "UPDATE sensors SET battery = %s, battery_at = %s WHERE id = %s",
-                (sample.battery, sample.measured_at.isoformat(), sensor_id),
+                """
+                UPDATE sensors SET battery = %s, battery_at = %s
+                WHERE id = %s AND (battery_at IS NULL OR battery_at <= %s)
+                """,
+                (sample.battery, sample.measured_at.isoformat(), sensor_id, sample.measured_at.isoformat()),
             )
 
     def _store_reported(self, parsed: list[SensorSample], known: dict[str, int]) -> None:
@@ -420,9 +465,14 @@ class SensorCommand:
             if sensor_id not in heard or sample.reported_at >= heard[sensor_id]:
                 heard[sensor_id] = sample.reported_at
         for sensor_id, reported_at in heard.items():
+            # Never backwards, for the same reason: a late event would otherwise
+            # make a thermometer look as though it had not been heard from since.
             self._database.execute(
-                "UPDATE sensors SET reported_at = %s WHERE id = %s",
-                (reported_at.isoformat(), sensor_id),
+                """
+                UPDATE sensors SET reported_at = %s
+                WHERE id = %s AND (reported_at IS NULL OR reported_at < %s)
+                """,
+                (reported_at.isoformat(), sensor_id, reported_at.isoformat()),
             )
 
     def _parse_sample(self, data: dict[str, Any]) -> SensorSample:

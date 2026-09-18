@@ -148,7 +148,9 @@ dropped on each blue/green switch.
 ## Realtime: sensors (Home Assistant)
 
 Thermometers reach the app the other way round from meter readings: Home
-Assistant pushes them. Every ten minutes an automation POSTs the current value
+Assistant pushes them. A house without Home Assistant has the app pull them from
+SwitchBot's cloud instead, into the same sensors - see the next section; everything
+below is the pushed half. Every ten minutes an automation POSTs the current value
 of each listed entity to `/api/ingest/samples`, authenticated with the house's
 sensor token (Settings, Houses, Edit, "Sensor token" - admins only, shown once, only
 its hash is stored). The Home Assistant side is `deploy/home-assistant.yaml`.
@@ -217,6 +219,142 @@ switch draws those bounds across the graph as dashed lines in the sensor's own
 colour, and a user who turns the house's switch on gets an email when a push
 takes a thermometer out of its range. The sensor remembers which side it is on,
 so the email follows the crossing, not every push that stays out of range.
+
+## Realtime: sensors (SwitchBot cloud)
+
+Fremur has the same thermometers and no Home Assistant to push them, so the app pulls
+them instead. A feed is one SwitchBot account and the hubs of it that stand in this house,
+set up by an admin in Settings, Houses, Edit - beside the Home Assistant switch rather than
+in a panel of its own, because a house is fed one way, the other, or both, and each source
+belongs next to the switch that turns it on. Hence two switches (`shows_sensors` and
+`shows_switchbot`) where there was one: a single "has thermometers" switch had to be
+labelled as one of the two sources, and was wrong for the house that has neither Home
+Assistant nor a reason to care. Either of them being on is what makes the house show the
+thermometer half, the nav item and the Sensors tab.
+
+What a feed collects lands in the same `sensors` and `samples` as the pushed readings, so
+the Realtime view, the tiles, the colours, the alert ranges and the emails are one thing for
+both houses. One account per house, which is what that dialog can show: a second would be a
+feed nothing on that screen could edit.
+
+```
+GET /v1.1/devices                      the account's devices, each naming its hub
+GET /v1.1/devices/{deviceId}/status    what one device reads this second
+```
+
+Two calls, signed with an HMAC of the token, a millisecond timestamp and a nonce. Their own
+prose says to upper-case the signature and their own Python sample does not; base64 is
+case-sensitive, so only one of them can be what the server checks, and the sample is the one
+known to be accepted.
+
+**Hubs are what a feed follows, never devices.** One account holds both houses, and
+SwitchBot's "Homes" never cross the API boundary - but every device names the hub relaying
+it, and a hub is a box in a room. Creating a feed asks the account for its devices, groups
+them under their hubs and shows the names hanging off each one ("Grenier, Dehors, Freezer"),
+and the admin ticks the hubs.
+
+The API says that loosely, though, and `SwitchBotHubs` is what reads it as a whole rather
+than a device at a time. A device names the hub relaying it; a hub names nothing, or itself;
+and a device with no hub says so two different ways, an empty string and twelve zeros.
+Taken literally that is one group per thermometer, which is a picker nobody can choose from.
+So a device is a hub when something else is relayed by it, or when SwitchBot types it as one
+- the second keeps a hub with nothing behind it yet in the list, and being wrong about it
+can only misplace a line in the picker, never change what is collected. Everything the cloud
+cannot place lands in one last group rather than in a group each. The sync reads the account
+through the same class, because two rules could disagree and then a thermometer would sit in
+a group the sync never looks in. A device list is a snapshot; a hub is a standing answer, so a
+thermometer paired next year appears on its own, where a ticked list of devices would
+silently miss it and look exactly like a thermometer that had stopped working. Devices
+behind another house's hub are dropped from the list before a call is spent on them.
+
+**There is no history endpoint.** Unlike the water portal and Enphase, nothing can be
+backfilled: a house fed this way starts the day the feed is added. That also removes half
+the machinery - no chunk walk, no barren-month counting, no `backfill_from`.
+
+### The two instants the cloud will not give
+
+A status carries no timestamp and no notion of when the device was last heard from. Home
+Assistant answers both for the other house; here they are worked out from what is already
+stored.
+
+**When did the value last change?** The reading is dated against the last stored sample. An
+unchanged one keeps the instant it already has - which is what makes a steady room one
+sample rather than a new row every ten minutes, exactly as `last_changed` does for a pushed
+one - and a changed one is filed under this poll. An upper bound, wrong by at most one tick.
+
+**When was the thermometer last heard from?** The cloud cannot say, and a hub replaying a
+value it cached reads exactly like a live one. So it is answered sideways, the way
+`deploy/home-assistant.yaml` answers it: whichever of the temperature, the humidity and the
+charge has moved is proof the device was heard from, and nothing moving leaves `reported_at`
+where it was. A lower bound, and the safe side of the two - a thermometer whose battery died
+goes grey rather than staying green for ever, and a very steady room goes grey early, which
+is a question rather than a lie.
+
+That is why the humidity is collected at all. It is stored as its own sensor, created
+**hidden**: a percentage has no business on the temperature graph, but it moves while a
+room's temperature holds still, which is exactly when telling a live thermometer from a dead
+one gets hard. Unhide it in Settings, Sensors to draw it like any other.
+
+### The webhook, which answers both exactly
+
+Both of those are inferences, and SwitchBot will simply tell us instead. `setupWebhook`
+registers a URL and they POST a `changeReport` as each change happens, carrying
+`timeOfSample` - the instant the device took the reading. That is `measured_at` and
+`reported_at` at once, with nothing derived.
+
+It does not replace the polling and is not meant to. Events fire on change, so a room
+holding one number reports nothing for hours; the app can be down when one is sent, and
+nothing is re-sent. The sync is what makes a feed whole and this is what makes it sharp -
+and the two agree by construction, because a sample is keyed by the instant its value
+changed: the poll that follows an event finds the value unchanged and keeps the event's
+instant rather than writing its own, coarser one. What it does buy against the greying
+problem is that the cloud sees every advertisement, so a wobble a ten-minute poll flattens
+out still arrives as proof of life.
+
+**Nothing signs that POST.** SwitchBot documents no signature for it at all, so two things
+stand in for one. The URL carries a secret nobody else has - generated per feed, sealed
+rather than only hashed, because it has to be recoverable to be registered with them - and
+**no event may create a sensor**. The device has to be one this house already collects, or
+the event is dropped. Without that second rule the account's other house would quietly grow
+a set of thermometers here, since a webhook reports every device on the account and
+`deviceList` takes no narrower answer than `ALL`.
+
+Registration happens on the first sync after a feed is added, once: a registration that
+worked stays worked, and asking again would spend a call every ten minutes for ever. A feed
+whose app has no public https address is told so plainly rather than costing a call to find
+out, which is what a local instance gets. Three things can then be wrong and they are fixed
+differently, so the panel says which: the pull (`last_error`), the registration
+(`webhook_error`), and whether that registration has ever delivered anything
+(`last_event_at`). An accepted URL is not proof that anything comes back through it.
+
+An event carries a `scale`, so a Fahrenheit reading is converted; everything is stored in
+the Celsius a status call answers in. And `timeOfSample` is documented by an example rather
+than by a unit - the two readings are a factor of a thousand apart - so a value too small to
+be milliseconds is taken as seconds, and one that still lands outside a plausible window is
+not trusted at all. Neither instant a sensor carries is ever moved backwards, since three
+things write them now and a late event must not make a thermometer look unheard-from.
+
+### What a tick costs
+
+Every device behind the chosen hubs is asked, thermometers and switches alike: what is a
+thermometer is answered by whether a status carries a temperature, so a model released next
+year is collected without a word of code, and a curtain motor on the same hub costs one call
+and drops out of the tick. A device the hub could not reach drops out the same way - one
+unreachable thermometer is not a broken feed.
+
+The loop wakes every minute and pulls a feed every ten. Ten because that is the finest
+bucket the graph draws and the cadence Home Assistant pushes at, so both houses' graphs have
+the same resolution. A tick is one call plus one per device, so the allowance - ten thousand
+a day, per token - covers about sixty devices. Under that sits the same database-backed
+sliding window the Enphase feed uses, on a day rather than a minute: the allowance belongs to
+the token, and the two colours of a blue/green deploy plus an admin submitting the form are
+three claimants on it. Nobody waits out a day for a slot, so a tick that cannot have one says
+so in `last_error` and the next one tries again.
+
+Forgetting an account stops the asking and nothing else - and withdraws the webhook on the
+way out, so SwitchBot stops posting to a URL that has gone. Unlike a water feed, whose
+readings hang off it, what this collects lives in the house's own sensors: a year of
+temperatures is not thrown away because an account was swapped.
 
 ## Realtime: water (EyeOnWater)
 

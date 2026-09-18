@@ -59,6 +59,91 @@ class _Constants:
     alert_normal: str = ""
     alert_below: str = "below"
     alert_above: str = "above"
+    # SwitchBot's cloud API (v1.1), which is how a house with no Home Assistant
+    # gets its thermometers in. Two calls - what the account has, and what one
+    # device reads now - and no history endpoint of any kind, so a house fed
+    # this way starts the day it is switched on and nothing is backfilled.
+    switchbot_host: str = "api.switch-bot.com"
+    switchbot_devices_path: str = "/v1.1/devices"
+    switchbot_status_path: str = "/v1.1/devices/{device_id}/status"
+    switchbot_timeout_seconds: int = 30
+    # SwitchBot answers 200 and puts its verdict in the body; 100 is success.
+    switchbot_success_code: int = 100
+    # Anything else it says: a device the hub could not reach, a parameter it
+    # did not like. Deterministic for this tick, so that device is skipped
+    # rather than the whole feed failing on it.
+    switchbot_unreadable_status: int = 422
+    switchbot_message_max: int = 300
+    # The loop looks every minute and pulls a feed every ten, as the water one
+    # does: a feed just added should show something straight away rather than
+    # sitting empty, which reads exactly like a feed that does not work.
+    #
+    # Ten minutes because that is the finest bucket the graph draws and the
+    # cadence Home Assistant pushes at, so both houses' graphs have the same
+    # resolution. It also sets what a feed can afford: a tick costs one call
+    # plus one per device behind the chosen hubs, so the day's allowance covers
+    # about sixty devices - far more than a house has, and the limiter below is
+    # what says so out loud if one ever gets there.
+    switchbot_tick_seconds: int = 60
+    switchbot_sync_seconds: int = 600
+    switchbot_claim_minutes: int = 10
+    # The allowance is the token's and the day's - ten thousand calls - and a
+    # slot is left spare because we count a call when we make it and SwitchBot
+    # counts it when it lands. Nobody waits out a day for a slot: a tick that
+    # cannot have one says so and is tried again on the next.
+    switchbot_calls_per_day: int = 9_000
+    switchbot_rate_window_seconds: float = 86_400.0
+    switchbot_rate_wait_seconds: float = 0.0
+    # A pulled sensor is named after the device, there being no Home Assistant
+    # entity to name it after.
+    switchbot_entity_prefix: str = "switchbot."
+    # The humidity of the same device, collected hidden: a percentage has no
+    # business on the temperature graph, but it moves while a room holds still,
+    # which is what proves the thermometer is still being heard from. Unhide it
+    # in Settings, Sensors to draw it like any other.
+    switchbot_humidity_suffix: str = ".humidity"
+    switchbot_temperature_unit: str = "°C"
+    switchbot_humidity_unit: str = "%"
+    # Enough of a token to tell two accounts apart in a list, and no more: it
+    # is a credential, and the form never shows one again once it is stored.
+    switchbot_token_tail: int = 6
+    # A device with no hub says so two different ways and neither is an id: an
+    # empty string, and the twelve zeros SwitchBot's own samples show. Both mean
+    # the cloud cannot place the device, and they answer to one name here.
+    switchbot_zero_hub_id: str = "000000000000"
+    switchbot_no_hub_id: str = "none"
+    # How a hub with nothing behind it yet is still recognised as a place. Only
+    # the picker's grouping rests on this, never what is collected - and "Hub"
+    # has been in the type of every one of them, from the Hub Mini to the Hub 3.
+    switchbot_hub_type: str = "hub"
+    # The webhook, which is the only thing that knows when a reading was taken.
+    # SwitchBot posts a `changeReport` to one URL per account as the change
+    # happens, carrying the instant the device sampled it - where a status call
+    # carries no instant at all and a poll can only date a change to somewhere
+    # inside its own interval.
+    switchbot_webhook_setup_path: str = "/v1.1/webhook/setupWebhook"
+    switchbot_webhook_delete_path: str = "/v1.1/webhook/deleteWebhook"
+    switchbot_webhook_all_devices: str = "ALL"
+    switchbot_event_path: str = "/api/switchbot/events/"
+    switchbot_event_change: str = "changeReport"
+    switchbot_event_token_bytes: int = 32
+    # Nothing signs the incoming POST - SwitchBot documents no signature for it
+    # at all - so the secret is the URL, and it is generated here rather than
+    # chosen. It has to be recoverable to be registered with them, so it is
+    # sealed like a password rather than only hashed like the house's token.
+    switchbot_webhook_scheme: str = "https://"
+    # What a Fahrenheit reading has to become: everything is stored in Celsius,
+    # the unit a status call answers in.
+    switchbot_scale_fahrenheit: str = "FAHRENHEIT"
+    switchbot_fahrenheit_offset: float = 32.0
+    switchbot_fahrenheit_factor: float = 1.8
+    # `timeOfSample` is epoch milliseconds, but a seconds value would be a
+    # plausible reading of the same field and would land the sample in 1970.
+    # Anything below this is taken to be seconds; anything outside the window
+    # around now is not trusted at all and the arrival stands in for it.
+    switchbot_epoch_millis_floor: int = 100_000_000_000
+    switchbot_event_future_seconds: int = 3600
+    switchbot_event_past_days: int = 7
     # EyeOnWater: the "Export Data" button and nothing else - sign in, ask for a
     # CSV over a date range, poll the task, download it. The portal has no
     # documented API, so the fewer endpoints touched the better.

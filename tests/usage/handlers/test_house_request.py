@@ -14,17 +14,25 @@ def test_inheritance() -> None:
 def test_class() -> None:
     tested = HouseRequest
     result = list(tested.model_fields.keys())
-    expected = ['name', 'timezone', 'shows_sensors', 'shows_water', 'shows_power']
+    expected = ['name', 'timezone', 'shows_sensors', 'shows_switchbot', 'shows_water', 'shows_power']
     assert result == expected
 
 
 def test___init__() -> None:
-    tested = HouseRequest(name="Fremur", timezone="Europe/Paris", shows_sensors=True, shows_water=True, shows_power=True)
+    tested = HouseRequest(
+        name="Fremur",
+        timezone="Europe/Paris",
+        shows_sensors=True,
+        shows_switchbot=True,
+        shows_water=True,
+        shows_power=True,
+    )
     result = tested.model_dump()
     expected = {
         "name": "Fremur",
         "timezone": "Europe/Paris",
         "shows_sensors": True,
+        "shows_switchbot": True,
         "shows_water": True,
         "shows_power": True,
     }
@@ -36,6 +44,7 @@ def test___init__() -> None:
         "name": "Fremur",
         "timezone": "",
         "shows_sensors": False,
+        "shows_switchbot": False,
         "shows_water": False,
         "shows_power": False,
     }

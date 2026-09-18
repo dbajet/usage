@@ -14,6 +14,8 @@ from usage.commands.passkey_command import PasskeyCommand
 from usage.commands.reading_command import ReadingCommand
 from usage.commands.sensor_command import SensorCommand
 from usage.commands.stats_command import StatsCommand
+from usage.commands.switch_bot_command import SwitchBotCommand
+from usage.commands.switch_bot_event_command import SwitchBotEventCommand
 from usage.commands.water_command import WaterCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_message import ApiMessage
@@ -42,6 +44,10 @@ from usage.handlers.register_update_request import RegisterUpdateRequest
 from usage.handlers.sensor_alert_request import SensorAlertRequest
 from usage.handlers.sensor_order_request import SensorOrderRequest
 from usage.handlers.sensor_update_request import SensorUpdateRequest
+from usage.handlers.switch_bot_event_request import SwitchBotEventRequest
+from usage.handlers.switch_bot_feed_request import SwitchBotFeedRequest
+from usage.handlers.switch_bot_feed_update_request import SwitchBotFeedUpdateRequest
+from usage.handlers.switch_bot_hubs_request import SwitchBotHubsRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
@@ -57,7 +63,13 @@ from usage.structures.settings import Settings
 
 
 class ApiRouter:
-    def __init__(self, database: Database, settings: Settings, enphase_limiter: RateLimiter) -> None:
+    def __init__(
+        self,
+        database: Database,
+        settings: Settings,
+        enphase_limiter: RateLimiter,
+        switchbot_limiter: RateLimiter,
+    ) -> None:
         self._database = database
         self._settings = settings
         self._router = APIRouter(prefix="/api")
@@ -70,6 +82,8 @@ class ApiRouter:
         self._stats_command = StatsCommand(database)
         self._sensor_command = SensorCommand(database, settings, email_sender)
         self._water_command = WaterCommand(database)
+        self._switch_bot_command = SwitchBotCommand(database, settings, switchbot_limiter)
+        self._switch_bot_event_command = SwitchBotEventCommand(database, settings, email_sender)
         self._enphase_command = EnphaseCommand(database, enphase_limiter)
         self._enphase_ingest_command = EnphaseIngestCommand(database)
         self._register()
@@ -127,6 +141,15 @@ class ApiRouter:
         self._router.add_api_route("/sensors/alerts", self._sensor_alerts, methods=["GET"])
         self._router.add_api_route("/sensors/alerts", self._set_sensor_alerts, methods=["POST"], response_model=ApiMessage)
         self._router.add_api_route("/sensors/{sensor_id}", self._update_sensor, methods=["PUT"], response_model=ApiMessage)
+        # SwitchBot posting an event, not a signed-in user: the secret is in the
+        # path, because they sign nothing and there is no header to read.
+        self._router.add_api_route("/switchbot/events/{event_token}", self._switch_bot_event, methods=["POST"])
+        self._router.add_api_route("/switchbot/hubs", self._switch_bot_hubs, methods=["POST"])
+        self._router.add_api_route("/switchbot/feeds", self._list_switch_bot_feeds, methods=["GET"])
+        self._router.add_api_route("/switchbot/feeds", self._create_switch_bot_feed, methods=["POST"])
+        self._router.add_api_route("/switchbot/feeds/{feed_id}/hubs", self._switch_bot_feed_hubs, methods=["GET"])
+        self._router.add_api_route("/switchbot/feeds/{feed_id}", self._update_switch_bot_feed, methods=["PUT"], response_model=ApiMessage)
+        self._router.add_api_route("/switchbot/feeds/{feed_id}", self._delete_switch_bot_feed, methods=["DELETE"], response_model=ApiMessage)
         self._router.add_api_route("/water/feeds", self._list_water_feeds, methods=["GET"])
         self._router.add_api_route("/water/feeds", self._create_water_feed, methods=["POST"])
         self._router.add_api_route("/water/series", self._water_series, methods=["GET"])
@@ -540,6 +563,60 @@ class ApiRouter:
     ) -> ApiMessage:
         user = self._auth_command.user_from_token(usage_session)
         message = self._sensor_command.set_alerts(user, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _switch_bot_event(self, event_token: str, body: SwitchBotEventRequest) -> dict[str, int]:
+        return self._switch_bot_event_command.ingest(event_token, body.model_dump())
+
+    def _switch_bot_hubs(
+        self,
+        body: SwitchBotHubsRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._switch_bot_command.hubs(user, body.model_dump())
+
+    def _list_switch_bot_feeds(
+        self,
+        house_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._switch_bot_command.list_feeds(user, house_id)
+
+    def _create_switch_bot_feed(
+        self,
+        body: SwitchBotFeedRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._switch_bot_command.create_feed(user, body.model_dump())
+
+    def _switch_bot_feed_hubs(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> dict[str, Any]:
+        user = self._auth_command.user_from_token(usage_session)
+        return self._switch_bot_command.feed_hubs(user, feed_id)
+
+    def _update_switch_bot_feed(
+        self,
+        feed_id: int,
+        body: SwitchBotFeedUpdateRequest,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._switch_bot_command.update_feed(user, feed_id, body.model_dump())
+        return ApiMessage(message=message["message"])
+
+    def _delete_switch_bot_feed(
+        self,
+        feed_id: int,
+        usage_session: str = Cookie(default="", alias=Constants.cookie_name),
+    ) -> ApiMessage:
+        user = self._auth_command.user_from_token(usage_session)
+        message = self._switch_bot_command.delete_feed(user, feed_id)
         return ApiMessage(message=message["message"])
 
     def _list_water_feeds(

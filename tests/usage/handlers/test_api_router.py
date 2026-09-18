@@ -35,6 +35,10 @@ from usage.handlers.sample_input import SampleInput
 from usage.handlers.sensor_alert_request import SensorAlertRequest
 from usage.handlers.sensor_order_request import SensorOrderRequest
 from usage.handlers.sensor_update_request import SensorUpdateRequest
+from usage.handlers.switch_bot_event_request import SwitchBotEventRequest
+from usage.handlers.switch_bot_feed_request import SwitchBotFeedRequest
+from usage.handlers.switch_bot_feed_update_request import SwitchBotFeedUpdateRequest
+from usage.handlers.switch_bot_hubs_request import SwitchBotHubsRequest
 from usage.handlers.user_house_request import UserHouseRequest
 from usage.handlers.user_request import UserRequest
 from usage.handlers.user_update_request import UserUpdateRequest
@@ -81,6 +85,8 @@ def helper_instance(
     MagicMock,
     MagicMock,
     MagicMock,
+    MagicMock,
+    MagicMock,
 ]:
     if settings is None:
         settings = helper_settings()
@@ -93,7 +99,10 @@ def helper_instance(
     sensor_command = MagicMock()
     water_command = MagicMock()
     enphase_command = MagicMock()
+    switch_bot_command = MagicMock()
+    switch_bot_event_command = MagicMock()
     enphase_limiter = MagicMock()
+    switchbot_limiter = MagicMock()
     with (
         patch("usage.handlers.api_router.EmailSender") as email_sender_class,
         patch("usage.handlers.api_router.MeterReader") as meter_reader_class,
@@ -106,6 +115,8 @@ def helper_instance(
         patch("usage.handlers.api_router.SensorCommand") as sensor_command_class,
         patch("usage.handlers.api_router.WaterCommand") as water_command_class,
         patch("usage.handlers.api_router.EnphaseCommand") as enphase_command_class,
+        patch("usage.handlers.api_router.SwitchBotCommand") as switch_bot_command_class,
+        patch("usage.handlers.api_router.SwitchBotEventCommand") as switch_bot_event_command_class,
     ):
         email_sender_class.side_effect = [MagicMock()]
         meter_reader_class.side_effect = [MagicMock()]
@@ -118,7 +129,9 @@ def helper_instance(
         sensor_command_class.side_effect = [sensor_command]
         water_command_class.side_effect = [water_command]
         enphase_command_class.side_effect = [enphase_command]
-        tested = ApiRouter(MagicMock(), settings, enphase_limiter)
+        switch_bot_command_class.side_effect = [switch_bot_command]
+        switch_bot_event_command_class.side_effect = [switch_bot_event_command]
+        tested = ApiRouter(MagicMock(), settings, enphase_limiter, switchbot_limiter)
     return (
         tested,
         auth_command,
@@ -130,6 +143,8 @@ def helper_instance(
         sensor_command,
         water_command,
         enphase_command,
+        switch_bot_command,
+        switch_bot_event_command,
     )
 
 
@@ -151,7 +166,10 @@ def test___init__() -> None:
     sensor_command = MagicMock()
     water_command = MagicMock()
     enphase_command = MagicMock()
+    switch_bot_command = MagicMock()
+    switch_bot_event_command = MagicMock()
     enphase_limiter = MagicMock()
+    switchbot_limiter = MagicMock()
     with (
         patch("usage.handlers.api_router.EmailSender") as email_sender_class,
         patch("usage.handlers.api_router.MeterReader") as meter_reader_class,
@@ -164,6 +182,8 @@ def test___init__() -> None:
         patch("usage.handlers.api_router.SensorCommand") as sensor_command_class,
         patch("usage.handlers.api_router.WaterCommand") as water_command_class,
         patch("usage.handlers.api_router.EnphaseCommand") as enphase_command_class,
+        patch("usage.handlers.api_router.SwitchBotCommand") as switch_bot_command_class,
+        patch("usage.handlers.api_router.SwitchBotEventCommand") as switch_bot_event_command_class,
     ):
         email_sender_class.side_effect = [email_sender]
         meter_reader_class.side_effect = [meter_reader]
@@ -176,7 +196,9 @@ def test___init__() -> None:
         sensor_command_class.side_effect = [sensor_command]
         water_command_class.side_effect = [water_command]
         enphase_command_class.side_effect = [enphase_command]
-        tested = ApiRouter(database, settings, enphase_limiter)
+        switch_bot_command_class.side_effect = [switch_bot_command]
+        switch_bot_event_command_class.side_effect = [switch_bot_event_command]
+        tested = ApiRouter(database, settings, enphase_limiter, switchbot_limiter)
     assert tested._database is database
     assert tested._settings is settings
     assert isinstance(tested._router, APIRouter)
@@ -189,6 +211,8 @@ def test___init__() -> None:
     assert tested._sensor_command is sensor_command
     assert tested._water_command is water_command
     assert tested._enphase_command is enphase_command
+    assert tested._switch_bot_command is switch_bot_command
+    assert tested._switch_bot_event_command is switch_bot_event_command
     assert email_sender_class.mock_calls == [call(settings)]
     assert meter_reader_class.mock_calls == [call(settings)]
     assert auth_command_class.mock_calls == [call(database, settings, email_sender)]
@@ -201,7 +225,13 @@ def test___init__() -> None:
     assert water_command_class.mock_calls == [call(database)]
     # the per-minute window is the app's, not the command's: it is handed over
     assert enphase_command_class.mock_calls == [call(database, enphase_limiter)]
+    # the day's window is the app's too, and for the same reason
+    assert switch_bot_command_class.mock_calls == [call(database, settings, switchbot_limiter)]
+    # a webhook can breach an alert range like any other reading, so the event
+    # side takes the same mail sender the pushed ones go through
+    assert switch_bot_event_command_class.mock_calls == [call(database, settings, email_sender)]
     assert enphase_limiter.mock_calls == []
+    assert switchbot_limiter.mock_calls == []
     assert database.mock_calls == []
     assert email_sender.mock_calls == []
     assert meter_reader.mock_calls == []
@@ -214,10 +244,14 @@ def test___init__() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
 
 
 def test_router() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     result = tested.router
     assert result is tested._router
     assert auth_command.mock_calls == []
@@ -229,10 +263,12 @@ def test_router() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
 
 
 def test__register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     result = sorted((route.path, tuple(sorted(route.methods))) for route in tested.router.routes)
     expected = [
         ("/api/admin/overview", ("GET",)),
@@ -286,6 +322,13 @@ def test__register() -> None:
         ("/api/session", ("GET",)),
         ("/api/stats/series", ("GET",)),
         ("/api/stats/tables", ("GET",)),
+        ("/api/switchbot/events/{event_token}", ("POST",)),
+        ("/api/switchbot/feeds", ("GET",)),
+        ("/api/switchbot/feeds", ("POST",)),
+        ("/api/switchbot/feeds/{feed_id}", ("DELETE",)),
+        ("/api/switchbot/feeds/{feed_id}", ("PUT",)),
+        ("/api/switchbot/feeds/{feed_id}/hubs", ("GET",)),
+        ("/api/switchbot/hubs", ("POST",)),
         ("/api/user-houses", ("POST",)),
         ("/api/users", ("POST",)),
         ("/api/users/{user_id}", ("DELETE",)),
@@ -310,10 +353,12 @@ def test__register() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
 
 
 def test__version() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
 
     # environment values
     with patch.dict("os.environ", {"APP_VERSION": "1.2.3", "BUILD_TIME": "2026-08-18T00:00:00Z"}, clear=False):
@@ -336,10 +381,12 @@ def test__version() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
 
 
 def test__session() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -352,6 +399,8 @@ def test__session() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     tests = [
         (user, True),
@@ -371,11 +420,13 @@ def test__session() -> None:
         assert sensor_command.mock_calls == []
         assert water_command.mock_calls == []
         assert enphase_command.mock_calls == []
+        assert switch_bot_command.mock_calls == []
+        assert switch_bot_event_command.mock_calls == []
         reset_mocks()
 
 
 def test__me() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -387,6 +438,8 @@ def test__me() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [helper_user()]
     result = tested._me("the-session")
@@ -401,11 +454,13 @@ def test__me() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_reminder() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -418,6 +473,8 @@ def test__set_reminder() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.set_reminder.side_effect = [{"message": "Monthly reminder enabled for this house."}]
@@ -433,11 +490,13 @@ def test__set_reminder() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_axis() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -450,6 +509,8 @@ def test__set_meter_axis() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_axis.side_effect = [{"message": "Meter axis saved."}]
@@ -465,11 +526,13 @@ def test__set_meter_axis() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_color() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -482,6 +545,8 @@ def test__set_meter_color() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_color.side_effect = [{"message": "Meter colour saved."}]
@@ -497,11 +562,13 @@ def test__set_meter_color() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_meter_order() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -514,6 +581,8 @@ def test__set_meter_order() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.set_order.side_effect = [{"message": "Meter order saved."}]
@@ -529,11 +598,13 @@ def test__set_meter_order() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__reminder_states() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -546,6 +617,8 @@ def test__reminder_states() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.reminder_states.side_effect = [{"disabled_house_ids": [3]}]
@@ -561,12 +634,14 @@ def test__reminder_states() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__request_link() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
-    tested_prod, auth_command_prod, passkey_command_prod, admin_command_prod, meter_command_prod, reading_command_prod, stats_command_prod, sensor_command_prod, water_command_prod, enphase_command_prod = helper_instance(helper_settings(dev_auth_links=False))
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    tested_prod, auth_command_prod, passkey_command_prod, admin_command_prod, meter_command_prod, reading_command_prod, stats_command_prod, sensor_command_prod, water_command_prod, enphase_command_prod, switch_bot_command_prod, switch_bot_event_command_prod = helper_instance(helper_settings(dev_auth_links=False))
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -578,6 +653,8 @@ def test__request_link() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         auth_command_prod.reset_mock()
         passkey_command_prod.reset_mock()
         admin_command_prod.reset_mock()
@@ -607,6 +684,8 @@ def test__request_link() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
     # dev links disabled: the link stays private
@@ -627,7 +706,7 @@ def test__request_link() -> None:
 
 
 def test__verify_link() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -640,6 +719,8 @@ def test__verify_link() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     auth_command.verify_link.side_effect = ["the-session-token"]
@@ -655,6 +736,8 @@ def test__verify_link() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_session",
@@ -670,7 +753,7 @@ def test__verify_link() -> None:
 
 
 def test__logout() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -683,6 +766,8 @@ def test__logout() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     # with a session cookie
@@ -699,6 +784,8 @@ def test__logout() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_session")]
     reset_mocks()
 
@@ -715,12 +802,14 @@ def test__logout() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_session")]
     reset_mocks()
 
 
 def test__passkey_registration_options() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
     response = MagicMock()
 
@@ -734,6 +823,8 @@ def test__passkey_registration_options() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
@@ -750,6 +841,8 @@ def test__passkey_registration_options() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_webauthn",
@@ -765,7 +858,7 @@ def test__passkey_registration_options() -> None:
 
 
 def test__register_passkey() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
     response = MagicMock()
 
@@ -779,6 +872,8 @@ def test__register_passkey() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
@@ -812,12 +907,14 @@ def test__register_passkey() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     assert response.mock_calls == [call.delete_cookie("usage_webauthn")]
     reset_mocks()
 
 
 def test__list_passkeys() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -830,6 +927,8 @@ def test__list_passkeys() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     passkey_command.list_passkeys.side_effect = [[{"id": 1, "created_at": "2026-08-01", "last_used_at": None}]]
@@ -845,11 +944,13 @@ def test__list_passkeys() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_passkey() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -862,6 +963,8 @@ def test__delete_passkey() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     passkey_command.delete_passkey.side_effect = [{"message": "Passkey removed."}]
@@ -877,11 +980,13 @@ def test__delete_passkey() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__admin_overview() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -894,6 +999,8 @@ def test__admin_overview() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.overview.side_effect = [{"users": [], "houses": [], "meters": []}]
@@ -909,11 +1016,13 @@ def test__admin_overview() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -926,6 +1035,8 @@ def test__create_user() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.create_user.side_effect = [{"id": 12}]
@@ -943,11 +1054,13 @@ def test__create_user() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -960,6 +1073,8 @@ def test__update_user() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.update_user.side_effect = [{"message": "User updated."}]
@@ -977,11 +1092,13 @@ def test__update_user() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_user() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -994,6 +1111,8 @@ def test__delete_user() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.delete_user.side_effect = [{"message": "User deleted."}]
@@ -1009,11 +1128,13 @@ def test__delete_user() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1026,6 +1147,8 @@ def test__create_house() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.create_house.side_effect = [{"id": 3}]
@@ -1034,18 +1157,20 @@ def test__create_house() -> None:
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
-    assert admin_command.mock_calls == [call.create_house(user, {"name": "Fremur", "timezone": "", "shows_sensors": False, "shows_water": False, "shows_power": False})]
+    assert admin_command.mock_calls == [call.create_house(user, {"name": "Fremur", "timezone": "", "shows_sensors": False, "shows_switchbot": False, "shows_water": False, "shows_power": False})]
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1058,6 +1183,8 @@ def test__update_house() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.update_house.side_effect = [{"message": "House updated."}]
@@ -1066,18 +1193,20 @@ def test__update_house() -> None:
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
     assert passkey_command.mock_calls == []
-    assert admin_command.mock_calls == [call.update_house(user, 3, {"name": "Fremur", "timezone": "Europe/Paris", "shows_sensors": False, "shows_water": False, "shows_power": False})]
+    assert admin_command.mock_calls == [call.update_house(user, 3, {"name": "Fremur", "timezone": "Europe/Paris", "shows_sensors": False, "shows_switchbot": False, "shows_water": False, "shows_power": False})]
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1090,6 +1219,8 @@ def test__delete_house() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.delete_house.side_effect = [{"message": "House deleted."}]
@@ -1105,11 +1236,13 @@ def test__delete_house() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_user_house() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1122,6 +1255,8 @@ def test__set_user_house() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     admin_command.set_user_house.side_effect = [{"message": "User linked to the house."}]
@@ -1139,11 +1274,13 @@ def test__set_user_house() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__list_meters() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1156,6 +1293,8 @@ def test__list_meters() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.list_meters.side_effect = [{"meters": []}]
@@ -1171,11 +1310,13 @@ def test__list_meters() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1188,6 +1329,8 @@ def test__create_meter() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.create_meter.side_effect = [{"id": 9}]
@@ -1224,11 +1367,13 @@ def test__create_meter() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1241,6 +1386,8 @@ def test__update_meter() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.update_meter.side_effect = [{"message": "Meter updated."}]
@@ -1258,11 +1405,13 @@ def test__update_meter() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_meter() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1275,6 +1424,8 @@ def test__delete_meter() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.delete_meter.side_effect = [{"message": "Meter deleted, along with its readings."}]
@@ -1290,11 +1441,13 @@ def test__delete_meter() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1307,6 +1460,8 @@ def test__create_register() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.create_register.side_effect = [{"id": 22}]
@@ -1324,11 +1479,13 @@ def test__create_register() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1341,6 +1498,8 @@ def test__update_register() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.update_register.side_effect = [{"message": "Register updated."}]
@@ -1358,11 +1517,13 @@ def test__update_register() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_register() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1375,6 +1536,8 @@ def test__delete_register() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     meter_command.delete_register.side_effect = [{"message": "Register deleted."}]
@@ -1390,11 +1553,13 @@ def test__delete_register() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__dashboard() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1407,6 +1572,8 @@ def test__dashboard() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.dashboard.side_effect = [{"houses": [], "meters": []}]
@@ -1422,11 +1589,13 @@ def test__dashboard() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__list_readings() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1439,6 +1608,8 @@ def test__list_readings() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.list_readings.side_effect = [{"readings": [], "total": 0, "page": 1, "pages": 1}]
@@ -1454,11 +1625,13 @@ def test__list_readings() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1471,6 +1644,8 @@ def test__create_reading() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.create_reading.side_effect = [{"id": 31}]
@@ -1503,11 +1678,13 @@ def test__create_reading() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__extract_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1520,6 +1697,8 @@ def test__extract_reading() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.extract.side_effect = [{"values": [{"register_id": 21, "label": "HC", "value": 17273.0}]}]
@@ -1539,11 +1718,13 @@ def test__extract_reading() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1556,6 +1737,8 @@ def test__update_reading() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.update_reading.side_effect = [{"message": "Reading updated."}]
@@ -1575,11 +1758,13 @@ def test__update_reading() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_reading() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1592,6 +1777,8 @@ def test__delete_reading() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     reading_command.delete_reading.side_effect = [{"message": "Reading deleted."}]
@@ -1607,11 +1794,13 @@ def test__delete_reading() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__stats_tables() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1624,6 +1813,8 @@ def test__stats_tables() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     stats_command.tables.side_effect = [{"kinds": []}]
@@ -1639,11 +1830,13 @@ def test__stats_tables() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__stats_series() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1656,6 +1849,8 @@ def test__stats_series() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     stats_command.series.side_effect = [{"series": []}]
@@ -1671,11 +1866,13 @@ def test__stats_series() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__passkey_auth_options() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1688,6 +1885,8 @@ def test__passkey_auth_options() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     passkey_command.authentication_options.side_effect = [({"challenge": "the-challenge"}, "the-challenge-token")]
@@ -1703,6 +1902,8 @@ def test__passkey_auth_options() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     exp_calls = [
         call.set_cookie(
             "usage_webauthn",
@@ -1718,7 +1919,7 @@ def test__passkey_auth_options() -> None:
 
 
 def test__passkey_auth_verify() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -1731,6 +1932,8 @@ def test__passkey_auth_verify() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     passkey_command.verify_authentication.side_effect = ["the-session-token"]
@@ -1764,6 +1967,8 @@ def test__passkey_auth_verify() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     exp_calls = [
         call.delete_cookie("usage_webauthn"),
         call.set_cookie(
@@ -1780,7 +1985,7 @@ def test__passkey_auth_verify() -> None:
 
 
 def test__ingest_samples() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -1792,6 +1997,8 @@ def test__ingest_samples() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     body = IngestRequest(samples=[SampleInput(entity_id="sensor.garage_temperature", value=84.9, name="Garage", unit="°F")])
     sensor_command.ingest.side_effect = [{"accepted": 1, "created": 0}]
@@ -1827,7 +2034,7 @@ def test__ingest_samples() -> None:
 
 
 def test__issue_sensor_token() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1840,6 +2047,8 @@ def test__issue_sensor_token() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.issue_token.side_effect = [{"token": "the-token"}]
@@ -1857,7 +2066,7 @@ def test__issue_sensor_token() -> None:
 
 
 def test__list_sensors() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1870,6 +2079,8 @@ def test__list_sensors() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.list_sensors.side_effect = [{"sensors": []}]
@@ -1887,7 +2098,7 @@ def test__list_sensors() -> None:
 
 
 def test__set_sensor_order() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1900,6 +2111,8 @@ def test__set_sensor_order() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.set_order.side_effect = [{"message": "Sensor order saved."}]
@@ -1917,7 +2130,7 @@ def test__set_sensor_order() -> None:
 
 
 def test__sensor_series() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1930,6 +2143,8 @@ def test__sensor_series() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.series.side_effect = [{"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "series": []}]
@@ -1947,7 +2162,7 @@ def test__sensor_series() -> None:
 
 
 def test__update_sensor() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1960,6 +2175,8 @@ def test__update_sensor() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.update_sensor.side_effect = [{"message": "Sensor updated."}]
@@ -1979,7 +2196,7 @@ def test__update_sensor() -> None:
 
 
 def test__sensor_alerts() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -1992,6 +2209,8 @@ def test__sensor_alerts() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.alerts.side_effect = [{"enabled": True}]
@@ -2009,7 +2228,7 @@ def test__sensor_alerts() -> None:
 
 
 def test__set_sensor_alerts() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2022,6 +2241,8 @@ def test__set_sensor_alerts() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.set_alerts.side_effect = [{"message": "Threshold alerts enabled for this house."}]
@@ -2038,8 +2259,58 @@ def test__set_sensor_alerts() -> None:
     reset_mocks()
 
 
-def test__list_water_feeds() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+def test__switch_bot_event() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    switch_bot_event_command.ingest.side_effect = [{"accepted": 2}]
+    body = SwitchBotEventRequest(
+        eventType="changeReport",
+        eventVersion="1",
+        context={"deviceMac": "C271111EC0AB", "temperature": 26.1},
+    )
+    # no session at all: SwitchBot signs nothing, so the secret is the URL
+    result = tested._switch_bot_event("theEventToken", body)
+    expected = {"accepted": 2}
+    assert result == expected
+    assert auth_command.mock_calls == []
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    exp_calls = [
+        call.ingest(
+            "theEventToken",
+            {
+                "eventType": "changeReport",
+                "eventVersion": "1",
+                "context": {"deviceMac": "C271111EC0AB", "temperature": 26.1},
+            },
+        ),
+    ]
+    assert switch_bot_event_command.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__switch_bot_hubs() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2052,6 +2323,235 @@ def test__list_water_feeds() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.hubs.side_effect = [{"hubs": [{'hub_id': 'FA7310762361', 'name': 'Hub Fremur', 'devices': ['Grenier']}]}]
+    body = SwitchBotHubsRequest(house_id=3, token="theToken", secret="theSecret")
+    result = tested._switch_bot_hubs(body, "the-session")
+    expected = {"hubs": [{'hub_id': 'FA7310762361', 'name': 'Hub Fremur', 'devices': ['Grenier']}]}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    exp_calls = [call.hubs(user, {"house_id": 3, "token": "theToken", "secret": "theSecret"})]
+    assert switch_bot_command.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__list_switch_bot_feeds() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.list_feeds.side_effect = [{"feeds": [{"id": 11, "token_tail": "gToken"}]}]
+    result = tested._list_switch_bot_feeds(3, "the-session")
+    expected = {"feeds": [{"id": 11, "token_tail": "gToken"}]}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == [call.list_feeds(user, 3)]
+    reset_mocks()
+
+
+def test__create_switch_bot_feed() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.create_feed.side_effect = [{"id": 11, "message": "SwitchBot feed added."}]
+    body = SwitchBotFeedRequest(house_id=3, token="theToken", secret="theSecret", hub_ids=["FA7310762361"])
+    result = tested._create_switch_bot_feed(body, "the-session")
+    expected = {"id": 11, "message": "SwitchBot feed added."}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    exp_calls = [
+        call.create_feed(
+            user,
+            {"house_id": 3, "token": "theToken", "secret": "theSecret", "hub_ids": ["FA7310762361"]},
+        ),
+    ]
+    assert switch_bot_command.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__switch_bot_feed_hubs() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.feed_hubs.side_effect = [{"hubs": [{'hub_id': 'FA7310762361', 'name': 'Hub Fremur', 'devices': ['Grenier']}]}]
+    result = tested._switch_bot_feed_hubs(11, "the-session")
+    expected = {"hubs": [{'hub_id': 'FA7310762361', 'name': 'Hub Fremur', 'devices': ['Grenier']}]}
+    assert result == expected
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == [call.feed_hubs(user, 11)]
+    reset_mocks()
+
+
+def test__update_switch_bot_feed() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.update_feed.side_effect = [{"message": "SwitchBot feed updated."}]
+    body = SwitchBotFeedUpdateRequest(hub_ids=["FA7310762361"], active=False)
+    result = tested._update_switch_bot_feed(11, body, "the-session")
+    assert isinstance(result, ApiMessage)
+    assert result.message == "SwitchBot feed updated."
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    exp_calls = [
+        call.update_feed(
+            user,
+            11,
+            {"token": "", "secret": "", "hub_ids": ["FA7310762361"], "active": False},
+        ),
+    ]
+    assert switch_bot_command.mock_calls == exp_calls
+    reset_mocks()
+
+
+def test__delete_switch_bot_feed() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
+
+    auth_command.user_from_token.side_effect = [user]
+    switch_bot_command.delete_feed.side_effect = [{"message": "SwitchBot feed deleted."}]
+    result = tested._delete_switch_bot_feed(11, "the-session")
+    assert isinstance(result, ApiMessage)
+    assert result.message == "SwitchBot feed deleted."
+    assert auth_command.mock_calls == [call.user_from_token("the-session")]
+    assert passkey_command.mock_calls == []
+    assert admin_command.mock_calls == []
+    assert meter_command.mock_calls == []
+    assert reading_command.mock_calls == []
+    assert stats_command.mock_calls == []
+    assert sensor_command.mock_calls == []
+    assert water_command.mock_calls == []
+    assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == [call.delete_feed(user, 11)]
+    reset_mocks()
+
+
+def test__list_water_feeds() -> None:
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
+    user = helper_user()
+
+    def reset_mocks() -> None:
+        auth_command.reset_mock()
+        passkey_command.reset_mock()
+        admin_command.reset_mock()
+        meter_command.reset_mock()
+        reading_command.reset_mock()
+        stats_command.reset_mock()
+        sensor_command.reset_mock()
+        water_command.reset_mock()
+        enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.list_feeds.side_effect = [{'feeds': [{'id': 11, 'hostname': 'eyeonwater.com'}]}]
@@ -2067,11 +2567,13 @@ def test__list_water_feeds() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.list_feeds(user, 3)]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_water_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2084,6 +2586,8 @@ def test__create_water_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.create_feed.side_effect = [{"id": 11, "message": "Water feed added. The first import starts within a minute."}]
@@ -2116,11 +2620,13 @@ def test__create_water_feed() -> None:
     ]
     assert water_command.mock_calls == exp_calls
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_water_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2133,6 +2639,8 @@ def test__update_water_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.update_feed.side_effect = [{"message": "Water feed updated."}]
@@ -2167,11 +2675,13 @@ def test__update_water_feed() -> None:
     ]
     assert water_command.mock_calls == exp_calls
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_water_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2184,6 +2694,8 @@ def test__delete_water_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.delete_feed.side_effect = [{"message": "Water feed deleted, with everything it had collected."}]
@@ -2199,11 +2711,13 @@ def test__delete_water_feed() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.delete_feed(user, 11)]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__restart_water_backfill() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2216,6 +2730,8 @@ def test__restart_water_backfill() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.restart_backfill.side_effect = [{"message": "History import restarted. It starts within a minute and walks back a month at a time."}]
@@ -2231,11 +2747,13 @@ def test__restart_water_backfill() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.restart_backfill(user, 11)]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__water_series() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2248,6 +2766,8 @@ def test__water_series() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     series = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "unit": "m³", "points": []}
     auth_command.user_from_token.side_effect = [user]
@@ -2264,11 +2784,13 @@ def test__water_series() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.series(user, 3, 7, True, 2)]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__water_alerts() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2281,6 +2803,8 @@ def test__water_alerts() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.alerts.side_effect = [{"enabled": True}]
@@ -2296,11 +2820,13 @@ def test__water_alerts() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.alerts(user, 3)]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_water_alerts() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2313,6 +2839,8 @@ def test__set_water_alerts() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     water_command.set_alerts.side_effect = [{"message": "Leak alerts enabled for this house."}]
@@ -2328,11 +2856,13 @@ def test__set_water_alerts() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == [call.set_alerts(user, {"house_id": 3, "enabled": True})]
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__rp_id() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     tests = [
         ("usage.example", "usage.example"),
         (None, "localhost"),
@@ -2349,10 +2879,12 @@ def test__rp_id() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
 
 
 def test__set_session_cookie() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -2365,6 +2897,8 @@ def test__set_session_cookie() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     result = tested._set_session_cookie(response, "the-session-token")
@@ -2389,11 +2923,13 @@ def test__set_session_cookie() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__set_challenge_cookie() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     response = MagicMock()
 
     def reset_mocks() -> None:
@@ -2406,6 +2942,8 @@ def test__set_challenge_cookie() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         response.reset_mock()
 
     result = tested._set_challenge_cookie(response, "the-challenge-token")
@@ -2430,11 +2968,13 @@ def test__set_challenge_cookie() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__enphase_authorize_url() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2447,6 +2987,8 @@ def test__enphase_authorize_url() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     enphase_command.authorize_url.side_effect = [{"url": "https://api.enphaseenergy.com/oauth/authorize?theQuery"}]
@@ -2462,11 +3004,13 @@ def test__enphase_authorize_url() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.authorize_url(user, "theClientId")]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__list_enphase_feeds() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2479,6 +3023,8 @@ def test__list_enphase_feeds() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     feeds = {"feeds": [{"id": 11, "system_id": "3456789"}]}
     auth_command.user_from_token.side_effect = [user]
@@ -2495,11 +3041,13 @@ def test__list_enphase_feeds() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.list_feeds(user, 3)]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__create_enphase_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2512,6 +3060,8 @@ def test__create_enphase_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     body = EnphaseFeedRequest(
         house_id=3,
@@ -2534,11 +3084,13 @@ def test__create_enphase_feed() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.create_feed(user, body.model_dump())]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__update_enphase_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2551,6 +3103,8 @@ def test__update_enphase_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     body = EnphaseFeedUpdateRequest(client_id="theClientId", system_id="3456789")
     auth_command.user_from_token.side_effect = [user]
@@ -2567,11 +3121,13 @@ def test__update_enphase_feed() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.update_feed(user, 11, body.model_dump())]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__delete_enphase_feed() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2584,6 +3140,8 @@ def test__delete_enphase_feed() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     enphase_command.delete_feed.side_effect = [{"message": "Enphase feed deleted."}]
@@ -2599,11 +3157,13 @@ def test__delete_enphase_feed() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.delete_feed(user, 11)]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__restart_enphase_backfill() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2616,6 +3176,8 @@ def test__restart_enphase_backfill() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     auth_command.user_from_token.side_effect = [user]
     enphase_command.restart_backfill.side_effect = [{"message": "History import restarted."}]
@@ -2631,11 +3193,13 @@ def test__restart_enphase_backfill() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.restart_backfill(user, 11)]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__enphase_series() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
     user = helper_user()
 
     def reset_mocks() -> None:
@@ -2648,6 +3212,8 @@ def test__enphase_series() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
 
     series = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "unit": "kWh", "points": []}
     auth_command.user_from_token.side_effect = [user]
@@ -2664,11 +3230,13 @@ def test__enphase_series() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == [call.series(user, 3, 7, True, 2)]
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     reset_mocks()
 
 
 def test__ingest_power() -> None:
-    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command = helper_instance()
+    tested, auth_command, passkey_command, admin_command, meter_command, reading_command, stats_command, sensor_command, water_command, enphase_command, switch_bot_command, switch_bot_event_command = helper_instance()
 
     def reset_mocks() -> None:
         auth_command.reset_mock()
@@ -2680,6 +3248,8 @@ def test__ingest_power() -> None:
         sensor_command.reset_mock()
         water_command.reset_mock()
         enphase_command.reset_mock()
+        switch_bot_command.reset_mock()
+        switch_bot_event_command.reset_mock()
         ingest_command.reset_mock()
 
     # Home Assistant, not a signed-in user: the token identifies the house, so
@@ -2699,5 +3269,7 @@ def test__ingest_power() -> None:
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
     assert enphase_command.mock_calls == []
+    assert switch_bot_command.mock_calls == []
+    assert switch_bot_event_command.mock_calls == []
     assert ingest_command.mock_calls == [call.ingest("Bearer theToken", body.model_dump())]
     reset_mocks()

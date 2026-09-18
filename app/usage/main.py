@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from usage.commands.enphase_sync_command import EnphaseSyncCommand
 from usage.commands.reminder_command import ReminderCommand
+from usage.commands.switch_bot_sync_command import SwitchBotSyncCommand
 from usage.commands.water_sync_command import WaterSyncCommand
 from usage.constants.constants import Constants
 from usage.handlers.api_router import ApiRouter
@@ -36,6 +37,14 @@ class AppFactory:
             Constants.enphase_calls_per_minute,
             Constants.enphase_rate_window_seconds,
         )
+        # SwitchBot rations by the day rather than by the minute, and the day's
+        # allowance belongs to the token for the same reason: both colours and
+        # the admin setting a feed up all spend the one account's calls.
+        self._switchbot_limiter = RateLimiter(
+            self._database,
+            Constants.switchbot_calls_per_day,
+            Constants.switchbot_rate_window_seconds,
+        )
 
     def create(self) -> FastAPI:
         @asynccontextmanager
@@ -44,11 +53,19 @@ class AppFactory:
             ReminderCommand(self._database, self._settings, EmailSender(self._settings)).start()
             WaterSyncCommand(self._database, self._settings, EmailSender(self._settings)).start()
             EnphaseSyncCommand(self._database, self._enphase_limiter).start()
+            SwitchBotSyncCommand(
+                self._database,
+                self._settings,
+                EmailSender(self._settings),
+                self._switchbot_limiter,
+            ).start()
             yield
 
         result = FastAPI(title="Usage", lifespan=lifespan)
         self._register_middleware(result)
-        result.include_router(ApiRouter(self._database, self._settings, self._enphase_limiter).router)
+        result.include_router(
+            ApiRouter(self._database, self._settings, self._enphase_limiter, self._switchbot_limiter).router,
+        )
         result.mount("/static", StaticFiles(directory=self._static_dir.as_posix()), name="static")
         result.add_api_route("/", self._index, methods=["GET"], response_class=HTMLResponse)
         # The service worker lives at the root so its scope covers the whole app.

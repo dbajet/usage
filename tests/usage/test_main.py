@@ -94,8 +94,9 @@ def test_create() -> None:
     assert loader.mock_calls == [call.load()]
     assert database_class.mock_calls == [call(settings)]
     assert static_page_class.mock_calls == [call(Path("/media/APPLICATIONS/git_dbajet/usage/app/usage/static"))]
-    # the process's one per-minute window reaches the router and the sync alike
-    assert api_router_class.mock_calls == [call(database, settings, tested._enphase_limiter)]
+    # the process's one window per API reaches the router and the sync alike
+    exp_calls = [call(database, settings, tested._enphase_limiter, tested._switchbot_limiter)]
+    assert api_router_class.mock_calls == exp_calls
     assert api_router.mock_calls == []
     assert static_page.mock_calls == []
     # the database is initialized by the lifespan only
@@ -109,27 +110,35 @@ def test_create() -> None:
     reminder_command = MagicMock()
     water_sync_command = MagicMock()
     enphase_sync_command = MagicMock()
+    switch_bot_sync_command = MagicMock()
     with (
         patch("usage.main.EmailSender") as email_sender_class,
         patch("usage.main.ReminderCommand") as reminder_command_class,
         patch("usage.main.WaterSyncCommand") as water_sync_command_class,
         patch("usage.main.EnphaseSyncCommand") as enphase_sync_command_class,
+        patch("usage.main.SwitchBotSyncCommand") as switch_bot_sync_command_class,
     ):
-        email_sender_class.side_effect = [email_sender, email_sender]
+        email_sender_class.side_effect = [email_sender, email_sender, email_sender]
         reminder_command_class.side_effect = [reminder_command]
         water_sync_command_class.side_effect = [water_sync_command]
         enphase_sync_command_class.side_effect = [enphase_sync_command]
+        switch_bot_sync_command_class.side_effect = [switch_bot_sync_command]
         asyncio.run(run_lifespan(result))
     assert database.mock_calls == [call.initialize()]
-    assert email_sender_class.mock_calls == [call(settings), call(settings)]
+    assert email_sender_class.mock_calls == [call(settings), call(settings), call(settings)]
     assert reminder_command_class.mock_calls == [call(database, settings, email_sender)]
     assert water_sync_command_class.mock_calls == [call(database, settings, email_sender)]
     # The solar sync sends no email, so it takes the database alone.
     assert enphase_sync_command_class.mock_calls == [call(database, tested._enphase_limiter)]
+    # The thermometers it pulls can breach an alert range like any other, so it
+    # takes the email sender the pushed ones already go through.
+    exp_calls = [call(database, settings, email_sender, tested._switchbot_limiter)]
+    assert switch_bot_sync_command_class.mock_calls == exp_calls
     assert email_sender.mock_calls == []
     assert reminder_command.mock_calls == [call.start()]
     assert water_sync_command.mock_calls == [call.start()]
     assert enphase_sync_command.mock_calls == [call.start()]
+    assert switch_bot_sync_command.mock_calls == [call.start()]
 
 
 def test__register_middleware() -> None:
