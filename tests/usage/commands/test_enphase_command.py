@@ -48,7 +48,7 @@ SQL_REQUIRE_FEED = """
             """
 SQL_SERIES_DAILY = """
             WITH live AS (
-            SELECT date_bin(%s, enphase_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, enphase_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(enphase_points.production) AS production,
                    SUM(enphase_points.consumption) AS consumption,
                    AVG(enphase_points.battery_level) AS battery_level
@@ -59,7 +59,7 @@ SQL_SERIES_DAILY = """
               AND enphase_feeds.source = %s
             GROUP BY bucket
             ), cloud AS (
-            SELECT date_bin(%s, enphase_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, enphase_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(enphase_points.production) AS production,
                    SUM(enphase_points.consumption) AS consumption,
                    AVG(enphase_points.battery_level) AS battery_level
@@ -79,7 +79,7 @@ SQL_SERIES_DAILY = """
             """
 SQL_SERIES_FINE = """
             WITH live AS (
-            SELECT date_bin(%s, enphase_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, enphase_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(enphase_points.production) AS production,
                    SUM(enphase_points.consumption) AS consumption,
                    AVG(enphase_points.battery_level) AS battery_level
@@ -90,7 +90,7 @@ SQL_SERIES_FINE = """
               AND enphase_feeds.source = %s
             GROUP BY bucket
             ), cloud AS (
-            SELECT date_bin(%s, enphase_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, enphase_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(enphase_points.production) AS production,
                    SUM(enphase_points.consumption) AS consumption,
                    AVG(enphase_points.battery_level) AS battery_level
@@ -727,6 +727,7 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
     reset_mocks()
 
 
+@patch("usage.commands.enphase_command.SeriesZone")
 @patch("usage.commands.enphase_command.SeriesPulse")
 @patch("usage.commands.enphase_command.datetime", wraps=datetime)
 @patch.object(EnphaseCommand, "_due")
@@ -740,6 +741,7 @@ def test_series(
     due: MagicMock,
     mock_datetime: MagicMock,
     pulse: MagicMock,
+    zone_class: MagicMock,
 ) -> None:
     tested = helper_instance()
     database = tested._database
@@ -751,6 +753,8 @@ def test_series(
         due.reset_mock()
         mock_datetime.reset_mock()
         pulse.reset_mock()
+        zone_class.reset_mock()
+        zone_class.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -758,6 +762,7 @@ def test_series(
 
     # unknown range
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 14, False, 0)
     assert exc_info.value.status_code == 400
@@ -773,6 +778,7 @@ def test_series(
 
     # negative offset
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 1, False, -1)
     assert exc_info.value.status_code == 400
@@ -819,6 +825,7 @@ def test_series(
     ]
     for days, bucket_minutes, previous, offset, sql, daily, exp_since, exp_until in tests:
         require_house.side_effect = [None]
+        zone_class.return_value.of.side_effect = ["Europe/Paris"]
         mock_datetime.now.side_effect = [now]
         latest.side_effect = [exp_latest]
         live.side_effect = [exp_live]
@@ -828,6 +835,7 @@ def test_series(
         database.fetch_all.side_effect = [rows]
         result = tested.series(user, 3, days, previous, offset)
         expected = {
+            "zone": "Europe/Paris",
             "days": days,
             "bucket_minutes": bucket_minutes,
             "previous": previous,
@@ -851,7 +859,7 @@ def test_series(
             call.stamp(exp_points, exp_latest, exp_live),
             call.next_poll([exp_due, None], now),
         ]
-        window = (timedelta(minutes=bucket_minutes), 3, 1440, exp_since, exp_until)
+        window = (timedelta(minutes=bucket_minutes), "Europe/Paris", "Europe/Paris", 3, 1440, exp_since, exp_until)
         # the same window asked twice, once of each source, so neither is summed
         exp_calls = [call.fetch_all(sql, (*window, "local", *window, "cloud"))]
         assert database.mock_calls == exp_calls

@@ -553,6 +553,7 @@ def test_set_order(require_house: MagicMock) -> None:
     reset_mocks()
 
 
+@patch("usage.commands.sensor_command.SeriesZone")
 @patch("usage.commands.sensor_command.SeriesPulse")
 @patch("usage.commands.sensor_command.datetime", wraps=datetime)
 @patch.object(SensorCommand, "_due")
@@ -564,6 +565,7 @@ def test_series(
     due: MagicMock,
     mock_datetime: MagicMock,
     pulse: MagicMock,
+    zone_class: MagicMock,
 ) -> None:
     tested = helper_instance()
     database = tested._database
@@ -574,13 +576,15 @@ def test_series(
         due.reset_mock()
         mock_datetime.reset_mock()
         pulse.reset_mock()
+        zone_class.reset_mock()
         database.reset_mock()
 
     user = helper_user()
     now = datetime(2026, 9, 3, 12, 0, 0, tzinfo=UTC)
 
-    # unknown range
+    # unknown range: the clock is settled before the range is judged
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 14, False, 0)
     assert exc_info.value.status_code == 400
@@ -590,11 +594,13 @@ def test_series(
     assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
     assert pulse.mock_calls == []
+    assert zone_class.mock_calls == [call(database), call().of("", 3)]
     assert database.mock_calls == []
     reset_mocks()
 
     # negative offset
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 7, False, -1)
     assert exc_info.value.status_code == 400
@@ -604,6 +610,7 @@ def test_series(
     assert due.mock_calls == []
     assert mock_datetime.mock_calls == []
     assert pulse.mock_calls == []
+    assert zone_class.mock_calls == [call(database), call().of("", 3)]
     assert database.mock_calls == []
     reset_mocks()
 
@@ -634,6 +641,7 @@ def test_series(
                    "battery_at": "", "reported_at": "2026-09-03T11:58:00+00:00"}]
     for previous, offset, exp_since, exp_until in tests:
         require_house.side_effect = [None]
+        zone_class.return_value.of.side_effect = ["Europe/Paris"]
         latest.side_effect = [exp_latest]
         due.side_effect = [datetime(2026, 9, 3, 12, 9, 59, tzinfo=UTC)]
         mock_datetime.now.side_effect = [now]
@@ -644,6 +652,7 @@ def test_series(
         result = tested.series(user, 3, 7, previous, offset)
         expected = {
             "days": 7,
+            "zone": "Europe/Paris",
             "bucket_minutes": 60,
             "previous": previous,
             "offset": offset,
@@ -669,6 +678,7 @@ def test_series(
         assert latest.mock_calls == [call(3, [{"id": 9, "name": "Garage", "unit": "°F"}, {"id": 10, "name": "Freezer", "unit": "°F"}])]
         assert due.mock_calls == [call(3)]
         assert mock_datetime.mock_calls == [call.now(UTC)]
+        assert zone_class.mock_calls == [call(database), call().of("", 3)]
         assert pulse.mock_calls == [
             call.stamp(exp_series, exp_latest),
             call.next_poll([datetime(2026, 9, 3, 12, 9, 59, tzinfo=UTC)], now),
@@ -685,14 +695,14 @@ def test_series(
             call.fetch_all(
                 """
             SELECT samples.sensor_id,
-                   date_bin(%s, samples.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+                   date_bin(%s, samples.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    AVG(samples.value) AS average, MIN(samples.value) AS low, MAX(samples.value) AS high
             FROM samples JOIN sensors ON sensors.id = samples.sensor_id
             WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s AND samples.measured_at < %s
             GROUP BY samples.sensor_id, bucket
             ORDER BY samples.sensor_id, bucket
             """,
-                (timedelta(minutes=60), 3, exp_since, exp_until),
+                (timedelta(minutes=60), "Europe/Paris", "Europe/Paris", 3, exp_since, exp_until),
             ),
         ]
         assert database.mock_calls == exp_calls

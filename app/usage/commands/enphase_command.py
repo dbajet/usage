@@ -9,6 +9,7 @@ from usage.libraries.database import Database
 from usage.libraries.enphase_client import EnphaseClient
 from usage.libraries.rate_limiter import RateLimiter
 from usage.libraries.series_pulse import SeriesPulse
+from usage.libraries.series_zone import SeriesZone
 from usage.structures.app_exception import AppException
 from usage.structures.enphase_system import EnphaseSystem
 from usage.structures.enphase_tokens import EnphaseTokens
@@ -215,7 +216,15 @@ class EnphaseCommand:
         )
         return {"message": "History import restarted. It starts within a minute, budget permitting."}
 
-    def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
+    def series(
+        self,
+        user: SessionUser,
+        house_id: int,
+        days: int,
+        previous: bool,
+        offset: int,
+        zone: str = "",
+    ) -> dict[str, Any]:
         """The house's solar over one `days`-long period, bucketed like the rest.
 
         Production and consumption are counters and so are summed; the battery
@@ -225,6 +234,7 @@ class EnphaseCommand:
         same hour exists in each resolution and adding them would double it.
         """
         self._require_house(user, house_id)
+        zone = SeriesZone(self._database).of(zone, house_id)
         bucket_minutes = dict(Constants.enphase_ranges).get(days)
         if bucket_minutes is None:
             choices = ", ".join(str(range_days) for range_days, _ in Constants.enphase_ranges)
@@ -239,6 +249,10 @@ class EnphaseCommand:
         daily = bucket_minutes >= Constants.enphase_daily_bucket_minutes
         window = (
             timedelta(minutes=bucket_minutes),
+            # Once out of the instants and once back: the bucket is cut on the
+            # local timeline so a day is that clock's midnight, not UTC's.
+            zone,
+            zone,
             house_id,
             Constants.enphase_daily_bucket_minutes,
             since.isoformat(),
@@ -250,6 +264,7 @@ class EnphaseCommand:
         live = self._live(house_id)
         return {
             "days": days,
+            "zone": zone,
             "bucket_minutes": bucket_minutes,
             "previous": previous,
             "offset": offset,
@@ -311,7 +326,7 @@ class EnphaseCommand:
         underneath - which is also why they must be grouped before they meet.
         """
         side = f"""
-            SELECT date_bin(%s, enphase_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, enphase_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(enphase_points.production) AS production,
                    SUM(enphase_points.consumption) AS consumption,
                    AVG(enphase_points.battery_level) AS battery_level

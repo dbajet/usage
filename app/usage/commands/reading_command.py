@@ -24,7 +24,7 @@ class ReadingCommand:
             for house in self._database.decrypt_rows(
                 self._database.fetch_all(
                     """
-                    SELECT houses.id, houses.name_sealed AS name,
+                    SELECT houses.id, houses.name_sealed AS name, houses.timezone,
                            -- Either source is thermometers: the Realtime half, the nav
                            -- item and the settings tab are about the graph, not about
                            -- which way the readings reach it.

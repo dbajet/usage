@@ -8,6 +8,7 @@ from usage.constants.constants import Constants
 from usage.libraries.database import Database
 from usage.libraries.eye_on_water_client import EyeOnWaterClient
 from usage.libraries.series_pulse import SeriesPulse
+from usage.libraries.series_zone import SeriesZone
 from usage.structures.app_exception import AppException
 from usage.structures.session_user import SessionUser
 from usage.structures.water_meter import WaterMeter
@@ -186,14 +187,24 @@ class WaterCommand:
         )
         return {"message": "History import restarted. It starts within a minute and walks back a month at a time."}
 
-    def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
+    def series(
+        self,
+        user: SessionUser,
+        house_id: int,
+        days: int,
+        previous: bool,
+        offset: int,
+        zone: str = "",
+    ) -> dict[str, Any]:
         """The house's consumption over one `days`-long period, summed per bucket.
 
         Same windowing as the thermometers so both graphs of the Realtime view
-        move together, but the buckets are sums: half a bucket of water is not
-        an average of anything.
+        move together, and the same clock, or one graph's day would end two
+        hours after the other's. The buckets are sums: half a bucket of water
+        is not an average of anything.
         """
         self._require_house(user, house_id)
+        zone = SeriesZone(self._database).of(zone, house_id)
         bucket_minutes = dict(Constants.water_ranges).get(days)
         if bucket_minutes is None:
             choices = ", ".join(str(range_days) for range_days, _ in Constants.water_ranges)
@@ -207,20 +218,21 @@ class WaterCommand:
         since = until - timedelta(days=days * (2 if previous else 1))
         rows = self._database.fetch_all(
             """
-            SELECT date_bin(%s, water_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, water_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(water_points.volume) AS volume
             FROM water_points JOIN water_feeds ON water_feeds.id = water_points.feed_id
             WHERE water_feeds.house_id = %s AND water_feeds.active
               AND water_points.measured_at >= %s AND water_points.measured_at < %s
             GROUP BY bucket ORDER BY bucket
             """,
-            (timedelta(minutes=bucket_minutes), house_id, since.isoformat(), until.isoformat()),
+            (timedelta(minutes=bucket_minutes), zone, zone, house_id, since.isoformat(), until.isoformat()),
         )
         points = [{"at": row["bucket"].isoformat(), "volume": round(float(row["volume"]), 4)} for row in rows]
         latest = self._latest(house_id)
         alert = self._alert(house_id)
         return {
             "days": days,
+            "zone": zone,
             "bucket_minutes": bucket_minutes,
             "previous": previous,
             "offset": offset,

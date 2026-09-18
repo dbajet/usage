@@ -33,7 +33,7 @@ SQL_UPDATE = """
             WHERE id = %s
             """
 SQL_SERIES = """
-            SELECT date_bin(%s, water_points.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+            SELECT date_bin(%s, water_points.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    SUM(water_points.volume) AS volume
             FROM water_points JOIN water_feeds ON water_feeds.id = water_points.feed_id
             WHERE water_feeds.house_id = %s AND water_feeds.active
@@ -528,6 +528,7 @@ def test_restart_backfill(require_admin: MagicMock, require_feed: MagicMock) -> 
     reset_mocks()
 
 
+@patch("usage.commands.water_command.SeriesZone")
 @patch("usage.commands.water_command.SeriesPulse")
 @patch("usage.commands.water_command.datetime", wraps=datetime)
 @patch.object(WaterCommand, "_due")
@@ -541,6 +542,7 @@ def test_series(
     due: MagicMock,
     mock_datetime: MagicMock,
     pulse: MagicMock,
+    zone_class: MagicMock,
 ) -> None:
     tested = helper_instance()
     database = tested._database
@@ -552,6 +554,8 @@ def test_series(
         due.reset_mock()
         mock_datetime.reset_mock()
         pulse.reset_mock()
+        zone_class.reset_mock()
+        zone_class.reset_mock()
         database.reset_mock()
 
     user = helper_user()
@@ -559,6 +563,7 @@ def test_series(
 
     # unknown range
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 14, False, 0)
     assert exc_info.value.status_code == 400
@@ -574,6 +579,7 @@ def test_series(
 
     # negative offset
     require_house.side_effect = [None]
+    zone_class.return_value.of.side_effect = ["Europe/Paris"]
     with pytest.raises(AppException) as exc_info:
         tested.series(user, 3, 1, False, -1)
     assert exc_info.value.status_code == 400
@@ -600,6 +606,7 @@ def test_series(
     ]
     for days, bucket_minutes, previous, offset, exp_since, exp_until in tests:
         require_house.side_effect = [None]
+        zone_class.return_value.of.side_effect = ["Europe/Paris"]
         mock_datetime.now.side_effect = [now]
         latest.side_effect = [exp_latest]
         alert.side_effect = [exp_alert]
@@ -609,6 +616,7 @@ def test_series(
         database.fetch_all.side_effect = [rows]
         result = tested.series(user, 3, days, previous, offset)
         expected = {
+            "zone": "Europe/Paris",
             "days": days,
             "bucket_minutes": bucket_minutes,
             "previous": previous,
@@ -634,7 +642,7 @@ def test_series(
             call.stamp(expected["points"], exp_latest, exp_alert),
             call.next_poll([datetime(2026, 9, 15, 12, 4, 0, tzinfo=UTC)], now),
         ]
-        exp_calls = [call.fetch_all(SQL_SERIES, (timedelta(minutes=bucket_minutes), 3, exp_since, exp_until))]
+        exp_calls = [call.fetch_all(SQL_SERIES, (timedelta(minutes=bucket_minutes), "Europe/Paris", "Europe/Paris", 3, exp_since, exp_until))]
         assert database.mock_calls == exp_calls
         reset_mocks()
 

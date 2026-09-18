@@ -13,6 +13,7 @@ from usage.libraries.email_sender import EmailSender
 from usage.libraries.email_texts import EmailTexts
 from usage.libraries.ingest_token import IngestToken
 from usage.libraries.series_pulse import SeriesPulse
+from usage.libraries.series_zone import SeriesZone
 from usage.structures.app_exception import AppException
 from usage.structures.sensor_breach import SensorBreach
 from usage.structures.sensor_sample import SensorSample
@@ -210,15 +211,30 @@ class SensorCommand:
                 self._database.execute("UPDATE sensors SET position = %s WHERE id = %s", (position, sensor_id))
         return {"message": "Sensor order saved."}
 
-    def series(self, user: SessionUser, house_id: int, days: int, previous: bool, offset: int) -> dict[str, Any]:
+    def series(
+        self,
+        user: SessionUser,
+        house_id: int,
+        days: int,
+        previous: bool,
+        offset: int,
+        zone: str = "",
+    ) -> dict[str, Any]:
         """Per active sensor, the samples of one `days`-long period averaged per time bucket.
 
         The period ends `offset` periods before now (0: the last `days`).
         With `previous`, the window doubles so the caller can overlay the
         period before (the buckets are day-aligned, so shifting by `days`
         lines them up).
+
+        `zone` is the clock the buckets are cut on, so a day means midnight to
+        midnight where the page is being read rather than on UTC, which is
+        nobody's midnight. The house's own is the fallback and the answer says
+        which was used, since a bucket cut on one clock and labelled on another
+        would be worse than either.
         """
         self._require_house(user, house_id)
+        zone = SeriesZone(self._database).of(zone, house_id)
         bucket_minutes = dict(Constants.sensor_ranges).get(days)
         if bucket_minutes is None:
             choices = ", ".join(str(range_days) for range_days, _ in Constants.sensor_ranges)
@@ -243,14 +259,14 @@ class SensorCommand:
         rows = self._database.fetch_all(
             """
             SELECT samples.sensor_id,
-                   date_bin(%s, samples.measured_at, TIMESTAMPTZ '2000-01-01') AS bucket,
+                   date_bin(%s, samples.measured_at AT TIME ZONE %s, TIMESTAMP '2000-01-01') AT TIME ZONE %s AS bucket,
                    AVG(samples.value) AS average, MIN(samples.value) AS low, MAX(samples.value) AS high
             FROM samples JOIN sensors ON sensors.id = samples.sensor_id
             WHERE sensors.house_id = %s AND sensors.active AND samples.measured_at >= %s AND samples.measured_at < %s
             GROUP BY samples.sensor_id, bucket
             ORDER BY samples.sensor_id, bucket
             """,
-            (timedelta(minutes=bucket_minutes), house_id, since.isoformat(), until.isoformat()),
+            (timedelta(minutes=bucket_minutes), zone, zone, house_id, since.isoformat(), until.isoformat()),
         )
         result: list[dict[str, Any]] = []
         for sensor in sensors:
@@ -277,6 +293,7 @@ class SensorCommand:
         latest = self._latest(house_id, sensors)
         return {
             "days": days,
+            "zone": zone,
             "bucket_minutes": bucket_minutes,
             "previous": previous,
             "offset": offset,

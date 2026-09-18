@@ -533,10 +533,13 @@ class ApiRouter:
         days: int = 1,
         previous: bool = False,
         offset: int = 0,
+        # Which clock the graph is cut and labelled on: the page says, since it
+        # is the page that knows who is looking and where the house is.
+        zone: str = "",
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._sensor_command.series(user, house_id, days, previous, offset)
+        return self._sensor_command.series(user, house_id, days, previous, offset, zone)
 
     def _update_sensor(
         self,
@@ -686,10 +689,11 @@ class ApiRouter:
         days: int = 1,
         previous: bool = False,
         offset: int = 0,
+        zone: str = "",
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._water_command.series(user, house_id, days, previous, offset)
+        return self._water_command.series(user, house_id, days, previous, offset, zone)
 
     def _ingest_power(self, body: PowerIngestRequest, authorization: str = Header(default="")) -> dict[str, Any]:
         # Home Assistant, not a signed-in user: the bearer token identifies the house.
@@ -753,10 +757,11 @@ class ApiRouter:
         days: int = 1,
         previous: bool = False,
         offset: int = 0,
+        zone: str = "",
         usage_session: str = Cookie(default="", alias=Constants.cookie_name),
     ) -> dict[str, Any]:
         user = self._auth_command.user_from_token(usage_session)
-        return self._enphase_command.series(user, house_id, days, previous, offset)
+        return self._enphase_command.series(user, house_id, days, previous, offset, zone)
 
     def _rp_id(self, request: Request) -> str:
         return request.url.hostname or "localhost"

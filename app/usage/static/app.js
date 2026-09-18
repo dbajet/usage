@@ -24,6 +24,8 @@ let state = {
   realtimeAgeId: null,
   waterData: null,
   waterFeeds: null,
+  // "mine" or "house": which clock the Realtime graphs are cut and labelled on.
+  clock: storedItem("usage-clock", "mine"),
   powerData: null,
   enphaseFeeds: null,
   enphaseLocal: null,
@@ -267,6 +269,8 @@ function showView(name) {
   // its own next wait, so the first load is what starts the clocks.
   if (name === "sensors") loadSensors();
   else stopRealtime();
+  // The clock is only offered where it changes something, and that is this view.
+  renderClockButton();
 }
 
 async function chooseHouseView() {
@@ -453,6 +457,7 @@ async function ensureDashboard() {
   const current = houses.find((house) => house.id === state.houseId);
   $("#house-name").textContent = current ? current.name : "";
   $("#house-btn").hidden = houses.length < 2;
+  renderClockButton();
   // Each house says what it measures (Settings, Houses, Edit): the Realtime
   // nav item and the two settings tabs follow that, not the data.
   const hasSensors = Boolean(current && current.has_sensors);
@@ -1290,6 +1295,81 @@ const ICON_THERMOMETER = '<svg class="msym" fill="currentColor" xmlns="http://ww
 const ICON_DROP = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M480-80q-137 0-228.5-94T160-408q0-100 79.5-217.5T480-880q161 137 240.5 254.5T800-408q0 140-91.5 234T480-80Z"/></svg>';
 const ICON_SUN = '<svg class="msym" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M440-800v-120h80v120h-80Zm0 760v-120h80v120h-80Zm360-400v-80h120v80H800ZM40-440v-80h120v80H40Zm708-252-56-56 70-72 58 58-72 70Zm-580 580-58-58 72-70 56 56-70 72Zm622 0-70-72 56-56 72 70-58 58ZM168-692l-72-70 58-58 70 72-56 56Zm312 452q-100 0-170-70t-70-170q0-100 70-170t170-70q100 0 170 70t70 170q0 100-70 170t-170 70Z"/></svg>';
 
+// ---------- Which clock the Realtime views are drawn on ----------
+//
+// Readings are stored as instants and always will be: a stored moment that
+// moves when a clock does is the one thing none of this could recover from.
+// But a graph is read by somebody standing somewhere, and the two answers
+// disagree - a French thermometer watched from California has its coldest hour
+// drawn in the previous evening. So the viewer chooses, and the choice reaches
+// the query too: the server cuts the buckets on the same clock, or the bars
+// would be honest and the axis would lie about them.
+
+function browserZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch (_) { return "UTC"; }
+}
+
+function houseZone() {
+  const current = ((state.dashboard && state.dashboard.houses) || []).find((house) => house.id === state.houseId);
+  return (current && current.timezone) || browserZone();
+}
+
+function activeZone() {
+  return state.clock === "house" ? houseZone() : browserZone();
+}
+
+function zoned(time, zone = activeZone()) {
+  // A Date whose *UTC* fields read the wall clock of that zone, so every label
+  // below can go on using ordinary date arithmetic - on getUTC rather than get.
+  const parts = new Date(time).toLocaleString("sv-SE", { timeZone: zone });
+  return new Date(`${parts.replace(" ", "T")}Z`);
+}
+
+function instantOf(wall, zone = activeZone()) {
+  // The other way: the moment whose wall clock in that zone is what this Date's
+  // UTC fields say. Approximate inside the hour a zone gives back in autumn,
+  // which is a tick label and not a reading.
+  const guess = wall.getTime();
+  return new Date(guess - (zoned(guess, zone).getTime() - guess));
+}
+
+// The clock a graph is drawn on, as two glyphs rather than two words: a clock
+// face for the one on your own wall, a globe for the one where the house
+// stands. Both are shapes that survive sixteen pixels - the label says it too,
+// but the icon is what gets read at a glance.
+const ICON_MY_CLOCK = '<svg class="msym" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>';
+const ICON_HOUSE_CLOCK = '<svg class="msym" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"></path></svg>';
+
+function renderClockButton() {
+  // Only where it means something: one clock is two clocks only when the house
+  // is somewhere else, and the Realtime view is the only thing drawn on either.
+  const button = $("#clock-btn");
+  const houses = (state.dashboard && state.dashboard.houses) || [];
+  const current = houses.find((house) => house.id === state.houseId);
+  const zone = (current && current.timezone) || "";
+  const differs = Boolean(zone) && zone !== browserZone();
+  button.hidden = !differs || currentView() !== "sensors";
+  if (button.hidden) return;
+  const mine = state.clock !== "house";
+  button.innerHTML = `${mine ? ICON_MY_CLOCK : ICON_HOUSE_CLOCK}`
+    + `<span class="house-name">${esc(mine ? "my time" : "house time")}</span>`;
+  button.title = mine
+    ? `Graphs are on your clock (${browserZone()}). Show them on the house's (${zone}).`
+    : `Graphs are on the house's clock (${zone}). Show them on yours (${browserZone()}).`;
+}
+
+function toggleClock() {
+  state.clock = state.clock === "house" ? "mine" : "house";
+  storeItem("usage-clock", state.clock);
+  renderClockButton();
+  // The buckets are cut server-side on this clock, so the graphs are asked
+  // again rather than merely relabelled: a day that starts two hours later is
+  // a different set of bars, not the same ones with new captions.
+  loadSensors(true);
+}
+
 function fmtAgo(iso) {
   const elapsed = Date.now() - Date.parse(iso);
   if (!Number.isFinite(elapsed)) return "";
@@ -1306,10 +1386,10 @@ function fmtTemp(value) {
 }
 
 function fmtInstant(time, days) {
-  const date = new Date(time);
-  const day = `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
-  if (days >= 365) return `${day}, ${date.getFullYear()}`;
-  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const date = zoned(time);
+  const day = `${MONTH_NAMES[date.getUTCMonth()]} ${date.getUTCDate()}`;
+  if (days >= 365) return `${day}, ${date.getUTCFullYear()}`;
+  const clock = `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
   return `${day}, ${clock}`;
 }
 
@@ -1377,7 +1457,8 @@ function feedUrl(feed) {
   // Every feed follows the same range, offset and overlay, so the graphs of the
   // view always show one window however far apart their clocks are.
   return `${feed.path}?house_id=${state.houseId}&days=${state.sensorDays}`
-    + `&previous=${wantsPrevious()}&offset=${state.sensorOffset}`;
+    + `&previous=${wantsPrevious()}&offset=${state.sensorOffset}`
+    + `&zone=${encodeURIComponent(activeZone())}`;
 }
 
 function cancelFeed(feed) {
@@ -1541,10 +1622,10 @@ function displaySeries(seriesList) {
 
 function fmtPeriodEdge(time, days) {
   // The graph title: a clock for a day, dates for a week or a month, months for a year.
-  const date = new Date(time);
+  const date = zoned(time);
   if (days <= 1) return fmtInstant(time, days);
-  if (days <= 30) return `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}`;
-  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+  if (days <= 30) return `${MONTH_NAMES[date.getUTCMonth()]} ${date.getUTCDate()}`;
+  return `${MONTH_NAMES[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
 // Twelve distinct defaults, so a dozen thermometers never share a colour:
@@ -1812,32 +1893,35 @@ function refreshAges() {
 }
 
 function sensorTicks(tMin, tMax, days) {
-  // Ticks on local-time boundaries: hours for a day, midnights for a week or
-  // a month, the first of each month for a year.
+  // Ticks on the boundaries of the clock this view is drawn on: hours for a
+  // day, midnights for a week or a month, the first of each month for a year.
+  // The cursor walks in that zone's wall clock and every tick is turned back
+  // into the instant it stands for, so the labels and the bars agree.
+  const zone = activeZone();
   const ticks = [];
-  const cursor = new Date(tMin);
-  cursor.setSeconds(0, 0);
+  const cursor = zoned(tMin, zone);
+  cursor.setUTCSeconds(0, 0);
   if (days <= 1) {
-    cursor.setMinutes(0);
-    cursor.setHours(Math.ceil(cursor.getHours() / 4) * 4);
+    cursor.setUTCMinutes(0);
+    cursor.setUTCHours(Math.ceil(cursor.getUTCHours() / 4) * 4);
   } else if (days <= 30) {
-    cursor.setHours(0, 0);
-    cursor.setDate(cursor.getDate() + 1);
+    cursor.setUTCHours(0, 0);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   } else {
-    cursor.setHours(0, 0);
-    cursor.setMonth(cursor.getMonth() + 1, 1);
+    cursor.setUTCHours(0, 0);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1, 1);
   }
-  while (cursor.getTime() <= tMax) {
-    const time = cursor.getTime();
+  while (instantOf(cursor, zone).getTime() <= tMax) {
+    const time = instantOf(cursor, zone).getTime();
     let label;
-    if (days <= 1) label = `${String(cursor.getHours()).padStart(2, "0")}:00`;
-    else if (days <= 30) label = `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getDate()}`;
-    else label = MONTH_NAMES[cursor.getMonth()];
-    if (days <= 30 && days > 7 && cursor.getDate() % 5 !== 0) label = "";
+    if (days <= 1) label = `${String(cursor.getUTCHours()).padStart(2, "0")}:00`;
+    else if (days <= 30) label = `${MONTH_NAMES[cursor.getUTCMonth()]} ${cursor.getUTCDate()}`;
+    else label = MONTH_NAMES[cursor.getUTCMonth()];
+    if (days <= 30 && days > 7 && cursor.getUTCDate() % 5 !== 0) label = "";
     if (label) ticks.push({ time, label });
-    if (days <= 1) cursor.setHours(cursor.getHours() + 4);
-    else if (days <= 30) cursor.setDate(cursor.getDate() + 1);
-    else cursor.setMonth(cursor.getMonth() + 1);
+    if (days <= 1) cursor.setUTCHours(cursor.getUTCHours() + 4);
+    else if (days <= 30) cursor.setUTCDate(cursor.getUTCDate() + 1);
+    else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
   }
   return ticks;
 }
@@ -2347,12 +2431,13 @@ function wantsWaterTotal() {
 }
 
 function waterStamp(time) {
-  // One shape whatever the range: MM/DD hh:mm, in the viewer's own time zone. A
-  // stamp that drops the date on the day view, or the clock on the year view,
-  // leaves the two lines of an overlay tooltip with nothing to tell them apart.
-  const moment = new Date(time);
+  // One shape whatever the range: MM/DD hh:mm, on the clock the view is drawn
+  // on. A stamp that drops the date on the day view, or the clock on the year
+  // view, leaves the two lines of an overlay tooltip with nothing to tell them
+  // apart.
+  const moment = zoned(time);
   const two = (value) => String(value).padStart(2, "0");
-  return `${two(moment.getMonth() + 1)}/${two(moment.getDate())} ${two(moment.getHours())}:${two(moment.getMinutes())}`;
+  return `${two(moment.getUTCMonth() + 1)}/${two(moment.getUTCDate())} ${two(moment.getUTCHours())}:${two(moment.getUTCMinutes())}`;
 }
 
 function waterChartMarkup(current, earlier, days, bucketMinutes, tMax) {
@@ -3816,6 +3901,7 @@ addEventListener("DOMContentLoaded", () => {
     $("#meter-register-row").hidden = $("#meter-monthly").checked;
   });
   $("#house-btn").addEventListener("click", chooseHouse);
+  $("#clock-btn").addEventListener("click", toggleClock);
   $$("[data-sensor-days]").forEach((button) => button.addEventListener("click", () => {
     storeItem("usage-sensor-days", button.dataset.sensorDays);
     state.sensorOffset = 0;

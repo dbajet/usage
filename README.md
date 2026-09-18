@@ -107,6 +107,29 @@ settings panels are worth showing — a house with a water meter and no thermome
 not offered thermometer settings. Existing houses were seeded from what they already
 collect, so a new house needs its switches ticked once.
 
+### Which clock a graph is drawn on
+
+Readings are stored as instants and always will be: a stored moment that moves when a
+clock does is the one thing none of this could recover from. But a graph is read by
+somebody standing somewhere, and the two answers disagree. A house in France watched from
+California has its coldest hour drawn in the previous evening, and a day bucketed on UTC is
+neither watcher's day - it runs from 02:00 in Paris and from 17:00 in California.
+
+So the Realtime view carries a switch, beside the house button and only where it means
+something: it appears when the house's zone differs from the browser's, and says which of
+the two is in force. The choice is remembered per browser, like the house and the range.
+
+**The zone reaches the query as well as the labels.** A bucket cut on one clock and
+labelled on another is worse than either - the bars would be honest and the axis would lie
+about them - so the three series endpoints take the zone and group on it. The house's own
+is the fallback, so a page that says nothing still gets a graph cut where the instruments
+stand rather than on UTC.
+
+Binning happens on the local timeline (`measured_at AT TIME ZONE zone`, binned, then back)
+rather than by an offset from a fixed origin. An offset is right for half the year:
+`date_bin` steps in fixed intervals and knows nothing about the hour a zone gives back in
+October, so a day cut that way drifts an hour every spring.
+
 ### Asking again
 
 The view's three halves are fed by three things that move at three different speeds, so they

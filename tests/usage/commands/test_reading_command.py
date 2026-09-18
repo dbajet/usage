@@ -75,7 +75,7 @@ def test_dashboard(visible_house_ids: MagicMock) -> None:
     exp_calls = [
         call.fetch_all(
             """
-                    SELECT houses.id, houses.name_sealed AS name,
+                    SELECT houses.id, houses.name_sealed AS name, houses.timezone,
                            -- Either source is thermometers: the Realtime half, the nav
                            -- item and the settings tab are about the graph, not about
                            -- which way the readings reach it.

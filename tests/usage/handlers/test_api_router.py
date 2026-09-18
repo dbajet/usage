@@ -2148,7 +2148,7 @@ def test__sensor_series() -> None:
 
     auth_command.user_from_token.side_effect = [user]
     sensor_command.series.side_effect = [{"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "series": []}]
-    result = tested._sensor_series(3, 7, True, 2, "the-session")
+    result = tested._sensor_series(3, 7, True, 2, "Europe/Paris", "the-session")
     expected = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "series": []}
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
@@ -2157,7 +2157,7 @@ def test__sensor_series() -> None:
     assert meter_command.mock_calls == []
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
-    assert sensor_command.mock_calls == [call.series(user, 3, 7, True, 2)]
+    assert sensor_command.mock_calls == [call.series(user, 3, 7, True, 2, "Europe/Paris")]
     reset_mocks()
 
 
@@ -2772,7 +2772,7 @@ def test__water_series() -> None:
     series = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "unit": "m³", "points": []}
     auth_command.user_from_token.side_effect = [user]
     water_command.series.side_effect = [series]
-    result = tested._water_series(3, 7, True, 2, "the-session")
+    result = tested._water_series(3, 7, True, 2, "Europe/Paris", "the-session")
     expected = series
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
@@ -2782,7 +2782,7 @@ def test__water_series() -> None:
     assert reading_command.mock_calls == []
     assert stats_command.mock_calls == []
     assert sensor_command.mock_calls == []
-    assert water_command.mock_calls == [call.series(user, 3, 7, True, 2)]
+    assert water_command.mock_calls == [call.series(user, 3, 7, True, 2, "Europe/Paris")]
     assert enphase_command.mock_calls == []
     assert switch_bot_command.mock_calls == []
     assert switch_bot_event_command.mock_calls == []
@@ -3218,7 +3218,7 @@ def test__enphase_series() -> None:
     series = {"days": 7, "bucket_minutes": 60, "previous": True, "offset": 2, "unit": "kWh", "points": []}
     auth_command.user_from_token.side_effect = [user]
     enphase_command.series.side_effect = [series]
-    result = tested._enphase_series(3, 7, True, 2, "the-session")
+    result = tested._enphase_series(3, 7, True, 2, "Europe/Paris", "the-session")
     expected = series
     assert result == expected
     assert auth_command.mock_calls == [call.user_from_token("the-session")]
@@ -3229,7 +3229,7 @@ def test__enphase_series() -> None:
     assert stats_command.mock_calls == []
     assert sensor_command.mock_calls == []
     assert water_command.mock_calls == []
-    assert enphase_command.mock_calls == [call.series(user, 3, 7, True, 2)]
+    assert enphase_command.mock_calls == [call.series(user, 3, 7, True, 2, "Europe/Paris")]
     assert switch_bot_command.mock_calls == []
     assert switch_bot_event_command.mock_calls == []
     reset_mocks()
