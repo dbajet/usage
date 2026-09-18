@@ -1875,7 +1875,7 @@ function sensorThresholds(seriesList) {
 function sensorChartMarkup(seriesList, days, bucketMinutes, tMax, thresholds = []) {
   const tMin = tMax - days * 86400000;
   const points = seriesList.flatMap((item) => [...item.points, ...(item.previousPoints || [])]);
-  if (points.length < 2) return "";
+  if (!points.length) return "";
   const width = 720;
   const height = 260;
   const left = 44;
@@ -1912,6 +1912,14 @@ function sensorChartMarkup(seriesList, days, bucketMinutes, tMax, thresholds = [
 
   const withBand = bucketMinutes > 10;
   const lineOf = (timed) => timed.map((point, index) => `${index === 0 ? "M" : "L"}${xAt(point.time).toFixed(1)},${yAt(point.average).toFixed(1)}`).join(" ");
+  // A single reading has no segment to draw, so it is drawn as itself. Without
+  // this a feed that has just been added shows an empty graph until its second
+  // reading arrives, which reads exactly like a feed that does not work - and
+  // is the very impression a first pull is supposed to dispel. A sensor that
+  // reports once a day looks the same way on the day view, for the same reason.
+  const dotOf = (timed, color) => timed.length !== 1
+    ? ""
+    : `<circle class="dot" cx="${xAt(timed[0].time).toFixed(1)}" cy="${yAt(timed[0].average).toFixed(1)}" r="3" fill="${color}"></circle>`;
   const paths = seriesList.map((item) => {
     const timed = item.points;
     let band = "";
@@ -1920,10 +1928,12 @@ function sensorChartMarkup(seriesList, days, bucketMinutes, tMax, thresholds = [
       const lower = timed.slice().reverse().map((point) => `${xAt(point.time).toFixed(1)},${yAt(point.low).toFixed(1)}`);
       band = `<polygon class="band" points="${upper.join(" ")} ${lower.join(" ")}" fill="${item.color}"></polygon>`;
     }
+    // The previous period gets no dot: it is there to be compared against, and
+    // one point of it says nothing without a line beside it.
     const previous = (item.previousPoints || []).length > 1
       ? `<path class="previous" d="${lineOf(item.previousPoints)}" stroke="${item.color}"></path>`
       : "";
-    return `<g class="series">${band}${previous}<path d="${lineOf(timed)}" stroke="${item.color}"></path></g>`;
+    return `<g class="series">${band}${previous}<path d="${lineOf(timed)}" stroke="${item.color}"></path>${dotOf(timed, item.color)}</g>`;
   });
 
   const config = {
