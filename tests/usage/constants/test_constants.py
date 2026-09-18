@@ -80,6 +80,12 @@ def test_class() -> None:
         "switchbot_epoch_millis_floor",
         "switchbot_event_future_seconds",
         "switchbot_event_past_days",
+        "switchbot_export_suffix",
+        "switchbot_export_date_column",
+        "switchbot_export_date_format",
+        "switchbot_export_temperature_prefix",
+        "switchbot_export_humidity_prefix",
+        "switchbot_export_fahrenheit",
         "water_host_default",
         "water_hosts",
         "water_sign_in_path",
@@ -667,6 +673,48 @@ def test_switchbot_event_past_days() -> None:
     tested = Constants
     result = tested.switchbot_event_past_days
     expected = 7
+    assert result == expected
+
+
+def test_switchbot_export_suffix() -> None:
+    tested = Constants
+    result = tested.switchbot_export_suffix
+    expected = "_data"
+    assert result == expected
+
+
+def test_switchbot_export_date_column() -> None:
+    tested = Constants
+    result = tested.switchbot_export_date_column
+    expected = "Date"
+    assert result == expected
+
+
+def test_switchbot_export_date_format() -> None:
+    tested = Constants
+    result = tested.switchbot_export_date_format
+    expected = "%b %d, %Y %H:%M"
+    assert result == expected
+
+
+def test_switchbot_export_temperature_prefix() -> None:
+    tested = Constants
+    result = tested.switchbot_export_temperature_prefix
+    expected = "Temperature_"
+    assert result == expected
+
+
+def test_switchbot_export_humidity_prefix() -> None:
+    tested = Constants
+    result = tested.switchbot_export_humidity_prefix
+    expected = "Relative_Humidity"
+    assert result == expected
+
+
+def test_switchbot_export_fahrenheit() -> None:
+    tested = Constants
+    result = tested.switchbot_export_fahrenheit
+    expected = "fahrenheit"
     assert result == expected
 
 

@@ -144,6 +144,17 @@ class _Constants:
     switchbot_epoch_millis_floor: int = 100_000_000_000
     switchbot_event_future_seconds: int = 3600
     switchbot_event_past_days: int = 7
+    # The history a meter keeps on itself - 36 days on a Meter, 68 on a Meter
+    # Plus or an Outdoor one - which the phone reads over Bluetooth and exports
+    # as a CSV. The cloud will not serve it, so this is the only way back.
+    switchbot_export_suffix: str = "_data"
+    switchbot_export_date_column: str = "Date"
+    switchbot_export_date_format: str = "%b %d, %Y %H:%M"
+    switchbot_export_temperature_prefix: str = "Temperature_"
+    switchbot_export_humidity_prefix: str = "Relative_Humidity"
+    # The header names the unit, so the file is read in the unit it says rather
+    # than the one it is expected to be in - the same rule the water CSV taught.
+    switchbot_export_fahrenheit: str = "fahrenheit"
     # EyeOnWater: the "Export Data" button and nothing else - sign in, ask for a
     # CSV over a date range, poll the task, download it. The portal has no
     # documented API, so the fewer endpoints touched the better.
